@@ -1,0 +1,158 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ---- Тема: светлая (по умолчанию переключаемся на тёмную в JS) ---- */
+:root {
+  --bg: #f4f6fb;
+  --surface: #ffffff;
+  --surface-2: #f1f4fa;
+  --surface-3: #e9edf6;
+  --border: #e2e8f2;
+  --text: #0f1626;
+  --muted: #5b6577;
+  --brand: #5b4ef0;
+  --brand-ink: #ffffff;
+  --brand-soft: rgba(91, 78, 240, 0.1);
+  --shadow: 0 1px 2px rgba(15, 22, 38, 0.04), 0 8px 24px rgba(15, 22, 38, 0.06);
+}
+
+.dark {
+  --bg: #0b0f17;
+  --surface: #131826;
+  --surface-2: #1a2030;
+  --surface-3: #222a3d;
+  --border: #232c40;
+  --text: #e8ecf4;
+  --muted: #8b94a7;
+  --brand: #7c6cff;
+  --brand-ink: #ffffff;
+  --brand-soft: rgba(124, 108, 255, 0.16);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 12px 32px rgba(0, 0, 0, 0.35);
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-line: var(--border);
+  --color-ink: var(--text);
+  --color-muted: var(--muted);
+  --color-brand: var(--brand);
+  --color-brand-ink: var(--brand-ink);
+  --color-brand-soft: var(--brand-soft);
+
+  --color-ok: #10b981;
+  --color-ok-soft: color-mix(in srgb, #10b981 16%, transparent);
+  --color-warn: #f59e0b;
+  --color-warn-soft: color-mix(in srgb, #f59e0b 16%, transparent);
+  --color-bad: #f43f5e;
+  --color-bad-soft: color-mix(in srgb, #f43f5e 16%, transparent);
+  --color-info: #38bdf8;
+  --color-info-soft: color-mix(in srgb, #38bdf8 16%, transparent);
+
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  --radius-xl2: 1.1rem;
+}
+
+* {
+  border-color: var(--border);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Скроллбары */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--surface-3);
+  border-radius: 99px;
+  border: 2px solid var(--bg);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--muted);
+}
+
+/* Утилиты-хелперы */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl2);
+  box-shadow: var(--shadow);
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  scrollbar-width: none;
+}
+
+@keyframes fadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.animate-fadeUp {
+  animation: fadeUp 0.35s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes dash {
+  to {
+    stroke-dashoffset: -1000;
+  }
+}
+.route-flow {
+  stroke-dasharray: 8 8;
+  animation: dash 28s linear infinite;
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  20%, 60% { transform: translateX(-8px); }
+  40%, 80% { transform: translateX(8px); }
+}
+.animate-shake {
+  animation: shake 0.4s ease;
+}
+
+@keyframes pingSoft {
+  0% {
+    transform: scale(1);
+    opacity: 0.7;
+  }
+  70%,
+  100% {
+    transform: scale(2.4);
+    opacity: 0;
+  }
+}
+.ping-soft::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  background: currentColor;
+  animation: pingSoft 1.8s ease-out infinite;
+}

@@ -1,0 +1,28 @@
+# Зависимости
+node_modules
+.pnp
+.pnp.js
+
+# Сборка
+dist
+dist-ssr
+build
+
+# Логи
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Локальные / окружение
+*.local
+.env
+.env.*
+!.env.example
+
+# Редакторы / ОС
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+Thumbs.db
