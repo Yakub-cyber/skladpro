@@ -4,6 +4,7 @@ import Login from './pages/Login'
 import { useStore } from './store/useStore'
 import Dashboard from './pages/Dashboard'
 import Orders from './pages/Orders'
+import NewOrder from './pages/NewOrder'
 import Delivery from './pages/Delivery'
 import Products from './pages/Products'
 import Warehouse from './pages/Warehouse'
@@ -38,6 +39,7 @@ export default function App() {
       >
         <Route index element={<Dashboard />} />
         <Route path="orders" element={<Orders />} />
+        <Route path="orders/new" element={<NewOrder />} />
         <Route path="delivery" element={<Delivery />} />
         <Route path="products" element={<Products />} />
         <Route path="warehouse" element={<Warehouse />} />
