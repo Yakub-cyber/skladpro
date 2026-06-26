@@ -199,7 +199,10 @@ function Topbar({ onMenu, onSearch }) {
 function ProfileMenu() {
   const [open, setOpen] = useState(false)
   const me = useCurrentUser()
+  const cloud = useStore((s) => s.cloud)
   const logout = useStore((s) => s.logout)
+  const cloudLogout = useStore((s) => s.cloudLogout)
+  const doLogout = () => (cloud ? cloudLogout() : logout())
   const role = roleInfo(me.role)
 
   return (
@@ -229,7 +232,7 @@ function ProfileMenu() {
             <button
               onClick={() => {
                 setOpen(false)
-                logout()
+                doLogout()
               }}
               className="w-full flex items-center gap-2.5 px-2.5 h-10 rounded-lg hover:bg-bad-soft text-bad text-sm font-medium"
             >

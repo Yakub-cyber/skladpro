@@ -1,10 +1,16 @@
 import { useEffect, useState } from 'react'
-import { Boxes, Delete, ArrowLeft, Lock, ShieldCheck } from 'lucide-react'
-import { Avatar, cx } from '../components/ui'
+import { Boxes, Delete, ArrowLeft, Lock, ShieldCheck, Mail, KeyRound, Loader2, Cloud } from 'lucide-react'
+import { Avatar, cx, Button, Field, Input } from '../components/ui'
 import { useStore } from '../store/useStore'
 import { roleInfo } from '../lib/constants'
 
 export default function Login() {
+  const cloud = useStore((s) => s.cloud)
+  if (cloud) return <CloudLogin />
+  return <PinLogin />
+}
+
+function PinLogin() {
   const employees = (useStore((s) => s.employees) || []).filter((e) => e.active)
   const login = useStore((s) => s.login)
   const [sel, setSel] = useState(null)
@@ -150,5 +156,104 @@ function PadBtn({ children, onClick, className }) {
     >
       {children}
     </button>
+  )
+}
+
+function CloudLogin() {
+  const { signIn, signUp } = useStore()
+  const [mode, setMode] = useState('signin') // signin | signup
+  const [email, setEmail] = useState('')
+  const [pass, setPass] = useState('')
+  const [name, setName] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+
+  const submit = async (e) => {
+    e?.preventDefault?.()
+    if (!email || !pass) return setErr('Заполните email и пароль')
+    setBusy(true)
+    setErr('')
+    const r =
+      mode === 'signin'
+        ? await signIn(email, pass)
+        : await signUp(email, pass, name)
+    if (!r.ok) {
+      setErr(r.error)
+      setBusy(false)
+    } else if (r.needConfirm) {
+      setErr('Аккаунт создан, но включено подтверждение email. Подтвердите по ссылке из письма — или отключите подтверждение в Supabase (Authentication → Email → Confirm email), затем войдите.')
+      setMode('signin')
+      setBusy(false)
+    }
+    // при успехе bootstrapCloud сменит authUserId → AuthGate покажет приложение
+  }
+
+  return (
+    <div className="min-h-screen grid place-items-center bg-bg p-5">
+      <div className="w-full max-w-sm">
+        <div className="flex flex-col items-center mb-7">
+          <div className="h-14 w-14 rounded-2xl bg-brand grid place-items-center text-brand-ink shadow-lg shadow-brand/30 mb-3">
+            <Boxes size={30} strokeWidth={2.2} />
+          </div>
+          <div className="text-xl font-semibold tracking-tight">
+            Склад<span className="text-brand">Про</span>
+          </div>
+          <div className="text-[12px] text-muted mt-1 flex items-center gap-1.5">
+            <Cloud size={13} /> Облачный режим · Supabase
+          </div>
+        </div>
+
+        <form onSubmit={submit} className="card p-5 animate-fadeUp">
+          <div className="flex gap-1 bg-surface-2 rounded-xl p-1 mb-4">
+            <button
+              type="button"
+              onClick={() => { setMode('signin'); setErr('') }}
+              className={cx('flex-1 h-9 rounded-lg text-[13px] font-medium', mode === 'signin' ? 'bg-brand text-brand-ink' : 'text-muted')}
+            >
+              Вход
+            </button>
+            <button
+              type="button"
+              onClick={() => { setMode('signup'); setErr('') }}
+              className={cx('flex-1 h-9 rounded-lg text-[13px] font-medium', mode === 'signup' ? 'bg-brand text-brand-ink' : 'text-muted')}
+            >
+              Регистрация
+            </button>
+          </div>
+
+          <div className="space-y-3">
+            {mode === 'signup' && (
+              <Field label="Имя">
+                <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Ваше имя" />
+              </Field>
+            )}
+            <Field label="Email">
+              <div className="relative">
+                <Mail size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
+                <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="mail@example.ru" className="pl-9" autoComplete="email" />
+              </div>
+            </Field>
+            <Field label="Пароль" hint={mode === 'signup' ? 'Минимум 6 символов' : undefined}>
+              <div className="relative">
+                <KeyRound size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
+                <Input type="password" value={pass} onChange={(e) => setPass(e.target.value)} placeholder="••••••••" className="pl-9" autoComplete={mode === 'signin' ? 'current-password' : 'new-password'} />
+              </div>
+            </Field>
+          </div>
+
+          {err && <div className="text-[13px] text-bad mt-3">{err}</div>}
+
+          <Button type="submit" disabled={busy} icon={busy ? Loader2 : undefined} className={cx('w-full mt-4', busy && '[&>svg]:animate-spin')}>
+            {busy ? 'Подождите…' : mode === 'signin' ? 'Войти' : 'Создать аккаунт'}
+          </Button>
+
+          {mode === 'signup' && (
+            <p className="text-[12px] text-muted mt-3 text-center">
+              Первый зарегистрированный — администратор. Остальных заводите в разделе «Сотрудники».
+            </p>
+          )}
+        </form>
+      </div>
+    </div>
   )
 }

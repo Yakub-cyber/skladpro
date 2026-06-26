@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { Routes, Route } from 'react-router-dom'
 import Layout from './components/Layout'
 import Login from './pages/Login'
@@ -21,6 +22,14 @@ import Tracking from './pages/Tracking'
 
 function AuthGate({ children }) {
   const authUserId = useStore((s) => s.authUserId)
+  const cloud = useStore((s) => s.cloud)
+  const bootstrapCloud = useStore((s) => s.bootstrapCloud)
+
+  useEffect(() => {
+    if (cloud) bootstrapCloud()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   return authUserId ? children : <Login />
 }
 

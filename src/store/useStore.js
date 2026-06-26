@@ -3,6 +3,16 @@ import { persist } from 'zustand/middleware'
 import { makeSeed } from './seed'
 import { uid, docNo } from '../lib/id'
 import { nextStatus, statusInfo } from '../lib/constants'
+import { hasSupabase } from '../lib/supabase'
+import {
+  cloudLoadAll,
+  cloudSeed,
+  attachSync,
+  getCloudSession,
+  cloudSignIn,
+  cloudSignUp,
+  cloudSignOut,
+} from '../lib/cloud'
 
 // Слой данных. Сейчас источник истины — localStorage (persist).
 // Чтобы переключиться на реальный API/Supabase, эти actions заменяются
@@ -13,6 +23,59 @@ export const useStore = create(
     (set, get) => ({
       ...makeSeed(), // audit/shifts/activeShiftId приходят отсюда
       authUserId: null, // кто авторизован (null = показать экран входа)
+      cloud: hasSupabase, // работаем с облаком Supabase
+      cloudReady: false, // данные из облака загружены
+      cloudError: null,
+
+      // ── Облако (Supabase) ────────────────────────────────────
+      bootstrapCloud: async () => {
+        if (!hasSupabase) return
+        try {
+          const session = await getCloudSession()
+          if (!session) {
+            set({ authUserId: null, cloudReady: false })
+            return
+          }
+          let data = await cloudLoadAll()
+          if (!data) {
+            const seed = makeSeed()
+            await cloudSeed(seed)
+            data = await cloudLoadAll()
+          }
+          let employees = data.employees || []
+          let me = employees.find((e) => e.authUid === session.user.id)
+          if (!me) {
+            me = {
+              id: uid('e'),
+              name: session.user.email?.split('@')[0] || 'Сотрудник',
+              role: employees.length ? 'manager' : 'admin',
+              authUid: session.user.id,
+              active: true,
+              pin: '',
+            }
+            employees = [...employees, me]
+            data.employees = employees
+          }
+          set({ ...data, authUserId: me.id, cloudReady: true, cloudError: null })
+          attachSync(useStore)
+        } catch (e) {
+          set({ cloudError: String(e.message || e) })
+        }
+      },
+      signIn: async (email, password) => {
+        const r = await cloudSignIn(email, password)
+        if (r.ok) await get().bootstrapCloud()
+        return r
+      },
+      signUp: async (email, password, name) => {
+        const r = await cloudSignUp(email, password, name)
+        if (r.ok && !r.needConfirm) await get().bootstrapCloud()
+        return r
+      },
+      cloudLogout: async () => {
+        await cloudSignOut()
+        set({ authUserId: null, cloudReady: false })
+      },
 
       // ── Аудит / лог действий ─────────────────────────────────
       logAction: (title, opts = {}) =>
