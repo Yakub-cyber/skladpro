@@ -62,10 +62,10 @@ export async function cloudLoadAll() {
   return total > 0 ? result : null
 }
 
-// Залить начальное состояние (seed) в пустую БД
-export async function cloudSeed(state) {
+// Залить начальное состояние (seed) в БД, пометив записи компанией
+export async function cloudSeed(state, companyId) {
   for (const cfg of TABLES) {
-    const rows = (state[cfg.key] || []).map((o) => toRow(o, cfg))
+    const rows = (state[cfg.key] || []).map((o) => ({ ...toRow(o, cfg), company_id: companyId }))
     if (!rows.length) continue
     const { error } = await supabase.from(cfg.table).upsert(rows)
     if (error) throw error
@@ -106,19 +106,57 @@ export function attachSync(useStore) {
   attached = true
   let prev = snap(useStore.getState())
   useStore.subscribe((state) => {
+    const companyId = state.companyId
+    if (!companyId) return // без компании не синхронизируем
     for (const cfg of TABLES) {
       const next = new Map((state[cfg.key] || []).map((o) => [o.id, o]))
       const old = prev[cfg.key]
       // новые / изменённые
       for (const [id, obj] of next) {
         const before = old.get(id)
-        if (!before || before !== obj) enqueue({ op: 'upsert', cfg, row: toRow(obj, cfg) })
+        if (!before || before !== obj)
+          enqueue({ op: 'upsert', cfg, row: { ...toRow(obj, cfg), company_id: companyId } })
       }
       // удалённые
       for (const id of old.keys()) if (!next.has(id)) enqueue({ op: 'delete', cfg, id })
     }
     prev = snap(state)
   })
+}
+
+// ── Компании (тенанты) ───────────────────────────────────────────────────────
+// Текущее членство пользователя: { company_id, role, name, companies:{name} } | null
+export async function getMembership() {
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return null
+  const { data, error } = await supabase
+    .from('memberships')
+    .select('company_id, role, name, companies(name, plan)')
+    .eq('user_id', user.id)
+    .eq('active', true)
+    .maybeSingle()
+  if (error) throw error
+  return data
+}
+
+// Онбординг: создать компанию + сделать текущего пользователя её админом
+export async function createCompanyCloud(companyName, userName) {
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { ok: false, error: 'Нет сессии' }
+  const { data: company, error: e1 } = await supabase
+    .from('companies')
+    .insert({ name: companyName })
+    .select()
+    .single()
+  if (e1) return { ok: false, error: e1.message }
+  const { error: e2 } = await supabase.from('memberships').insert({
+    user_id: user.id,
+    company_id: company.id,
+    role: 'admin',
+    name: userName || user.email?.split('@')[0] || 'Администратор',
+  })
+  if (e2) return { ok: false, error: e2.message }
+  return { ok: true, company }
 }
 
 // ── Авторизация (Supabase Auth, email + пароль) ──────────────────────────────

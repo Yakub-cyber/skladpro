@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 import { Routes, Route } from 'react-router-dom'
 import Layout from './components/Layout'
-import Login from './pages/Login'
+import Login, { Onboarding } from './pages/Login'
 import { useStore } from './store/useStore'
 import Dashboard from './pages/Dashboard'
 import Orders from './pages/Orders'
@@ -23,6 +23,7 @@ import Tracking from './pages/Tracking'
 function AuthGate({ children }) {
   const authUserId = useStore((s) => s.authUserId)
   const cloud = useStore((s) => s.cloud)
+  const needOnboarding = useStore((s) => s.needOnboarding)
   const bootstrapCloud = useStore((s) => s.bootstrapCloud)
 
   useEffect(() => {
@@ -30,6 +31,7 @@ function AuthGate({ children }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  if (cloud && needOnboarding) return <Onboarding />
   return authUserId ? children : <Login />
 }
 

@@ -12,6 +12,8 @@ import {
   cloudSignIn,
   cloudSignUp,
   cloudSignOut,
+  getMembership,
+  createCompanyCloud,
 } from '../lib/cloud'
 
 // Слой данных. Сейчас источник истины — localStorage (persist).
@@ -26,20 +28,30 @@ export const useStore = create(
       cloud: hasSupabase, // работаем с облаком Supabase
       cloudReady: false, // данные из облака загружены
       cloudError: null,
+      needOnboarding: false, // вошёл, но компании ещё нет
+      companyId: null,
+      companyName: null,
 
-      // ── Облако (Supabase) ────────────────────────────────────
+      // ── Облако (Supabase, мультитенант) ──────────────────────
       bootstrapCloud: async () => {
         if (!hasSupabase) return
         try {
           const session = await getCloudSession()
           if (!session) {
-            set({ authUserId: null, cloudReady: false })
+            set({ authUserId: null, cloudReady: false, needOnboarding: false, companyId: null })
             return
           }
+          const membership = await getMembership()
+          if (!membership) {
+            // пользователь без компании → онбординг
+            set({ authUserId: null, needOnboarding: true, cloudReady: false })
+            return
+          }
+          const companyId = membership.company_id
           let data = await cloudLoadAll()
           if (!data) {
             const seed = makeSeed()
-            await cloudSeed(seed)
+            await cloudSeed(seed, companyId)
             data = await cloudLoadAll()
           }
           let employees = data.employees || []
@@ -47,8 +59,8 @@ export const useStore = create(
           if (!me) {
             me = {
               id: uid('e'),
-              name: session.user.email?.split('@')[0] || 'Сотрудник',
-              role: employees.length ? 'manager' : 'admin',
+              name: membership.name || session.user.email?.split('@')[0] || 'Сотрудник',
+              role: membership.role || 'admin',
               authUid: session.user.id,
               active: true,
               pin: '',
@@ -56,11 +68,24 @@ export const useStore = create(
             employees = [...employees, me]
             data.employees = employees
           }
-          set({ ...data, authUserId: me.id, cloudReady: true, cloudError: null })
+          set({
+            ...data,
+            companyId,
+            companyName: membership.companies?.name || 'Компания',
+            authUserId: me.id,
+            cloudReady: true,
+            needOnboarding: false,
+            cloudError: null,
+          })
           attachSync(useStore)
         } catch (e) {
           set({ cloudError: String(e.message || e) })
         }
+      },
+      createCompany: async (name, userName) => {
+        const r = await createCompanyCloud(name, userName)
+        if (r.ok) await get().bootstrapCloud()
+        return r
       },
       signIn: async (email, password) => {
         const r = await cloudSignIn(email, password)
@@ -74,7 +99,7 @@ export const useStore = create(
       },
       cloudLogout: async () => {
         await cloudSignOut()
-        set({ authUserId: null, cloudReady: false })
+        set({ authUserId: null, cloudReady: false, needOnboarding: false, companyId: null, companyName: null })
       },
 
       // ── Аудит / лог действий ─────────────────────────────────
