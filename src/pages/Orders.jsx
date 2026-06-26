@@ -34,6 +34,7 @@ import {
   statusInfo,
   nextStatus,
   ORDER_STATUSES,
+  priceFor,
 } from '../lib/constants'
 import { buildPickRoute } from '../lib/ai'
 import { cellById } from '../store/seed'
@@ -410,8 +411,10 @@ function OrderDetail({ order }) {
 
 // ── Создание заказа ────────────────────────────────────────────────────────
 function NewOrderModal({ open, onClose, onCreated }) {
-  const { customers, products, addOrder } = useStore()
+  const { customers, products, priceTypes, addOrder } = useStore()
+  const defType = priceTypes.find((t) => t.default)?.id || priceTypes[0]?.id
   const [customerId, setCustomerId] = useState('')
+  const [priceTypeId, setPriceTypeId] = useState(defType)
   const [rows, setRows] = useState([])
   const [pq, setPq] = useState('')
 
@@ -425,6 +428,23 @@ function NewOrderModal({ open, onClose, onCreated }) {
         .slice(0, 6)
     : []
 
+  // выбор клиента подставляет его категорию цен
+  const selectCustomer = (id) => {
+    setCustomerId(id)
+    const c = customers.find((x) => x.id === id)
+    if (c?.priceTypeId) changeType(c.priceTypeId)
+  }
+  // смена категории цен пересчитывает все позиции
+  const changeType = (ptId) => {
+    setPriceTypeId(ptId)
+    setRows((rr) =>
+      rr.map((x) => {
+        const p = products.find((pp) => pp.id === x.productId)
+        return p ? { ...x, price: priceFor(p, ptId) } : x
+      }),
+    )
+  }
+
   const add = (p) => {
     setPq('')
     setRows((r) =>
@@ -436,7 +456,7 @@ function NewOrderModal({ open, onClose, onCreated }) {
               productId: p.id,
               name: p.name,
               qty: 1,
-              price: p.price,
+              price: priceFor(p, priceTypeId),
               unit: p.unit,
               cell: p.cell,
             },
@@ -452,6 +472,7 @@ function NewOrderModal({ open, onClose, onCreated }) {
       customerName: cust.name,
       items: rows,
       total,
+      priceTypeId,
       address: `${cust.city}`,
       courier: 'Самовывоз',
     })
@@ -459,6 +480,7 @@ function NewOrderModal({ open, onClose, onCreated }) {
     onCreated?.(fresh.id)
     setRows([])
     setCustomerId('')
+    setPriceTypeId(defType)
     onClose()
   }
 
@@ -480,16 +502,27 @@ function NewOrderModal({ open, onClose, onCreated }) {
       }
     >
       <div className="space-y-4">
-        <Field label="Клиент">
-          <Select value={customerId} onChange={(e) => setCustomerId(e.target.value)}>
-            <option value="">— выберите клиента —</option>
-            {customers.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name} ({c.city})
-              </option>
-            ))}
-          </Select>
-        </Field>
+        <div className="grid sm:grid-cols-2 gap-3">
+          <Field label="Клиент">
+            <Select value={customerId} onChange={(e) => selectCustomer(e.target.value)}>
+              <option value="">— выберите клиента —</option>
+              {customers.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name} ({c.city})
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="Категория цен" hint="Подставляется по клиенту, цены пересчитываются">
+            <Select value={priceTypeId} onChange={(e) => changeType(e.target.value)}>
+              {priceTypes.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name}
+                </option>
+              ))}
+            </Select>
+          </Field>
+        </div>
 
         <Field label="Добавить товары">
           <div className="relative">
@@ -513,7 +546,7 @@ function NewOrderModal({ open, onClose, onCreated }) {
                   >
                     <span className="truncate">{p.name}</span>
                     <span className="text-muted text-[12px] shrink-0">
-                      {p.sku} · {money(p.price)}
+                      {p.sku} · {money(priceFor(p, priceTypeId))}
                     </span>
                   </button>
                 ))}

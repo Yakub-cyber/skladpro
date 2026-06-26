@@ -24,7 +24,8 @@ import {
 } from '../components/ui'
 import { useStore } from '../store/useStore'
 import { money, num, dateFull } from '../lib/format'
-import { parseInvoiceText } from '../lib/ai'
+import { parseInvoiceText, aiParseInvoice } from '../lib/ai'
+import { priceFor } from '../lib/constants'
 
 const EXAMPLES = [
   'Гвозди 100шт, Молоток слесалный 5шт, Саморез по дереву 3.5x40 20 уп',
@@ -33,25 +34,59 @@ const EXAMPLES = [
 ]
 
 export default function Invoices() {
-  const { products, customers, suppliers, invoices, addInvoice, receiveStock } =
+  const { products, customers, suppliers, invoices, settings, priceTypes, addInvoice, receiveStock } =
     useStore()
+  const defType = priceTypes.find((t) => t.default)?.id || priceTypes[0]?.id
   const [kind, setKind] = useState('out') // out — расход (клиенту), in — приход (от поставщика)
   const [text, setText] = useState('')
   const [items, setItems] = useState(null)
   const [party, setParty] = useState('')
+  const [priceTypeId, setPriceTypeId] = useState(defType)
   const [applyStock, setApplyStock] = useState(true)
   const [busy, setBusy] = useState(false)
+  const [aiMode, setAiMode] = useState('')
 
   const parties = kind === 'out' ? customers : suppliers
+  const usingAI = !!settings.aiKey
 
-  const recognize = () => {
+  // подставить цены по выбранной категории (для расхода) / закупке (для прихода)
+  const applyType = (list, ptId) =>
+    list.map((it) => {
+      if (!it.productId) return it
+      const p = products.find((x) => x.id === it.productId)
+      if (!p) return it
+      return { ...it, price: kind === 'in' ? p.cost : priceFor(p, ptId) }
+    })
+
+  const changeType = (ptId) => {
+    setPriceTypeId(ptId)
+    if (items) setItems(applyType(items, ptId))
+  }
+
+  const recognize = async () => {
     if (!text.trim()) return
     setBusy(true)
-    // имитируем «обдумывание» ИИ; парсер локальный и мгновенный
-    setTimeout(() => {
-      setItems(parseInvoiceText(text, products))
-      setBusy(false)
-    }, 450)
+    setAiMode('')
+    try {
+      let result
+      if (usingAI) {
+        result = await aiParseInvoice(text, products, {
+          apiKey: settings.aiKey,
+          model: settings.aiModel,
+        })
+        setAiMode('DeepSeek')
+      } else {
+        await new Promise((r) => setTimeout(r, 450))
+        result = parseInvoiceText(text, products)
+        setAiMode('локально')
+      }
+      setItems(applyType(result, priceTypeId))
+    } catch (e) {
+      // ошибка облака → локальный фолбэк
+      setItems(applyType(parseInvoiceText(text, products), priceTypeId))
+      setAiMode('локально (ошибка облака)')
+    }
+    setBusy(false)
   }
 
   const total = useMemo(
@@ -83,6 +118,7 @@ export default function Invoices() {
         price: it.price || 0,
       })),
       total,
+      priceTypeId: kind === 'out' ? priceTypeId : null,
       source: text,
     }
     addInvoice(inv)
@@ -155,15 +191,25 @@ export default function Invoices() {
             onClick={recognize}
             disabled={!text.trim() || busy}
           >
-            {busy ? 'ИИ распознаёт…' : 'Распознать в накладную'}
+            {busy
+              ? 'ИИ распознаёт…'
+              : usingAI
+                ? 'Распознать через DeepSeek'
+                : 'Распознать в накладную'}
           </Button>
+          <div className="mt-2 flex items-center gap-1.5 text-[12px] text-muted">
+            <span className={cx('w-2 h-2 rounded-full', usingAI ? 'bg-ok' : 'bg-warn')} />
+            {usingAI
+              ? 'Облачный ИИ DeepSeek подключён'
+              : 'Локальный разбор (ключ DeepSeek — в Настройках)'}
+          </div>
 
           {items && (
-            <div className="mt-4 p-3 rounded-xl bg-brand-soft/50 border border-brand/20 text-[13px] flex items-center gap-2">
+            <div className="mt-3 p-3 rounded-xl bg-brand-soft/50 border border-brand/20 text-[13px] flex items-center gap-2">
               <Sparkles size={15} className="text-brand shrink-0" />
               <span>
-                Распознано <b>{items.length}</b>, сопоставлено с каталогом{' '}
-                <b>{matchedCount}</b>. Проверьте цены и количество.
+                Распознано <b>{items.length}</b>, сопоставлено <b>{matchedCount}</b>
+                {aiMode && <> · режим: <b>{aiMode}</b></>}. Проверьте цены и количество.
               </span>
             </div>
           )}
@@ -242,16 +288,38 @@ export default function Invoices() {
                     {money(total)}
                   </span>
                 </div>
-                <Field label={kind === 'out' ? 'Покупатель' : 'Поставщик'}>
-                  <Select value={party} onChange={(e) => setParty(e.target.value)}>
-                    <option value="">— выберите —</option>
-                    {parties.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name}
-                      </option>
-                    ))}
-                  </Select>
-                </Field>
+                <div className="grid grid-cols-2 gap-3">
+                  <Field label={kind === 'out' ? 'Покупатель' : 'Поставщик'}>
+                    <Select
+                      value={party}
+                      onChange={(e) => {
+                        setParty(e.target.value)
+                        if (kind === 'out') {
+                          const c = customers.find((x) => x.id === e.target.value)
+                          if (c?.priceTypeId) changeType(c.priceTypeId)
+                        }
+                      }}
+                    >
+                      <option value="">— выберите —</option>
+                      {parties.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name}
+                        </option>
+                      ))}
+                    </Select>
+                  </Field>
+                  {kind === 'out' && (
+                    <Field label="Категория цен">
+                      <Select value={priceTypeId} onChange={(e) => changeType(e.target.value)}>
+                        {priceTypes.map((t) => (
+                          <option key={t.id} value={t.id}>
+                            {t.name}
+                          </option>
+                        ))}
+                      </Select>
+                    </Field>
+                  )}
+                </div>
                 {kind === 'in' && (
                   <label className="flex items-center gap-2 text-sm text-muted cursor-pointer">
                     <input

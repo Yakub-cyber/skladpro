@@ -1,7 +1,7 @@
 // Демо-данные оптового строительно-хозяйственного склада.
 // Создаются один раз и сохраняются в localStorage (можно сбросить в Настройках).
 
-import { GRID_W } from '../lib/constants'
+import { GRID_W, PRICE_TYPE_SEED } from '../lib/constants'
 
 // Детерминированный PRNG, чтобы демо было стабильным
 function mulberry32(seed) {
@@ -111,8 +111,12 @@ export function makeSeed() {
   const products = PRODUCTS.map((p) => {
     const weighted = p.sku in WEIGHTED
     const marked = MARKED.has(p.sku)
+    // цены по категориям (демо: базовая × коэффициент типа)
+    const prices = {}
+    for (const t of PRICE_TYPE_SEED) prices[t.id] = Math.round(p.price * t.factor)
     return {
       ...p,
+      prices,
       weighted,
       plu: weighted ? WEIGHTED[p.sku] : undefined,
       marked,
@@ -122,6 +126,11 @@ export function makeSeed() {
     }
   })
 
+  const ptByType = {
+    ООО: 'pt_opt_delivery',
+    ИП: 'pt_opt_local',
+    Бригада: 'pt_credit',
+  }
   const customers = C.map((r, i) => ({
     id: `c${i + 1}`,
     name: r[0],
@@ -133,6 +142,7 @@ export function makeSeed() {
     totalSpent: r[5],
     bonus: r[6],
     since: iso(now - r[7] * day),
+    priceTypeId: ptByType[r[1]] || 'pt_retail',
   }))
 
   const suppliers = S.map((r, i) => ({
@@ -223,6 +233,7 @@ export function makeSeed() {
     audit: [],
     shifts,
     activeShiftId: null,
+    priceTypes: PRICE_TYPE_SEED.map(({ factor, ...t }) => t),
     invoices: [],
     cells: CELLS,
     settings: {

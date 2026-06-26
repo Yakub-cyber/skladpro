@@ -162,12 +162,20 @@ export default function Storefront() {
               const inCart = cart[p.id] || 0
               return (
                 <Card key={p.id} className="p-4 flex flex-col">
-                  <div
-                    className="h-24 rounded-xl grid place-items-center mb-3"
-                    style={{ background: `color-mix(in srgb, ${c.color} 12%, transparent)` }}
-                  >
-                    <Icon size={34} style={{ color: c.color }} />
-                  </div>
+                  {p.image ? (
+                    <img
+                      src={p.image}
+                      alt={p.name}
+                      className="h-24 w-full rounded-xl object-cover mb-3"
+                    />
+                  ) : (
+                    <div
+                      className="h-24 rounded-xl grid place-items-center mb-3"
+                      style={{ background: `color-mix(in srgb, ${c.color} 12%, transparent)` }}
+                    >
+                      <Icon size={34} style={{ color: c.color }} />
+                    </div>
+                  )}
                   <div className="flex items-center gap-1.5 mb-0.5">
                     <span className="text-[11px]" style={{ color: c.color }}>
                       {p.category}

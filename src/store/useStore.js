@@ -80,6 +80,9 @@ export const useStore = create(
 
       // ── Товары ───────────────────────────────────────────────
       addProduct: (p) => {
+        const pts = get().priceTypes || []
+        const prices =
+          p.prices || Object.fromEntries(pts.map((t) => [t.id, p.price || 0]))
         set((s) => ({
           products: [
             {
@@ -90,6 +93,7 @@ export const useStore = create(
               weighted: false,
               marked: false,
               codes: [],
+              prices,
               ...p,
             },
             ...s.products,
@@ -366,7 +370,8 @@ export const useStore = create(
       },
 
       // ── Клиенты ──────────────────────────────────────────────
-      addCustomer: (c) =>
+      addCustomer: (c) => {
+        const def = get().priceTypes?.find((t) => t.default)?.id || 'pt_retail'
         set((s) => ({
           customers: [
             {
@@ -375,11 +380,13 @@ export const useStore = create(
               totalSpent: 0,
               bonus: 0,
               since: new Date().toISOString(),
+              priceTypeId: def,
               ...c,
             },
             ...s.customers,
           ],
-        })),
+        }))
+      },
       updateCustomer: (id, patch) =>
         set((s) => ({
           customers: s.customers.map((c) => (c.id === id ? { ...c, ...patch } : c)),
@@ -388,6 +395,42 @@ export const useStore = create(
       // ── Поставщики ───────────────────────────────────────────
       addSupplier: (sup) =>
         set((s) => ({ suppliers: [{ id: uid('s'), ...sup }, ...s.suppliers] })),
+
+      // ── Категории цен ────────────────────────────────────────
+      addPriceType: (pt) => {
+        const id = uid('pt')
+        set((s) => ({
+          priceTypes: [...s.priceTypes, { id, color: '#94a3b8', ...pt }],
+          // у всех товаров новая категория = базовая цена
+          products: s.products.map((p) => ({
+            ...p,
+            prices: { ...p.prices, [id]: p.prices?.[id] ?? p.price ?? 0 },
+          })),
+        }))
+        get().logAction(`Добавлена категория цен «${pt.name}»`, { section: 'Цены', type: 'create' })
+      },
+      updatePriceType: (id, patch) =>
+        set((s) => ({
+          priceTypes: s.priceTypes.map((t) => (t.id === id ? { ...t, ...patch } : t)),
+        })),
+      removePriceType: (id) =>
+        set((s) => {
+          if (s.priceTypes.find((t) => t.id === id)?.default) return {}
+          return { priceTypes: s.priceTypes.filter((t) => t.id !== id) }
+        }),
+      setDefaultPriceType: (id) =>
+        set((s) => ({
+          priceTypes: s.priceTypes.map((t) => ({ ...t, default: t.id === id })),
+        })),
+      // Установить цену товара по категории
+      setProductPrice: (productId, priceTypeId, value) =>
+        set((s) => ({
+          products: s.products.map((p) =>
+            p.id === productId
+              ? { ...p, prices: { ...p.prices, [priceTypeId]: Number(value) || 0 } }
+              : p,
+          ),
+        })),
 
       // ── Сотрудники / роли ────────────────────────────────────
       addEmployee: (e) =>
@@ -425,7 +468,7 @@ export const useStore = create(
     }),
     {
       name: 'sklad.db',
-      version: 3,
+      version: 4,
       migrate: (state, version) => {
         if (!state) return state
         if (version < 2) {
@@ -449,6 +492,25 @@ export const useStore = create(
             codes: [],
             plu: seedById[p.id]?.plu,
             ...p,
+          }))
+        }
+        if (version < 4) {
+          // категории цен
+          const seed = makeSeed()
+          state.priceTypes = state.priceTypes?.length ? state.priceTypes : seed.priceTypes
+          const pts = state.priceTypes
+          const defId = pts.find((t) => t.default)?.id || pts[0]?.id
+          const seedPr = Object.fromEntries(seed.products.map((p) => [p.sku, p.prices]))
+          state.products = (state.products || []).map((p) => ({
+            ...p,
+            prices:
+              p.prices ||
+              seedPr[p.sku] ||
+              Object.fromEntries(pts.map((t) => [t.id, p.price || 0])),
+          }))
+          state.customers = (state.customers || []).map((c) => ({
+            ...c,
+            priceTypeId: c.priceTypeId || defId,
           }))
         }
         return state

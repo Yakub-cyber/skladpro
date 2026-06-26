@@ -21,7 +21,10 @@ import {
   Scale,
   ShieldCheck,
   Tag,
+  ImagePlus,
+  X,
 } from 'lucide-react'
+import { compressImage } from '../lib/image'
 import {
   Card,
   Button,
@@ -142,15 +145,23 @@ export default function Products() {
                   >
                     <td className="py-2.5 px-4">
                       <div className="flex items-center gap-3">
-                        <div
-                          className="h-9 w-9 rounded-lg grid place-items-center shrink-0"
-                          style={{
-                            background: `color-mix(in srgb, ${c.color} 16%, transparent)`,
-                            color: c.color,
-                          }}
-                        >
-                          <Icon size={17} />
-                        </div>
+                        {p.image ? (
+                          <img
+                            src={p.image}
+                            alt=""
+                            className="h-9 w-9 rounded-lg object-cover shrink-0"
+                          />
+                        ) : (
+                          <div
+                            className="h-9 w-9 rounded-lg grid place-items-center shrink-0"
+                            style={{
+                              background: `color-mix(in srgb, ${c.color} 16%, transparent)`,
+                              color: c.color,
+                            }}
+                          >
+                            <Icon size={17} />
+                          </div>
+                        )}
                         <div className="min-w-0">
                           <div className="font-medium truncate flex items-center gap-1.5">
                             {p.name}
@@ -205,6 +216,48 @@ export default function Products() {
       )}
       {showImport && <ImportModal onClose={() => setShowImport(false)} />}
       {showLabels && <LabelsModal products={list} onClose={() => setShowLabels(false)} />}
+    </div>
+  )
+}
+
+function ImageField({ value, onChange }) {
+  const [busy, setBusy] = useState(false)
+  const onFile = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setBusy(true)
+    try {
+      const dataUrl = await compressImage(file)
+      onChange(dataUrl)
+    } catch {
+      // игнорируем
+    }
+    setBusy(false)
+    e.target.value = ''
+  }
+  return (
+    <div className="flex items-center gap-3">
+      <div className="h-20 w-20 rounded-xl bg-surface-2 border border-line overflow-hidden grid place-items-center shrink-0">
+        {value ? (
+          <img src={value} alt="" className="w-full h-full object-cover" />
+        ) : (
+          <ImagePlus size={24} className="text-muted" />
+        )}
+      </div>
+      <div className="flex flex-col gap-1.5">
+        <label className="inline-flex items-center gap-2 h-9 px-3 rounded-lg bg-surface-2 hover:bg-surface-3 text-sm cursor-pointer w-fit">
+          <ImagePlus size={15} /> {busy ? 'Обработка…' : value ? 'Заменить фото' : 'Добавить фото'}
+          <input type="file" accept="image/*" onChange={onFile} className="hidden" />
+        </label>
+        {value && (
+          <button
+            onClick={() => onChange('')}
+            className="inline-flex items-center gap-1.5 text-[12px] text-muted hover:text-bad w-fit px-1"
+          >
+            <X size={13} /> Убрать
+          </button>
+        )}
+      </div>
     </div>
   )
 }
@@ -264,7 +317,7 @@ function Chip({ active, onClick, children }) {
 }
 
 function ProductModal({ product, onClose }) {
-  const { addProduct, updateProduct, adjustStock, removeProduct } = useStore()
+  const { addProduct, updateProduct, adjustStock, removeProduct, priceTypes } = useStore()
   const isNew = !product
   const [f, setF] = useState(
     product || {
@@ -278,14 +331,22 @@ function ProductModal({ product, onClose }) {
       minStock: 0,
       cell: CELLS[0].id,
       tags: [],
+      prices: {},
     },
   )
   const [receive, setReceive] = useState('')
   const set = (k, v) => setF((s) => ({ ...s, [k]: v }))
+  const defType = priceTypes.find((t) => t.default)?.id || priceTypes[0]?.id
+  const priceOf = (tid) => f.prices?.[tid] ?? f.price ?? 0
+  const setPrice = (tid, v) =>
+    setF((s) => ({ ...s, prices: { ...s.prices, [tid]: Number(v) || 0 } }))
 
   const save = () => {
-    if (isNew) addProduct(f)
-    else updateProduct(product.id, f)
+    // базовая цена = цена категории по умолчанию (для совместимости отображения)
+    const price = priceOf(defType)
+    const data = { ...f, price }
+    if (isNew) addProduct(data)
+    else updateProduct(product.id, data)
     onClose()
   }
   const doReceive = () => {
@@ -332,6 +393,7 @@ function ProductModal({ product, onClose }) {
       }
     >
       <div className="space-y-4">
+        <ImageField value={f.image} onChange={(v) => set('image', v)} />
         {!isNew && (
           <div className="flex items-center gap-2 p-3 rounded-xl bg-surface-2">
             <PackagePlus size={18} className="text-brand" />
@@ -364,16 +426,9 @@ function ProductModal({ product, onClose }) {
             </Select>
           </Field>
         </div>
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-2 gap-3">
           <Field label="Ед. изм.">
             <Input value={f.unit} onChange={(e) => set('unit', e.target.value)} />
-          </Field>
-          <Field label="Цена опт, ₽">
-            <Input
-              type="number"
-              value={f.price}
-              onChange={(e) => set('price', +e.target.value)}
-            />
           </Field>
           <Field label="Закупка, ₽">
             <Input
@@ -382,6 +437,37 @@ function ProductModal({ product, onClose }) {
               onChange={(e) => set('cost', +e.target.value)}
             />
           </Field>
+        </div>
+
+        <div>
+          <span className="block text-[13px] font-medium text-muted mb-2">
+            Цены по категориям
+          </span>
+          <div className="space-y-2">
+            {priceTypes.map((t) => (
+              <div key={t.id} className="flex items-center gap-2">
+                <span
+                  className="w-2.5 h-2.5 rounded-full shrink-0"
+                  style={{ background: t.color }}
+                />
+                <span className="text-[13px] flex-1 truncate">
+                  {t.name}
+                  {t.default && <span className="text-muted"> · база</span>}
+                </span>
+                <div className="relative w-32">
+                  <Input
+                    type="number"
+                    value={priceOf(t.id)}
+                    onChange={(e) => setPrice(t.id, e.target.value)}
+                    className="text-right pr-7"
+                  />
+                  <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[12px] text-muted">
+                    ₽
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
         <div className="grid grid-cols-3 gap-3">
           <Field label="Остаток">

@@ -327,6 +327,45 @@ export async function askLLM(prompt, { apiKey, model = 'deepseek-chat' } = {}) {
       temperature: 0.2,
     }),
   })
+  if (!res.ok) {
+    const t = await res.text().catch(() => '')
+    throw new Error(`DeepSeek ${res.status}: ${t.slice(0, 80)}`)
+  }
   const data = await res.json()
   return data.choices?.[0]?.message?.content ?? ''
+}
+
+// Разбор накладной через облачный LLM (DeepSeek). Фолбэк — локальный парсер.
+export async function aiParseInvoice(text, products = [], { apiKey, model } = {}) {
+  if (!apiKey) return parseInvoiceText(text, products)
+  const prompt =
+    'Ты помощник склада. Разбери текст накладной в JSON-массив позиций. ' +
+    'Каждый элемент: {"name": строка, "qty": число, "unit": строка (шт/кг/уп/м/л и т.п.)}. ' +
+    'Размеры (3.5x40) — часть названия, НЕ количество. Верни ТОЛЬКО JSON-массив, без пояснений.\n\nТекст:\n' +
+    text
+  const raw = await askLLM(prompt, { apiKey, model })
+  const json = raw.slice(raw.indexOf('['), raw.lastIndexOf(']') + 1)
+  let arr
+  try {
+    arr = JSON.parse(json)
+  } catch {
+    return parseInvoiceText(text, products) // не распарсилось — локальный фолбэк
+  }
+  return arr
+    .filter((x) => x && x.name)
+    .map((x) => {
+      const match = matchProduct(x.name, products)
+      const product = match?.product
+      return {
+        name: product?.name || x.name,
+        qty: Number(x.qty) || 1,
+        unit: product?.unit || x.unit || 'шт',
+        sku: product?.sku || null,
+        price: product?.price ?? null,
+        productId: product?.id || null,
+        matched: !!product,
+        confidence: match ? Math.round(match.score * 100) : 0,
+        raw: x.name,
+      }
+    })
 }

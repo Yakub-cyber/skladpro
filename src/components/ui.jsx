@@ -184,17 +184,17 @@ export function Modal({ open, onClose, title, children, footer, wide }) {
   if (!open) return null
   return (
     <div
-      className="fixed inset-0 z-50 grid place-items-center p-4 bg-black/55 backdrop-blur-sm animate-fadeUp"
+      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/55 backdrop-blur-sm animate-fadeUp"
       onMouseDown={onClose}
     >
       <div
         className={cx(
-          'card w-full max-h-[90vh] overflow-auto',
+          'card w-full flex flex-col max-h-[calc(100dvh-1.5rem)] sm:max-h-[calc(100dvh-2rem)]',
           wide ? 'max-w-3xl' : 'max-w-lg',
         )}
         onMouseDown={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between px-5 h-14 border-b border-line sticky top-0 bg-surface z-10">
+        <div className="flex items-center justify-between px-5 h-14 border-b border-line shrink-0">
           <h3 className="font-semibold">{title}</h3>
           <button
             onClick={onClose}
@@ -203,9 +203,9 @@ export function Modal({ open, onClose, title, children, footer, wide }) {
             <X size={18} />
           </button>
         </div>
-        <div className="p-5">{children}</div>
+        <div className="p-5 overflow-y-auto flex-1 min-h-0">{children}</div>
         {footer && (
-          <div className="px-5 py-4 border-t border-line bg-surface-2/40 flex justify-end gap-2 sticky bottom-0">
+          <div className="px-5 py-4 border-t border-line bg-surface-2/40 flex justify-end gap-2 shrink-0">
             {footer}
           </div>
         )}

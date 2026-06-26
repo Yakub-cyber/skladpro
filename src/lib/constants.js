@@ -75,6 +75,19 @@ export const canAccess = (roleKey, perm) => {
   return r.access === '*' || r.access.includes(perm)
 }
 
+// Категории (типы) цен. factor — только для генерации демо-цен.
+export const PRICE_TYPE_SEED = [
+  { id: 'pt_retail', name: 'Розница', factor: 1.0, default: true, color: '#7c6cff' },
+  { id: 'pt_opt_delivery', name: 'Опт с доставкой', factor: 0.93, color: '#38bdf8' },
+  { id: 'pt_opt_local', name: 'Опт на месте', factor: 0.88, color: '#10b981' },
+  { id: 'pt_credit', name: 'В долг', factor: 1.06, color: '#f59e0b' },
+  { id: 'pt_internal', name: 'На склад', factor: 0.82, color: '#94a3b8' },
+]
+
+// Цена товара по выбранной категории (с откатом на базовую)
+export const priceFor = (product, priceTypeId) =>
+  product?.prices?.[priceTypeId] ?? product?.price ?? 0
+
 // Геометрия склада
 export const GRID_W = 15
 export const GRID_H = 9

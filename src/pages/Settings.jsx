@@ -11,13 +11,37 @@ import {
   Check,
   Smartphone,
   KeyRound,
+  Tags,
+  Plus,
+  Trash2,
+  Star,
+  Loader2,
 } from 'lucide-react'
 import { Section, Button, Field, Input, Select, Badge, cx } from '../components/ui'
 import { useStore } from '../store/useStore'
+import { askLLM } from '../lib/ai'
 
 export default function Settings() {
   const { settings, updateSettings, resetDemo } = useStore()
   const [saved, setSaved] = useState(false)
+  const [aiTest, setAiTest] = useState(null) // null | 'loading' | {ok, msg}
+
+  const testAI = async () => {
+    if (!settings.aiKey) {
+      setAiTest({ ok: false, msg: 'Сначала введите API-ключ' })
+      return
+    }
+    setAiTest('loading')
+    try {
+      const r = await askLLM('Ответь одним словом по-русски: работает?', {
+        apiKey: settings.aiKey,
+        model: settings.aiModel,
+      })
+      setAiTest({ ok: true, msg: (r || 'OK').trim().slice(0, 80) })
+    } catch (e) {
+      setAiTest({ ok: false, msg: String(e.message || e).slice(0, 90) })
+    }
+  }
   const [dark, setDark] = useState(() =>
     document.documentElement.classList.contains('dark'),
   )
@@ -87,6 +111,8 @@ export default function Settings() {
         )}
       </Section>
 
+      <PriceTypesSection />
+
       {/* ИИ */}
       <Section
         title={
@@ -116,11 +142,28 @@ export default function Settings() {
             </Select>
           </Field>
         </div>
-        <div className="mt-3 flex items-center gap-2 text-[13px] text-muted">
-          <span className={cx('w-2 h-2 rounded-full', settings.aiKey ? 'bg-ok' : 'bg-warn')} />
-          {settings.aiKey
-            ? 'Облачный режим доступен'
-            : 'Локальный режим (оффлайн) — без ключа, мгновенно'}
+        <div className="mt-3 flex flex-wrap items-center gap-3">
+          <span className="flex items-center gap-2 text-[13px] text-muted">
+            <span className={cx('w-2 h-2 rounded-full', settings.aiKey ? 'bg-ok' : 'bg-warn')} />
+            {settings.aiKey
+              ? 'Облачный режим доступен'
+              : 'Локальный режим (оффлайн) — без ключа, мгновенно'}
+          </span>
+          <Button
+            size="sm"
+            variant="soft"
+            onClick={testAI}
+            disabled={aiTest === 'loading'}
+            icon={aiTest === 'loading' ? Loader2 : Sparkles}
+            className={aiTest === 'loading' ? '[&>svg]:animate-spin' : ''}
+          >
+            Проверить подключение
+          </Button>
+          {aiTest && aiTest !== 'loading' && (
+            <Badge tone={aiTest.ok ? 'ok' : 'bad'}>
+              {aiTest.ok ? <Check size={12} /> : '×'} {aiTest.ok ? `Ответ: «${aiTest.msg}»` : aiTest.msg}
+            </Badge>
+          )}
         </div>
       </Section>
 
@@ -202,5 +245,77 @@ export default function Settings() {
         СкладПро · прототип складской системы с ИИ
       </p>
     </div>
+  )
+}
+
+function PriceTypesSection() {
+  const { priceTypes, addPriceType, updatePriceType, removePriceType, setDefaultPriceType } =
+    useStore()
+  const [name, setName] = useState('')
+
+  return (
+    <Section
+      title={
+        <span className="flex items-center gap-2">
+          <Tags size={16} className="text-brand" /> Категории цен
+        </span>
+      }
+      subtitle="Типы цен (опт, в долг, на месте…). В заказе выбираете категорию — цены пересчитываются."
+    >
+      <div className="space-y-2">
+        {priceTypes.map((t) => (
+          <div key={t.id} className="flex items-center gap-2 p-2 rounded-xl bg-surface-2">
+            <span className="w-3 h-3 rounded-full shrink-0" style={{ background: t.color }} />
+            <input
+              value={t.name}
+              onChange={(e) => updatePriceType(t.id, { name: e.target.value })}
+              className="flex-1 min-w-0 bg-transparent text-sm font-medium outline-none"
+            />
+            <button
+              onClick={() => setDefaultPriceType(t.id)}
+              title="Сделать по умолчанию"
+              className={cx(
+                'h-8 px-2 rounded-lg flex items-center gap-1 text-[12px] shrink-0',
+                t.default ? 'bg-brand-soft text-brand' : 'text-muted hover:bg-surface-3',
+              )}
+            >
+              <Star size={13} className={t.default ? 'fill-current' : ''} />
+              {t.default ? 'по умолч.' : ''}
+            </button>
+            {!t.default && (
+              <button
+                onClick={() => removePriceType(t.id)}
+                className="h-8 w-8 grid place-items-center rounded-lg text-muted hover:text-bad shrink-0"
+              >
+                <Trash2 size={15} />
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
+      <div className="flex gap-2 mt-3">
+        <Input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="Новая категория, напр. «Опт от 100к»"
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && name.trim()) {
+              addPriceType({ name: name.trim() })
+              setName('')
+            }
+          }}
+        />
+        <Button
+          icon={Plus}
+          disabled={!name.trim()}
+          onClick={() => {
+            addPriceType({ name: name.trim() })
+            setName('')
+          }}
+        >
+          Добавить
+        </Button>
+      </div>
+    </Section>
   )
 }
