@@ -8,6 +8,7 @@ import {
   Gift,
   Crown,
   Building2,
+  Wallet,
   X,
 } from 'lucide-react'
 import {
@@ -21,6 +22,7 @@ import {
   Avatar,
   Empty,
   Progress,
+  cx,
 } from '../components/ui'
 import { useStore } from '../store/useStore'
 import { money, num, dateFull, dateShort, relTime } from '../lib/format'
@@ -98,9 +100,16 @@ export default function Customers() {
                     {money(c.totalSpent)}
                   </div>
                 </div>
-                <Badge tone={tier.key === 'base' ? 'muted' : 'brand'}>
-                  <Crown size={11} /> {tier.label}
-                </Badge>
+                <div className="text-right">
+                  <Badge tone={tier.key === 'base' ? 'muted' : 'brand'}>
+                    <Crown size={11} /> {tier.label}
+                  </Badge>
+                  {c.balance > 0 && (
+                    <div className="text-[11px] text-bad mt-1 font-medium">
+                      долг {money(c.balance)}
+                    </div>
+                  )}
+                </div>
               </div>
             </button>
           )
@@ -124,7 +133,10 @@ export default function Customers() {
   )
 }
 
-function CustomerModal({ customer: c, orders, onClose }) {
+function CustomerModal({ customer, orders, onClose }) {
+  const addPayment = useStore((s) => s.addPayment)
+  const c = useStore((s) => s.customers.find((x) => x.id === customer.id)) || customer
+  const [pay, setPay] = useState('')
   const tier = tierFor(c.totalSpent)
   const idx = TIERS.findIndex((t) => t.key === tier.key)
   const next = TIERS[idx + 1]
@@ -147,11 +159,51 @@ function CustomerModal({ customer: c, orders, onClose }) {
         </Badge>
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
         <Mini label="Оборот" value={money(c.totalSpent)} />
         <Mini label="Заказов" value={num(orders.length)} />
         <Mini label="Бонусы" value={`${num(c.bonus)} б.`} icon={Gift} />
         <Mini label="Город" value={c.city} icon={MapPin} />
+      </div>
+
+      {/* Баланс / задолженность */}
+      <div
+        className={cx(
+          'mb-5 p-4 rounded-xl border',
+          c.balance > 0 ? 'bg-bad-soft border-bad/20' : 'bg-ok-soft border-ok/20',
+        )}
+      >
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <div className="text-[12px] text-muted flex items-center gap-1.5">
+              <Wallet size={13} /> {c.balance > 0 ? 'Задолженность' : 'Расчётов нет'}
+            </div>
+            <div className={cx('text-xl font-semibold tabular-nums', c.balance > 0 ? 'text-bad' : 'text-ok')}>
+              {money(c.balance || 0)}
+            </div>
+          </div>
+          {c.balance > 0 && (
+            <div className="flex items-end gap-2">
+              <input
+                type="number"
+                value={pay}
+                onChange={(e) => setPay(e.target.value)}
+                placeholder="Сумма"
+                className="w-28 h-10 px-3 rounded-xl bg-surface border border-line text-sm outline-none focus:border-brand"
+              />
+              <Button
+                icon={Wallet}
+                onClick={() => {
+                  addPayment(c.id, pay)
+                  setPay('')
+                }}
+                disabled={!pay}
+              >
+                Внести оплату
+              </Button>
+            </div>
+          )}
+        </div>
       </div>
 
       {next && (

@@ -18,10 +18,42 @@ const COL_X = { A: 3, B: 4, C: 6, D: 7, E: 9, F: 10, G: 12, H: 13 }
 export const CELLS = []
 for (const z of Object.keys(COL_X)) {
   for (let r = 1; r <= 5; r++) {
-    CELLS.push({ id: `${z}${r}`, zone: z, x: COL_X[z], y: r + 1 })
+    CELLS.push({
+      id: `${z}${r}`,
+      code: `${z}${r}`,
+      zone: z,
+      x: COL_X[z],
+      y: r + 1,
+      warehouseId: 'wh1',
+    })
   }
 }
-export const cellById = (id) => CELLS.find((c) => c.id === id)
+// демо-ячейки второго склада (магазин) — небольшая сетка
+const CELLS_WH2 = []
+for (const z of ['A', 'B', 'C']) {
+  for (let r = 1; r <= 3; r++) {
+    CELLS_WH2.push({
+      id: `wh2-${z}${r}`,
+      code: `${z}${r}`,
+      zone: z,
+      x: 3 + ['A', 'B', 'C'].indexOf(z) * 3,
+      y: r + 1,
+      warehouseId: 'wh2',
+    })
+  }
+}
+export const ALL_CELLS = [...CELLS, ...CELLS_WH2]
+
+export const WAREHOUSES = [
+  { id: 'wh1', name: 'Основной склад', address: 'Казань, Промзона 4' },
+  { id: 'wh2', name: 'Магазин на Гвардейской', address: 'Казань, Гвардейская 14' },
+]
+
+// поиск ячейки по id или коду (в пределах склада, если задан)
+export const cellById = (id, warehouseId) =>
+  ALL_CELLS.find(
+    (c) => (c.id === id || c.code === id) && (!warehouseId || c.warehouseId === warehouseId),
+  )
 
 // ── Товары ─────────────────────────────────────────────────────────────────
 // [sku, name, category, unit, price, cost, stock, minStock, cell, tags]
@@ -117,6 +149,7 @@ export function makeSeed() {
     return {
       ...p,
       prices,
+      warehouseId: 'wh1',
       weighted,
       plu: weighted ? WEIGHTED[p.sku] : undefined,
       marked,
@@ -143,6 +176,8 @@ export function makeSeed() {
     bonus: r[6],
     since: iso(now - r[7] * day),
     priceTypeId: ptByType[r[1]] || 'pt_retail',
+    // долг контрагента (положительный = должен нам)
+    balance: r[1] === 'Бригада' ? 8000 + i * 2200 : i % 3 === 0 ? 14500 : 0,
   }))
 
   const suppliers = S.map((r, i) => ({
@@ -235,7 +270,9 @@ export function makeSeed() {
     activeShiftId: null,
     priceTypes: PRICE_TYPE_SEED.map(({ factor, ...t }) => t),
     invoices: [],
-    cells: CELLS,
+    cells: ALL_CELLS.map((c) => ({ ...c })),
+    warehouses: WAREHOUSES.map((w) => ({ ...w })),
+    activeWarehouseId: 'wh1',
     settings: {
       company: 'СкладПро',
       currency: '₽',

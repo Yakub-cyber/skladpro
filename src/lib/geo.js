@@ -1,19 +1,19 @@
 // ──────────────────────────────────────────────────────────────────────────
-//  Маршрут доставки заказов по городу.
-//  Решает задачу коммивояжёра (TSP): склад → точки клиентов → склад,
-//  минимизируя путь. Жадный nearest-neighbour + улучшение 2-opt.
+//  Доставка по реальной карте (Казань). Координаты lat/lng, метрика —
+//  гаверсинус. Порядок объезда — TSP (nearest-neighbour + 2-opt).
+//  Реальный маршрут по дорогам — OSRM (с откатом на прямые линии).
 // ──────────────────────────────────────────────────────────────────────────
 
-export const DEPOT = { x: 9, y: 32, label: 'Склад' }
+// Склад (промзона на въезде в город)
+export const DEPOT = { lat: 55.748, lng: 49.213, label: 'Склад' }
 
-// Карта зоны доставки (условные единицы). 1 ед ≈ 0.3 км.
-export const MAP_W = 100
-export const MAP_H = 64
-const KM_PER_UNIT = 0.3
-const SPEED_KMH = 30 // средняя скорость по городу
-const MIN_PER_STOP = 8 // разгрузка/передача на точке
+// Центр зоны доставки
+const CENTER = { lat: 55.796, lng: 49.106 }
+const SPREAD = 0.07 // ~7 км разброс точек
 
-// Детерминированные координаты точки доставки из id заказа
+const SPEED_KMH = 28
+const MIN_PER_STOP = 8
+
 function hash(str = '') {
   let h = 2166136261
   for (let i = 0; i < str.length; i++) {
@@ -23,31 +23,35 @@ function hash(str = '') {
   return h >>> 0
 }
 
-export function geoFor(order) {
-  if (order.geo) return order.geo
+// Детерминированные координаты точки доставки заказа в пределах города
+export function geoLatLng(order) {
+  if (order.geo?.lat) return order.geo
   const h = hash(order.id + (order.address || ''))
-  const x = 16 + ((h % 1000) / 1000) * 78 // 16..94
-  const y = 7 + (((h >> 10) % 1000) / 1000) * 50 // 7..57
-  return { x: Math.round(x * 10) / 10, y: Math.round(y * 10) / 10 }
-}
-
-const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y)
-
-function totalDist(points, order, depot) {
-  let d = dist(depot, points[order[0]])
-  for (let i = 0; i < order.length - 1; i++) {
-    d += dist(points[order[i]], points[order[i + 1]])
+  const dx = ((h % 1000) / 1000 - 0.5) * 2 * SPREAD
+  const dy = (((h >> 10) % 1000) / 1000 - 0.5) * 2 * SPREAD
+  return {
+    lat: +(CENTER.lat + dy).toFixed(5),
+    lng: +(CENTER.lng + dx * 1.6).toFixed(5),
   }
-  d += dist(points[order[order.length - 1]], depot)
-  return d
 }
 
-// Главная: массив точек {x,y,...} → оптимальный порядок объезда
+export function haversineKm(a, b) {
+  const R = 6371
+  const toRad = (d) => (d * Math.PI) / 180
+  const dLat = toRad(b.lat - a.lat)
+  const dLng = toRad(b.lng - a.lng)
+  const s =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLng / 2) ** 2
+  return 2 * R * Math.asin(Math.sqrt(s))
+}
+
+// Оптимальный порядок объезда. points: [{lat,lng,...}]
 export function buildDeliveryRoute(points, depot = DEPOT) {
   const n = points.length
-  if (n === 0) return { order: [], distanceKm: 0, minutes: 0, legs: [] }
+  if (!n) return { order: [], distanceKm: 0, minutes: 0, legs: [] }
 
-  // 1) nearest-neighbour от склада
+  // nearest-neighbour
   const visited = new Array(n).fill(false)
   let order = []
   let cur = depot
@@ -56,7 +60,7 @@ export function buildDeliveryRoute(points, depot = DEPOT) {
     let bd = Infinity
     for (let i = 0; i < n; i++) {
       if (visited[i]) continue
-      const d = dist(cur, points[i])
+      const d = haversineKm(cur, points[i])
       if (d < bd) {
         bd = d
         bi = i
@@ -67,18 +71,21 @@ export function buildDeliveryRoute(points, depot = DEPOT) {
     cur = points[bi]
   }
 
-  // 2) улучшение 2-opt
+  const total = (ord) => {
+    let d = haversineKm(depot, points[ord[0]])
+    for (let i = 0; i < ord.length - 1; i++) d += haversineKm(points[ord[i]], points[ord[i + 1]])
+    return d + haversineKm(points[ord[ord.length - 1]], depot)
+  }
+
+  // 2-opt
   let improved = true
   let guard = 0
   while (improved && guard++ < 60) {
     improved = false
     for (let i = 0; i < n - 1; i++) {
       for (let j = i + 1; j < n; j++) {
-        const a = order.slice(0, i)
-        const b = order.slice(i, j + 1).reverse()
-        const c = order.slice(j + 1)
-        const cand = [...a, ...b, ...c]
-        if (totalDist(points, cand, depot) + 1e-6 < totalDist(points, order, depot)) {
+        const cand = [...order.slice(0, i), ...order.slice(i, j + 1).reverse(), ...order.slice(j + 1)]
+        if (total(cand) + 1e-9 < total(order)) {
           order = cand
           improved = true
         }
@@ -86,18 +93,42 @@ export function buildDeliveryRoute(points, depot = DEPOT) {
     }
   }
 
-  const units = totalDist(points, order, depot)
-  const distanceKm = Math.round(units * KM_PER_UNIT * 10) / 10
-  const minutes = Math.round((distanceKm / SPEED_KMH) * 60 + n * MIN_PER_STOP)
-
-  // плечи маршрута (для подписи расстояний между точками)
+  const km = total(order)
   const seq = [depot, ...order.map((i) => points[i]), depot]
   const legs = []
   for (let i = 0; i < seq.length - 1; i++) {
-    legs.push(Math.round(dist(seq[i], seq[i + 1]) * KM_PER_UNIT * 10) / 10)
+    legs.push(Math.round(haversineKm(seq[i], seq[i + 1]) * 10) / 10)
   }
+  return {
+    order,
+    distanceKm: Math.round(km * 10) / 10,
+    minutes: Math.round((km / SPEED_KMH) * 60 + n * MIN_PER_STOP),
+    legs,
+  }
+}
 
-  return { order, distanceKm, minutes, legs }
+// Реальный маршрут по дорогам через OSRM. waypoints: [{lat,lng}].
+// Возвращает { line: [[lat,lng]...], km, min } или null при ошибке.
+export async function fetchOsrmRoute(waypoints) {
+  if (waypoints.length < 2) return null
+  const coords = waypoints.map((p) => `${p.lng},${p.lat}`).join(';')
+  const url = `https://router.project-osrm.org/route/v1/driving/${coords}?overview=full&geometries=geojson`
+  try {
+    const ctrl = new AbortController()
+    const t = setTimeout(() => ctrl.abort(), 8000)
+    const res = await fetch(url, { signal: ctrl.signal })
+    clearTimeout(t)
+    const data = await res.json()
+    const r = data.routes?.[0]
+    if (!r) return null
+    return {
+      line: r.geometry.coordinates.map(([lng, lat]) => [lat, lng]),
+      km: Math.round((r.distance / 1000) * 10) / 10,
+      min: Math.round(r.duration / 60),
+    }
+  } catch {
+    return null
+  }
 }
 
 export const fmtDuration = (min) => {

@@ -12,10 +12,10 @@ import {
   Package,
 } from 'lucide-react'
 import { Card, Button, Badge, StatusBadge, Empty, cx } from '../components/ui'
-import DeliveryMap from '../components/DeliveryMap'
+import DeliveryMapLeaflet from '../components/DeliveryMapLeaflet'
 import { useStore } from '../store/useStore'
 import { money, num } from '../lib/format'
-import { buildDeliveryRoute, geoFor, fmtDuration } from '../lib/geo'
+import { buildDeliveryRoute, geoLatLng, DEPOT, fetchOsrmRoute, fmtDuration } from '../lib/geo'
 
 const TRUCKS = ['Газель А231 РТ', 'Газель В784 КX', 'Бортовой КамАЗ Е512', 'Каблук С310 АН']
 const DELIVERABLE = ['new', 'confirmed', 'picking', 'packed', 'shipped']
@@ -25,6 +25,8 @@ export default function Delivery() {
   const [selectedIds, setSelectedIds] = useState(() => new Set())
   const [inited, setInited] = useState(false)
   const [truck, setTruck] = useState(TRUCKS[0])
+  const [osrm, setOsrm] = useState(null) // реальный маршрут по дорогам
+  const [loadingRoute, setLoadingRoute] = useState(false)
 
   const candidates = useMemo(
     () =>
@@ -43,11 +45,46 @@ export default function Delivery() {
 
   const selectedOrders = candidates.filter((o) => selectedIds.has(o.id))
   const route = useMemo(
-    () => buildDeliveryRoute(selectedOrders.map((o) => geoFor(o))),
+    () => buildDeliveryRoute(selectedOrders.map((o) => geoLatLng(o))),
     [selectedOrders],
   )
   const orderedStops = route.order.map((i) => selectedOrders[i])
   const totalSum = selectedOrders.reduce((a, o) => a + o.total, 0)
+
+  // точки для карты (в порядке объезда)
+  const stops = orderedStops.map((o, i) => ({
+    ...geoLatLng(o),
+    id: o.id,
+    n: i + 1,
+    title: o.customerName,
+    label: o.address,
+    priority: o.priority,
+  }))
+
+  // запрос реального маршрута по дорогам (OSRM) при изменении набора точек
+  const stopKey = orderedStops.map((o) => o.id).join(',')
+  useEffect(() => {
+    let cancelled = false
+    if (!orderedStops.length) {
+      setOsrm(null)
+      return
+    }
+    setLoadingRoute(true)
+    const wpts = [DEPOT, ...stops, DEPOT]
+    fetchOsrmRoute(wpts).then((r) => {
+      if (!cancelled) {
+        setOsrm(r)
+        setLoadingRoute(false)
+      }
+    })
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stopKey])
+
+  const distKm = osrm?.km ?? route.distanceKm
+  const durMin = osrm?.min ?? route.minutes
 
   const toggle = (id) =>
     setSelectedIds((s) => {
@@ -157,7 +194,7 @@ export default function Delivery() {
                   variant="soft"
                   icon={Printer}
                   disabled={!orderedStops.length}
-                  onClick={() => printRoute(truck, orderedStops, route, phoneOf)}
+                  onClick={() => printRoute(truck, orderedStops, { ...route, distanceKm: distKm }, phoneOf)}
                 >
                   Лист водителя
                 </Button>
@@ -170,11 +207,26 @@ export default function Delivery() {
               <>
                 <div className="grid grid-cols-3 gap-3 mb-4">
                   <Mini icon={MapPin} label="Точек" value={num(selectedOrders.length)} />
-                  <Mini icon={Navigation} label="Путь" value={`${route.distanceKm} км`} />
-                  <Mini icon={Clock} label="В пути" value={fmtDuration(route.minutes)} />
+                  <Mini
+                    icon={Navigation}
+                    label={osrm ? 'Путь по дорогам' : 'Путь (оценка)'}
+                    value={loadingRoute ? '…' : `${distKm} км`}
+                  />
+                  <Mini icon={Clock} label="В пути" value={loadingRoute ? '…' : fmtDuration(durMin)} />
                 </div>
-                <div className="rounded-xl border border-line overflow-hidden bg-surface-2 p-2">
-                  <DeliveryMap orders={selectedOrders} route={route} />
+                <DeliveryMapLeaflet
+                  depot={DEPOT}
+                  stops={stops}
+                  line={osrm?.line}
+                  className="h-[440px] rounded-xl overflow-hidden border border-line"
+                />
+                <div className="mt-2 text-[12px] text-muted flex items-center gap-1.5">
+                  <span className={cx('w-2 h-2 rounded-full', osrm ? 'bg-ok' : 'bg-warn')} />
+                  {loadingRoute
+                    ? 'Строим маршрут по дорогам…'
+                    : osrm
+                      ? 'Реальный маршрут по дорогам (OSRM) на карте OpenStreetMap'
+                      : 'Прямые линии (сервис маршрутизации недоступен)'}
                 </div>
               </>
             )}
@@ -237,7 +289,7 @@ export default function Delivery() {
                     <Truck size={15} />
                   </span>
                   <span className="text-sm font-medium">
-                    Возврат на склад · всего {route.distanceKm} км, {fmtDuration(route.minutes)}
+                    Возврат на склад · всего {distKm} км, {fmtDuration(durMin)}
                   </span>
                 </div>
               </div>

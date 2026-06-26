@@ -85,6 +85,7 @@ export default function Dashboard() {
     [products, orders],
   )
   const stockValue = products.reduce((a, p) => a + p.stock * p.cost, 0)
+  const debt = customers.reduce((a, c) => a + (c.balance || 0), 0)
 
   return (
     <div className="space-y-5 animate-fadeUp">
@@ -114,9 +115,9 @@ export default function Dashboard() {
         <Stat
           label="Клиентов"
           value={num(customers.length)}
-          sub={`средний чек ${money(m.avg)}`}
+          sub={debt > 0 ? `дебиторка ${money(debt)}` : `средний чек ${money(m.avg)}`}
           icon={Users}
-          tone="ok"
+          tone={debt > 0 ? 'warn' : 'ok'}
         />
       </div>
 

@@ -274,7 +274,16 @@ export const useStore = create(
             }
             return np
           })
-          return { orders: [o, ...s.orders], products }
+          // заказ «в долг» увеличивает задолженность контрагента
+          let customers = s.customers
+          if (order.onCredit && order.customerId) {
+            customers = s.customers.map((c) =>
+              c.id === order.customerId
+                ? { ...c, balance: (c.balance || 0) + order.total }
+                : c,
+            )
+          }
+          return { orders: [o, ...s.orders], products, customers }
         })
         const o = get().orders.find((x) => x.id === id)
         get().logAction(`Создан заказ ${o?.no} на ${order.total || 0} ₽`, {
@@ -391,6 +400,18 @@ export const useStore = create(
         set((s) => ({
           customers: s.customers.map((c) => (c.id === id ? { ...c, ...patch } : c)),
         })),
+      // Приём оплаты — гасит задолженность контрагента
+      addPayment: (customerId, amount) => {
+        const a = Number(amount) || 0
+        if (a <= 0) return
+        set((s) => ({
+          customers: s.customers.map((c) =>
+            c.id === customerId ? { ...c, balance: Math.max(0, (c.balance || 0) - a) } : c,
+          ),
+        }))
+        const c = get().customers.find((x) => x.id === customerId)
+        get().logAction(`Оплата от «${c?.name}»: ${a} ₽`, { section: 'Финансы', type: 'in' })
+      },
 
       // ── Поставщики ───────────────────────────────────────────
       addSupplier: (sup) =>
@@ -432,6 +453,53 @@ export const useStore = create(
           ),
         })),
 
+      // ── Склады и ячейки (редактор размещения) ────────────────
+      setActiveWarehouse: (id) => set({ activeWarehouseId: id }),
+      addWarehouse: (w) => {
+        const id = uid('wh')
+        set((s) => ({ warehouses: [...s.warehouses, { id, ...w }], activeWarehouseId: id }))
+        get().logAction(`Добавлен склад «${w.name}»`, { section: 'Склады', type: 'create' })
+      },
+      removeWarehouse: (id) =>
+        set((s) => {
+          if (s.warehouses.length <= 1) return {}
+          const hasGoods = s.products.some((p) => p.warehouseId === id)
+          if (hasGoods) return {} // нельзя удалить склад с товарами
+          return {
+            warehouses: s.warehouses.filter((w) => w.id !== id),
+            cells: s.cells.filter((c) => c.warehouseId !== id),
+            activeWarehouseId:
+              s.activeWarehouseId === id
+                ? s.warehouses.find((w) => w.id !== id)?.id
+                : s.activeWarehouseId,
+          }
+        }),
+      addCell: (cell) =>
+        set((s) => ({
+          cells: [
+            ...s.cells,
+            {
+              id: uid('cell'),
+              warehouseId: s.activeWarehouseId,
+              zone: cell.code?.[0]?.toUpperCase() || 'A',
+              ...cell,
+            },
+          ],
+        })),
+      updateCell: (id, patch) =>
+        set((s) => ({
+          cells: s.cells.map((c) => (c.id === id ? { ...c, ...patch } : c)),
+        })),
+      removeCell: (id) =>
+        set((s) => ({ cells: s.cells.filter((c) => c.id !== id) })),
+      // Переместить товар в другую ячейку/склад
+      moveProduct: (productId, warehouseId, cellCode) =>
+        set((s) => ({
+          products: s.products.map((p) =>
+            p.id === productId ? { ...p, warehouseId, cell: cellCode } : p,
+          ),
+        })),
+
       // ── Сотрудники / роли ────────────────────────────────────
       addEmployee: (e) =>
         set((s) => ({
@@ -468,7 +536,7 @@ export const useStore = create(
     }),
     {
       name: 'sklad.db',
-      version: 4,
+      version: 6,
       migrate: (state, version) => {
         if (!state) return state
         if (version < 2) {
@@ -511,6 +579,36 @@ export const useStore = create(
           state.customers = (state.customers || []).map((c) => ({
             ...c,
             priceTypeId: c.priceTypeId || defId,
+          }))
+        }
+        if (version < 5) {
+          // несколько складов
+          const seed = makeSeed()
+          state.warehouses = state.warehouses?.length ? state.warehouses : seed.warehouses
+          state.activeWarehouseId = state.activeWarehouseId || seed.activeWarehouseId
+          // ячейкам и товарам — склад по умолчанию (основной)
+          const wh1 = state.warehouses[0]?.id || 'wh1'
+          if (!state.cells?.some((c) => c.warehouseId)) {
+            state.cells = (state.cells || []).map((c) => ({
+              ...c,
+              code: c.code || c.id,
+              warehouseId: wh1,
+            }))
+            // подмешиваем демо-ячейки второго склада
+            const extra = seed.cells.filter((c) => c.warehouseId !== wh1)
+            state.cells = [...state.cells, ...extra]
+          }
+          state.products = (state.products || []).map((p) => ({
+            ...p,
+            warehouseId: p.warehouseId || wh1,
+          }))
+        }
+        if (version < 6) {
+          // баланс/долг контрагентов
+          const seedC = Object.fromEntries(makeSeed().customers.map((c) => [c.id, c.balance]))
+          state.customers = (state.customers || []).map((c) => ({
+            ...c,
+            balance: c.balance ?? seedC[c.id] ?? 0,
           }))
         }
         return state

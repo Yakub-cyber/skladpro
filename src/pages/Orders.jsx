@@ -417,6 +417,10 @@ function NewOrderModal({ open, onClose, onCreated }) {
   const [priceTypeId, setPriceTypeId] = useState(defType)
   const [rows, setRows] = useState([])
   const [pq, setPq] = useState('')
+  const [onCredit, setOnCredit] = useState(false)
+  const [discount, setDiscount] = useState(0)
+  const isCreditType = (id) =>
+    priceTypes.find((t) => t.id === id)?.name.toLowerCase().includes('долг')
 
   const found = pq
     ? products
@@ -437,6 +441,7 @@ function NewOrderModal({ open, onClose, onCreated }) {
   // смена категории цен пересчитывает все позиции
   const changeType = (ptId) => {
     setPriceTypeId(ptId)
+    setOnCredit(isCreditType(ptId))
     setRows((rr) =>
       rr.map((x) => {
         const p = products.find((pp) => pp.id === x.productId)
@@ -463,7 +468,8 @@ function NewOrderModal({ open, onClose, onCreated }) {
           ],
     )
   }
-  const total = rows.reduce((a, r) => a + r.qty * r.price, 0)
+  const subtotal = rows.reduce((a, r) => a + r.qty * r.price, 0)
+  const total = Math.round(subtotal * (1 - (Number(discount) || 0) / 100))
 
   const submit = () => {
     const cust = customers.find((c) => c.id === customerId) || customers[0]
@@ -471,8 +477,11 @@ function NewOrderModal({ open, onClose, onCreated }) {
       customerId: cust.id,
       customerName: cust.name,
       items: rows,
+      subtotal,
+      discount: Number(discount) || 0,
       total,
       priceTypeId,
+      onCredit,
       address: `${cust.city}`,
       courier: 'Самовывоз',
     })
@@ -481,6 +490,8 @@ function NewOrderModal({ open, onClose, onCreated }) {
     setRows([])
     setCustomerId('')
     setPriceTypeId(defType)
+    setOnCredit(false)
+    setDiscount(0)
     onClose()
   }
 
@@ -596,9 +607,42 @@ function NewOrderModal({ open, onClose, onCreated }) {
                 </button>
               </div>
             ))}
-            <div className="flex justify-between items-center pt-2 text-sm">
-              <span className="text-muted">Итого по заказу</span>
-              <span className="text-lg font-semibold tabular-nums">{money(total)}</span>
+            <div className="pt-2 space-y-2 border-t border-line">
+              <div className="flex items-center gap-3 pt-1">
+                <label className="flex items-center gap-2 text-sm cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={onCredit}
+                    onChange={(e) => setOnCredit(e.target.checked)}
+                    className="accent-[var(--brand)] w-4 h-4"
+                  />
+                  Оформить в долг
+                </label>
+                <div className="flex items-center gap-1.5 ml-auto">
+                  <span className="text-[13px] text-muted">Скидка</span>
+                  <input
+                    type="number"
+                    min="0"
+                    max="100"
+                    value={discount}
+                    onChange={(e) => setDiscount(e.target.value)}
+                    className="w-16 h-8 px-2 rounded-lg bg-surface border border-line text-sm text-center"
+                  />
+                  <span className="text-[13px] text-muted">%</span>
+                </div>
+              </div>
+              {discount > 0 && (
+                <div className="flex justify-between text-[13px] text-muted">
+                  <span>Без скидки</span>
+                  <span className="tabular-nums line-through">{money(subtotal)}</span>
+                </div>
+              )}
+              <div className="flex justify-between items-center text-sm">
+                <span className="text-muted">
+                  Итого {onCredit && <span className="text-bad">· в долг</span>}
+                </span>
+                <span className="text-lg font-semibold tabular-nums">{money(total)}</span>
+              </div>
             </div>
           </div>
         )}
