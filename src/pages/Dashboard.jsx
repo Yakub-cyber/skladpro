@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   Wallet,
@@ -21,7 +21,7 @@ import {
   Tooltip,
   CartesianGrid,
 } from 'recharts'
-import { Stat, Card, Section, StatusBadge, Badge, Progress, Button } from '../components/ui'
+import { Stat, Card, Section, StatusBadge, Badge, Progress, Button, cx } from '../components/ui'
 import { useStore } from '../store/useStore'
 import { money, num, dateShort, plural } from '../lib/format'
 import { analyticsInsights, soldByProduct } from '../lib/ai'
@@ -36,8 +36,17 @@ const SEV = {
   brand: 'bg-brand-soft text-brand',
 }
 
+const PERIODS = [
+  { key: 'day', label: 'День' },
+  { key: 'week', label: 'Неделя' },
+  { key: 'month', label: 'Месяц' },
+  { key: 'quarter', label: 'Квартал' },
+  { key: 'year', label: 'Год' },
+]
+
 export default function Dashboard() {
   const { products, orders, customers } = useStore()
+  const [period, setPeriod] = useState('month')
 
   const m = useMemo(() => {
     const active = orders.filter((o) =>
@@ -48,27 +57,6 @@ export default function Dashboard() {
     const low = products.filter((p) => p.stock <= p.minStock)
     const avg = valid.length ? revenue / valid.length : 0
 
-    // выручка по дням (14 дней)
-    const days = []
-    for (let i = 13; i >= 0; i--) {
-      const d = new Date()
-      d.setHours(0, 0, 0, 0)
-      d.setDate(d.getDate() - i)
-      const key = d.toISOString().slice(0, 10)
-      const sum = valid
-        .filter((o) => o.createdAt.slice(0, 10) === key)
-        .reduce((a, o) => a + o.total, 0)
-      days.push({ label: dateShort(d.toISOString()), v: sum })
-    }
-    const firstHalf = days.slice(0, 7).reduce((a, d) => a + d.v, 0)
-    const secondHalf = days.slice(7).reduce((a, d) => a + d.v, 0)
-    // тренд показываем только при значимой базе, иначе проценты улетают в тысячи
-    const trend =
-      firstHalf > 5000
-        ? Math.max(-95, Math.min(99, Math.round(((secondHalf - firstHalf) / firstHalf) * 100)))
-        : null
-
-    // топ товары
     const sold = soldByProduct(orders)
     const top = Object.entries(sold)
       .map(([id, q]) => ({ p: products.find((x) => x.id === id), q }))
@@ -77,8 +65,10 @@ export default function Dashboard() {
       .slice(0, 5)
     const maxQ = top[0]?.q || 1
 
-    return { active, revenue, low, avg, days, trend, top, maxQ }
+    return { active, revenue, low, avg, top, maxQ }
   }, [products, orders])
+
+  const chart = useMemo(() => buildSeries(period, orders), [period, orders])
 
   const insights = useMemo(
     () => analyticsInsights({ products, orders }),
@@ -96,7 +86,7 @@ export default function Dashboard() {
           value={money(m.revenue)}
           icon={Wallet}
           tone="brand"
-          trend={m.trend}
+          trend={chart.trend}
         />
         <Stat
           label="Активные заказы"
@@ -125,12 +115,28 @@ export default function Dashboard() {
         {/* График выручки */}
         <Section
           className="lg:col-span-2"
-          title="Выручка, 14 дней"
-          subtitle={`Стоимость склада в закупке: ${money(stockValue)}`}
+          title="Выручка"
+          subtitle={`${chart.periodLabel} · склад в закупке ${money(stockValue)}`}
+          action={
+            <div className="flex gap-0.5 bg-surface-2 rounded-lg p-0.5">
+              {PERIODS.map((p) => (
+                <button
+                  key={p.key}
+                  onClick={() => setPeriod(p.key)}
+                  className={cx(
+                    'px-2.5 h-7 rounded-md text-[12px] font-medium transition',
+                    period === p.key ? 'bg-brand text-brand-ink' : 'text-muted hover:text-ink',
+                  )}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+          }
         >
           <div className="h-[260px] -ml-2">
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={m.days} margin={{ top: 6, right: 8, bottom: 0, left: 0 }}>
+              <AreaChart data={chart.series} margin={{ top: 6, right: 8, bottom: 0, left: 0 }}>
                 <defs>
                   <linearGradient id="rev" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="0%" stopColor="var(--brand)" stopOpacity={0.45} />
@@ -147,7 +153,8 @@ export default function Dashboard() {
                   tick={{ fill: 'var(--muted)', fontSize: 11 }}
                   axisLine={false}
                   tickLine={false}
-                  interval={1}
+                  interval="preserveStartEnd"
+                  minTickGap={16}
                 />
                 <YAxis
                   tick={{ fill: 'var(--muted)', fontSize: 11 }}
@@ -293,4 +300,69 @@ function ChartTip({ active, payload, label }) {
       <div className="font-semibold">{money(payload[0].value)}</div>
     </div>
   )
+}
+
+// Агрегация выручки по выбранному периоду
+function trendOf(series) {
+  const h = Math.floor(series.length / 2)
+  const first = series.slice(0, h).reduce((a, d) => a + d.v, 0)
+  const second = series.slice(h).reduce((a, d) => a + d.v, 0)
+  if (first < 1000) return null
+  return Math.max(-95, Math.min(99, Math.round(((second - first) / first) * 100)))
+}
+
+function buildSeries(period, orders) {
+  const valid = orders.filter((o) => o.status !== 'cancelled')
+  const sumIn = (from, to) =>
+    valid.reduce((a, o) => {
+      const t = new Date(o.createdAt).getTime()
+      return t >= from && t < to ? a + o.total : a
+    }, 0)
+  const now = new Date()
+  const DAY = 86400000
+  const ddmm = (d) => d.toLocaleDateString('ru-RU', { day: '2-digit', month: 'short' })
+
+  if (period === 'day') {
+    const start = new Date(now)
+    start.setHours(0, 0, 0, 0)
+    const series = Array.from({ length: 24 }, (_, h) => {
+      const from = start.getTime() + h * 3600000
+      return { label: `${String(h).padStart(2, '0')}:00`, v: Math.round(sumIn(from, from + 3600000)) }
+    })
+    return { series, trend: trendOf(series), periodLabel: 'сегодня, по часам' }
+  }
+  if (period === 'week' || period === 'month') {
+    const n = period === 'week' ? 7 : 30
+    const d0 = new Date(now)
+    d0.setHours(0, 0, 0, 0)
+    const series = []
+    for (let i = n - 1; i >= 0; i--) {
+      const day = new Date(d0)
+      day.setDate(day.getDate() - i)
+      const from = day.getTime()
+      series.push({ label: ddmm(day), v: Math.round(sumIn(from, from + DAY)) })
+    }
+    return { series, trend: trendOf(series), periodLabel: `${n} дней` }
+  }
+  if (period === 'quarter') {
+    const d0 = new Date(now)
+    d0.setHours(0, 0, 0, 0)
+    const series = []
+    for (let i = 12; i >= 0; i--) {
+      const from = d0.getTime() - i * 7 * DAY
+      series.push({ label: ddmm(new Date(from)), v: Math.round(sumIn(from, from + 7 * DAY)) })
+    }
+    return { series, trend: trendOf(series), periodLabel: '13 недель' }
+  }
+  // year — 12 месяцев
+  const series = []
+  for (let i = 11; i >= 0; i--) {
+    const mStart = new Date(now.getFullYear(), now.getMonth() - i, 1)
+    const mNext = new Date(now.getFullYear(), now.getMonth() - i + 1, 1)
+    series.push({
+      label: mStart.toLocaleDateString('ru-RU', { month: 'short' }),
+      v: Math.round(sumIn(mStart.getTime(), mNext.getTime())),
+    })
+  }
+  return { series, trend: trendOf(series), periodLabel: '12 месяцев' }
 }

@@ -236,6 +236,38 @@ export function makeSeed() {
     }
   })
 
+  // Историческая выручка за год (для графиков «квартал» / «год»)
+  for (let k = 0; k < 60; k++) {
+    const cust = pick(customers)
+    const nItems = 1 + Math.floor(rnd() * 3)
+    const items = []
+    const used = new Set()
+    for (let j = 0; j < nItems; j++) {
+      const p = pick(products)
+      if (used.has(p.id)) continue
+      used.add(p.id)
+      const qty = 1 + Math.floor(rnd() * 12)
+      items.push({ productId: p.id, name: p.name, qty, price: p.price, unit: p.unit, cell: p.cell })
+    }
+    const total = items.reduce((a, b) => a + b.qty * b.price, 0)
+    const ageDays = 30 + Math.floor(rnd() * 340) // 30..370 дней назад
+    const createdAt = now - ageDays * day
+    orders.push({
+      id: `oh${k + 1}`,
+      no: `ЗК-арх-${String(k + 1).padStart(4, '0')}`,
+      customerId: cust.id,
+      customerName: cust.name,
+      items,
+      total,
+      status: 'delivered',
+      priority: false,
+      courier: 'Самовывоз',
+      address: cust.city,
+      createdAt: iso(createdAt),
+      track: [{ status: 'delivered', at: iso(createdAt) }],
+    })
+  }
+
   const employees = [
     { id: 'e1', name: 'Аюб Гадиев', role: 'admin', phone: '+7 900 000-00-01', pin: '1111', active: true },
     { id: 'e2', name: 'Марат Хайруллин', role: 'manager', phone: '+7 900 000-00-02', pin: '2222', active: true },
@@ -278,6 +310,7 @@ export function makeSeed() {
       currency: '₽',
       aiKey: '',
       aiModel: 'deepseek-chat',
+      aiBaseUrl: 'https://api.proxyapi.ru/deepseek',
     },
   }
 }

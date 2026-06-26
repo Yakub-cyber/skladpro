@@ -10,6 +10,14 @@ export function checkDigitEAN13(digits12) {
   return (10 - (sum % 10)) % 10
 }
 
+// Сгенерировать валидный штучный штрихкод EAN-13 (префикс 46 — Россия)
+export function generateEan13(prefix = '46') {
+  let body = String(prefix)
+  while (body.length < 12) body += Math.floor(Math.random() * 10)
+  body = body.slice(0, 12)
+  return body + checkDigitEAN13(body)
+}
+
 // Сгенерировать весовой штрихкод по PLU и весу (кг)
 export function makeWeightBarcode(plu, weightKg) {
   const p = String(plu).padStart(5, '0').slice(-5)

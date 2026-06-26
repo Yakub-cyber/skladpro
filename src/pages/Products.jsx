@@ -23,6 +23,9 @@ import {
   Tag,
   ImagePlus,
   X,
+  Barcode,
+  RefreshCw,
+  ScanLine,
 } from 'lucide-react'
 import { compressImage } from '../lib/image'
 import {
@@ -41,8 +44,10 @@ import { useStore } from '../store/useStore'
 import { money, num } from '../lib/format'
 import { CATEGORIES, catInfo } from '../lib/constants'
 import { CELLS } from '../store/seed'
-import { printLabels, printPriceTags } from '../lib/labels'
+import { printLabels, printPriceTags, barcodeSVG } from '../lib/labels'
 import { parsePriceTable, SAMPLE_TEMPLATE } from '../lib/importPrice'
+import { generateEan13 } from '../lib/barcode'
+import ScannerInput from '../components/ScannerInput'
 
 const CAT_ICON = { Wrench, Hammer, Zap, Droplets, PaintBucket, Package }
 
@@ -262,6 +267,49 @@ function ImageField({ value, onChange }) {
   )
 }
 
+function BarcodeField({ value, onChange }) {
+  const [scan, setScan] = useState(false)
+  return (
+    <div>
+      <span className="block text-[13px] font-medium text-muted mb-1.5">Штрихкод</span>
+      <div className="flex flex-wrap gap-2">
+        <div className="relative flex-1 min-w-[160px]">
+          <Barcode size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
+          <Input
+            value={value || ''}
+            onChange={(e) => onChange(e.target.value)}
+            placeholder="EAN-13 / Code128…"
+            className="pl-9"
+          />
+        </div>
+        <Button variant="soft" icon={RefreshCw} onClick={() => onChange(generateEan13())}>
+          Сгенерировать
+        </Button>
+        <Button variant={scan ? 'primary' : 'soft'} icon={ScanLine} onClick={() => setScan((v) => !v)}>
+          Скан
+        </Button>
+      </div>
+      {value && (
+        <div
+          className="mt-2 p-2.5 rounded-xl bg-white inline-block"
+          dangerouslySetInnerHTML={{ __html: barcodeSVG(value) }}
+        />
+      )}
+      {scan && (
+        <div className="mt-2">
+          <ScannerInput
+            placeholder="Считайте штрихкод сканером или камерой…"
+            onScan={(code) => {
+              onChange(code)
+              setScan(false)
+            }}
+          />
+        </div>
+      )}
+    </div>
+  )
+}
+
 function TypeTab2({ active, onClick, icon: Icon, children }) {
   return (
     <button
@@ -426,6 +474,8 @@ function ProductModal({ product, onClose }) {
             </Select>
           </Field>
         </div>
+
+        <BarcodeField value={f.barcode} onChange={(v) => set('barcode', v)} />
         <div className="grid grid-cols-2 gap-3">
           <Field label="Ед. изм.">
             <Input value={f.unit} onChange={(e) => set('unit', e.target.value)} />

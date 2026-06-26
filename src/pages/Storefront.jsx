@@ -18,20 +18,26 @@ import {
   Package,
   Scale,
   ShieldCheck,
+  User,
+  MapPin,
+  Phone,
+  Mail,
+  Truck,
 } from 'lucide-react'
-import { Card, Button, Badge, Select, Field, Empty, cx } from '../components/ui'
+import { Card, Button, Badge, Modal, Field, Input, Empty, cx } from '../components/ui'
 import { useStore } from '../store/useStore'
 import { money, num } from '../lib/format'
-import { CATEGORIES, catInfo } from '../lib/constants'
+import { CATEGORIES, catInfo, priceFor } from '../lib/constants'
 
 const CAT_ICON = { Wrench, Hammer, Zap, Droplets, PaintBucket, Package }
 
 export default function Storefront() {
-  const { products, customers, addOrder } = useStore()
+  const { products, priceTypes, addOrder, addCustomer } = useStore()
+  const defType = priceTypes.find((t) => t.default)?.id || priceTypes[0]?.id
   const [q, setQ] = useState('')
   const [cat, setCat] = useState('all')
   const [cart, setCart] = useState({})
-  const [customerId, setCustomerId] = useState('')
+  const [cartOpen, setCartOpen] = useState(false)
   const [placed, setPlaced] = useState(null)
 
   const list = useMemo(() => {
@@ -46,7 +52,7 @@ export default function Storefront() {
   const cartRows = Object.entries(cart)
     .map(([id, qty]) => ({ p: products.find((x) => x.id === id), qty }))
     .filter((r) => r.p)
-  const total = cartRows.reduce((a, r) => a + r.p.price * r.qty, 0)
+  const total = cartRows.reduce((a, r) => a + priceFor(r.p, defType) * r.qty, 0)
   const count = cartRows.reduce((a, r) => a + r.qty, 0)
 
   const setQty = (id, qty) =>
@@ -57,31 +63,37 @@ export default function Storefront() {
       return n
     })
 
-  const checkout = () => {
-    const cust = customers.find((c) => c.id === customerId) || {
-      id: 'guest',
-      name: 'Гость (витрина)',
-      city: 'Самовывоз',
-    }
+  const checkout = (form) => {
+    const name = form.shop?.trim() || form.fio.trim()
+    addCustomer({
+      name,
+      contact: form.fio.trim(),
+      type: form.shop ? 'Магазин' : 'Розница',
+      city: form.address.trim(),
+      phone: form.phone.trim(),
+      email: form.email.trim(),
+    })
+    const cust = useStore.getState().customers[0]
     addOrder({
       customerId: cust.id,
-      customerName: cust.name,
+      customerName: name,
       items: cartRows.map((r) => ({
         productId: r.p.id,
         name: r.p.name,
         qty: r.qty,
-        price: r.p.price,
+        price: priceFor(r.p, defType),
         unit: r.p.unit,
         cell: r.p.cell,
       })),
       total,
-      address: cust.city,
+      priceTypeId: defType,
+      address: form.address.trim(),
       courier: 'Доставка',
     })
     const fresh = useStore.getState().orders[0]
     setPlaced(fresh)
     setCart({})
-    setCustomerId('')
+    setCartOpen(false)
   }
 
   if (placed) {
@@ -94,21 +106,23 @@ export default function Storefront() {
         <p className="text-muted mt-1">
           Номер <b className="text-ink">{placed.no}</b> на сумму {money(placed.total)}
         </p>
-        <div className="card p-4 mt-5 text-left">
-          <p className="text-sm text-muted mb-2">Ссылка для клиента — отслеживание статуса:</p>
-          <Link
-            to={`/track/${placed.id}`}
-            className="flex items-center gap-2 text-brand font-medium text-sm break-all"
-          >
-            <ExternalLink size={15} /> /track/{placed.id}
+        <div className="card p-4 mt-5 text-left space-y-2">
+          <p className="text-sm text-muted flex items-center gap-2">
+            <Truck size={15} className="text-brand" /> Заказ добавлен в раздел «Доставка» и виден на карте маршрутов.
+          </p>
+          <Link to={`/track/${placed.id}`} className="flex items-center gap-2 text-brand font-medium text-sm break-all">
+            <ExternalLink size={15} /> Ссылка для клиента: /track/{placed.id}
           </Link>
         </div>
-        <div className="flex gap-2 justify-center mt-5">
+        <div className="flex flex-wrap gap-2 justify-center mt-5">
           <Button variant="soft" onClick={() => setPlaced(null)}>
             Вернуться в витрину
           </Button>
+          <Link to="/delivery">
+            <Button variant="soft" icon={Truck}>На карту доставки</Button>
+          </Link>
           <Link to={`/track/${placed.id}`}>
-            <Button icon={Eye}>Открыть трекинг</Button>
+            <Button icon={Eye}>Трекинг</Button>
           </Link>
         </div>
       </div>
@@ -117,163 +131,220 @@ export default function Storefront() {
 
   return (
     <div className="animate-fadeUp">
-      {/* Баннер витрины */}
+      {/* Баннер с корзиной */}
       <div className="rounded-2xl bg-gradient-to-r from-brand to-info p-5 mb-5 text-white relative overflow-hidden">
-        <div className="relative z-10">
-          <Badge className="bg-white/20 text-white mb-2">
-            <Store size={12} /> Так заказывают ваши клиенты
-          </Badge>
-          <h2 className="text-2xl font-semibold">Оптовая витрина СкладПро</h2>
-          <p className="text-white/85 text-sm mt-1">
-            Каталог с актуальными остатками и оптовыми ценами. Заказ создаётся прямо в системе.
-          </p>
+        <div className="relative z-10 flex items-start justify-between gap-3">
+          <div>
+            <Badge className="bg-white/20 text-white mb-2">
+              <Store size={12} /> Так заказывают ваши клиенты
+            </Badge>
+            <h2 className="text-2xl font-semibold">Оптовая витрина СкладПро</h2>
+            <p className="text-white/85 text-sm mt-1">
+              Каталог с актуальными остатками. Заказ создаётся в системе и сразу на карте доставки.
+            </p>
+          </div>
+          <button
+            onClick={() => setCartOpen(true)}
+            className="relative shrink-0 h-12 w-12 rounded-xl bg-white/20 hover:bg-white/30 grid place-items-center transition"
+          >
+            <ShoppingCart size={22} />
+            {count > 0 && (
+              <span className="absolute -top-1.5 -right-1.5 h-5 min-w-5 px-1 rounded-full bg-white text-brand text-[12px] font-bold grid place-items-center">
+                {count}
+              </span>
+            )}
+          </button>
         </div>
         <Store size={160} className="absolute -right-6 -bottom-10 text-white/10" />
       </div>
 
-      <div className="grid lg:grid-cols-[1fr_320px] gap-5 items-start">
-        <div>
-          <div className="flex flex-col sm:flex-row gap-3 mb-4">
-            <div className="relative flex-1">
-              <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
-              <input
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
-                placeholder="Поиск товара…"
-                className="w-full h-10 pl-9 pr-3 rounded-xl bg-surface-2 border border-line outline-none focus:border-brand text-sm"
-              />
-            </div>
-            <div className="flex gap-1.5 overflow-x-auto no-scrollbar">
-              <Chip active={cat === 'all'} onClick={() => setCat('all')}>
-                Все
-              </Chip>
-              {CATEGORIES.map((c) => (
-                <Chip key={c.key} active={cat === c.key} onClick={() => setCat(c.key)}>
-                  {c.key}
-                </Chip>
-              ))}
-            </div>
-          </div>
-
-          <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-3">
-            {list.map((p) => {
-              const c = catInfo(p.category)
-              const Icon = CAT_ICON[c.icon] || Package
-              const inCart = cart[p.id] || 0
-              return (
-                <Card key={p.id} className="p-4 flex flex-col">
-                  {p.image ? (
-                    <img
-                      src={p.image}
-                      alt={p.name}
-                      className="h-24 w-full rounded-xl object-cover mb-3"
-                    />
-                  ) : (
-                    <div
-                      className="h-24 rounded-xl grid place-items-center mb-3"
-                      style={{ background: `color-mix(in srgb, ${c.color} 12%, transparent)` }}
-                    >
-                      <Icon size={34} style={{ color: c.color }} />
-                    </div>
-                  )}
-                  <div className="flex items-center gap-1.5 mb-0.5">
-                    <span className="text-[11px]" style={{ color: c.color }}>
-                      {p.category}
-                    </span>
-                    {p.weighted && <Scale size={12} className="text-info" />}
-                    {p.marked && <ShieldCheck size={12} className="text-ok" />}
-                  </div>
-                  <div className="font-medium text-sm leading-snug flex-1">{p.name}</div>
-                  <div className="flex items-center justify-between mt-2">
-                    <div>
-                      <div className="font-semibold tabular-nums">
-                        {money(p.price)}
-                        {p.weighted && <span className="text-[11px] text-muted font-normal"> /кг</span>}
-                      </div>
-                      <div className="text-[11px] text-ok">В наличии: {num(p.stock)} {p.unit}</div>
-                    </div>
-                    {inCart ? (
-                      <div className="flex items-center gap-1.5">
-                        <button
-                          onClick={() => setQty(p.id, inCart - 1)}
-                          className="h-8 w-8 rounded-lg bg-surface-2 grid place-items-center hover:bg-surface-3"
-                        >
-                          <Minus size={15} />
-                        </button>
-                        <span className="w-6 text-center text-sm font-medium tabular-nums">
-                          {inCart}
-                        </span>
-                        <button
-                          onClick={() => setQty(p.id, inCart + 1)}
-                          className="h-8 w-8 rounded-lg bg-brand text-brand-ink grid place-items-center"
-                        >
-                          <Plus size={15} />
-                        </button>
-                      </div>
-                    ) : (
-                      <Button size="sm" icon={Plus} onClick={() => setQty(p.id, 1)}>
-                        В корзину
-                      </Button>
-                    )}
-                  </div>
-                </Card>
-              )
-            })}
-          </div>
-          {list.length === 0 && <Empty icon={Search} title="Ничего не найдено" />}
+      {/* Поиск + категории */}
+      <div className="flex flex-col sm:flex-row gap-3 mb-4">
+        <div className="relative flex-1">
+          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Поиск товара…"
+            className="w-full h-10 pl-9 pr-3 rounded-xl bg-surface-2 border border-line outline-none focus:border-brand text-sm"
+          />
         </div>
+        <div className="flex gap-1.5 overflow-x-auto no-scrollbar">
+          <Chip active={cat === 'all'} onClick={() => setCat('all')}>Все</Chip>
+          {CATEGORIES.map((c) => (
+            <Chip key={c.key} active={cat === c.key} onClick={() => setCat(c.key)}>
+              {c.key}
+            </Chip>
+          ))}
+        </div>
+      </div>
 
-        {/* Корзина */}
-        <Card className="p-4 lg:sticky lg:top-20">
-          <div className="flex items-center gap-2 mb-3">
-            <ShoppingCart size={18} className="text-brand" />
-            <h3 className="font-semibold">Корзина</h3>
-            {count > 0 && <Badge tone="brand" className="ml-auto">{count}</Badge>}
-          </div>
-          {cartRows.length === 0 ? (
-            <p className="text-sm text-muted py-6 text-center">Корзина пуста</p>
-          ) : (
-            <>
-              <div className="space-y-2 max-h-[40vh] overflow-y-auto no-scrollbar mb-3">
-                {cartRows.map((r) => (
-                  <div key={r.p.id} className="flex items-center gap-2 text-sm">
-                    <div className="flex-1 min-w-0">
-                      <div className="truncate">{r.p.name}</div>
-                      <div className="text-[12px] text-muted">
-                        {r.qty} × {money(r.p.price)}
-                      </div>
-                    </div>
-                    <span className="tabular-nums font-medium">{money(r.qty * r.p.price)}</span>
-                    <button onClick={() => setQty(r.p.id, 0)} className="text-muted hover:text-bad">
-                      <Trash2 size={15} />
+      {/* Сетка товаров */}
+      <div className="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+        {list.map((p) => {
+          const c = catInfo(p.category)
+          const Icon = CAT_ICON[c.icon] || Package
+          const inCart = cart[p.id] || 0
+          const price = priceFor(p, defType)
+          return (
+            <Card key={p.id} className="p-4 flex flex-col">
+              {p.image ? (
+                <img src={p.image} alt={p.name} className="h-24 w-full rounded-xl object-cover mb-3" />
+              ) : (
+                <div className="h-24 rounded-xl grid place-items-center mb-3" style={{ background: `color-mix(in srgb, ${c.color} 12%, transparent)` }}>
+                  <Icon size={34} style={{ color: c.color }} />
+                </div>
+              )}
+              <div className="flex items-center gap-1.5 mb-0.5">
+                <span className="text-[11px]" style={{ color: c.color }}>{p.category}</span>
+                {p.weighted && <Scale size={12} className="text-info" />}
+                {p.marked && <ShieldCheck size={12} className="text-ok" />}
+              </div>
+              <div className="font-medium text-sm leading-snug flex-1">{p.name}</div>
+              <div className="flex items-center justify-between mt-2">
+                <div>
+                  <div className="font-semibold tabular-nums">
+                    {money(price)}
+                    {p.weighted && <span className="text-[11px] text-muted font-normal"> /кг</span>}
+                  </div>
+                  <div className="text-[11px] text-ok">В наличии: {num(p.stock)} {p.unit}</div>
+                </div>
+                {inCart ? (
+                  <div className="flex items-center gap-1.5">
+                    <button onClick={() => setQty(p.id, inCart - 1)} className="h-8 w-8 rounded-lg bg-surface-2 grid place-items-center hover:bg-surface-3">
+                      <Minus size={15} />
+                    </button>
+                    <span className="w-6 text-center text-sm font-medium tabular-nums">{inCart}</span>
+                    <button onClick={() => setQty(p.id, inCart + 1)} className="h-8 w-8 rounded-lg bg-brand text-brand-ink grid place-items-center">
+                      <Plus size={15} />
                     </button>
                   </div>
-                ))}
+                ) : (
+                  <Button size="sm" icon={Plus} onClick={() => setQty(p.id, 1)}>В корзину</Button>
+                )}
               </div>
-              <div className="border-t border-line pt-3 space-y-3">
-                <div className="flex justify-between items-center">
-                  <span className="text-muted text-sm">Итого</span>
-                  <span className="text-lg font-semibold tabular-nums">{money(total)}</span>
-                </div>
-                <Field label="Оформить от имени">
-                  <Select value={customerId} onChange={(e) => setCustomerId(e.target.value)}>
-                    <option value="">Гость / новый клиент</option>
-                    {customers.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name}
-                      </option>
-                    ))}
-                  </Select>
-                </Field>
-                <Button className="w-full" icon={Check} onClick={checkout}>
-                  Оформить заказ
-                </Button>
-              </div>
-            </>
-          )}
-        </Card>
+            </Card>
+          )
+        })}
       </div>
+      {list.length === 0 && <Empty icon={Search} title="Ничего не найдено" />}
+
+      {/* Плавающая кнопка корзины */}
+      {count > 0 && !cartOpen && (
+        <button
+          onClick={() => setCartOpen(true)}
+          className="fixed bottom-5 right-5 z-40 h-14 px-5 rounded-2xl bg-brand text-brand-ink shadow-xl shadow-brand/30 flex items-center gap-2 font-medium animate-fadeUp"
+        >
+          <ShoppingCart size={20} />
+          {count} · {money(total)}
+        </button>
+      )}
+
+      <CartModal
+        open={cartOpen}
+        onClose={() => setCartOpen(false)}
+        rows={cartRows}
+        priceType={defType}
+        total={total}
+        setQty={setQty}
+        onCheckout={checkout}
+      />
     </div>
+  )
+}
+
+function CartModal({ open, onClose, rows, priceType, total, setQty, onCheckout }) {
+  const [form, setForm] = useState({ fio: '', shop: '', address: '', phone: '', email: '' })
+  const [err, setErr] = useState('')
+  const set = (k, v) => setForm((s) => ({ ...s, [k]: v }))
+
+  const submit = () => {
+    if (!rows.length) return
+    if (!form.fio.trim()) return setErr('Укажите ФИО')
+    if (!form.address.trim()) return setErr('Укажите адрес доставки')
+    if (!/^[\d+\-() ]{6,}$/.test(form.phone.trim())) return setErr('Укажите телефон')
+    if (!/^\S+@\S+\.\S+$/.test(form.email.trim())) return setErr('Укажите корректный email')
+    setErr('')
+    onCheckout(form)
+    setForm({ fio: '', shop: '', address: '', phone: '', email: '' })
+  }
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="Корзина"
+      wide
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>Продолжить покупки</Button>
+          <Button icon={Check} onClick={submit} disabled={!rows.length}>
+            Оформить · {money(total)}
+          </Button>
+        </>
+      }
+    >
+      {rows.length === 0 ? (
+        <Empty icon={ShoppingCart} title="Корзина пуста" text="Добавьте товары из каталога." />
+      ) : (
+        <div className="space-y-5">
+          <div className="space-y-2">
+            {rows.map((r) => (
+              <div key={r.p.id} className="flex items-center gap-3 p-2.5 rounded-xl bg-surface-2">
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm truncate">{r.p.name}</div>
+                  <div className="text-[12px] text-muted">{money(priceFor(r.p, priceType))} × {r.qty}</div>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <button onClick={() => setQty(r.p.id, r.qty - 1)} className="h-7 w-7 rounded-lg bg-surface grid place-items-center hover:bg-surface-3">
+                    <Minus size={14} />
+                  </button>
+                  <span className="w-6 text-center text-sm tabular-nums">{r.qty}</span>
+                  <button onClick={() => setQty(r.p.id, r.qty + 1)} className="h-7 w-7 rounded-lg bg-surface grid place-items-center hover:bg-surface-3">
+                    <Plus size={14} />
+                  </button>
+                </div>
+                <span className="w-24 text-right text-sm font-medium tabular-nums">
+                  {money(priceFor(r.p, priceType) * r.qty)}
+                </span>
+                <button onClick={() => setQty(r.p.id, 0)} className="text-muted hover:text-bad">
+                  <Trash2 size={15} />
+                </button>
+              </div>
+            ))}
+          </div>
+
+          <div className="flex justify-between items-center pt-1">
+            <span className="text-muted text-sm">Итого</span>
+            <span className="text-xl font-semibold tabular-nums">{money(total)}</span>
+          </div>
+
+          {/* Данные клиента — обязательны */}
+          <div className="border-t border-line pt-4 space-y-3">
+            <h4 className="font-semibold text-sm">Данные для оформления</h4>
+            <div className="grid sm:grid-cols-2 gap-3">
+              <FormField icon={User} label="ФИО *" value={form.fio} onChange={(v) => set('fio', v)} placeholder="Иванов Иван" />
+              <FormField icon={Store} label="Магазин (если есть)" value={form.shop} onChange={(v) => set('shop', v)} placeholder="ООО «...»" />
+              <FormField icon={MapPin} label="Адрес доставки *" value={form.address} onChange={(v) => set('address', v)} placeholder="Город, улица, дом" />
+              <FormField icon={Phone} label="Телефон *" value={form.phone} onChange={(v) => set('phone', v)} placeholder="+7 ..." />
+              <FormField icon={Mail} label="Email *" value={form.email} onChange={(v) => set('email', v)} placeholder="mail@example.ru" className="sm:col-span-2" />
+            </div>
+            {err && <div className="text-[13px] text-bad">{err}</div>}
+          </div>
+        </div>
+      )}
+    </Modal>
+  )
+}
+
+function FormField({ icon: Icon, label, value, onChange, placeholder, className }) {
+  return (
+    <Field label={label} className={className}>
+      <div className="relative">
+        <Icon size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
+        <Input value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} className="pl-9" />
+      </div>
+    </Field>
   )
 }
 

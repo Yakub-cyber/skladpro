@@ -313,9 +313,15 @@ function sum(arr) {
 // ── Точка расширения под облачный LLM ──────────────────────────────────────
 // Когда добавишь ключ DeepSeek/OpenRouter в Настройках — этот вызов можно
 // включить для разбора «грязного» текста и генерации текстовых отчётов.
-export async function askLLM(prompt, { apiKey, model = 'deepseek-chat' } = {}) {
+// baseUrl по умолчанию — ProxyAPI (через него ходит DeepSeek из РФ).
+// Прямой api.deepseek.com из РФ часто недоступен/отдаёт 401.
+export async function askLLM(
+  prompt,
+  { apiKey, model = 'deepseek-chat', baseUrl } = {},
+) {
   if (!apiKey) throw new Error('Нет API-ключа: работаем локально')
-  const res = await fetch('https://api.deepseek.com/chat/completions', {
+  const base = (baseUrl || 'https://api.proxyapi.ru/deepseek').replace(/\/$/, '')
+  const res = await fetch(`${base}/chat/completions`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -336,14 +342,14 @@ export async function askLLM(prompt, { apiKey, model = 'deepseek-chat' } = {}) {
 }
 
 // Разбор накладной через облачный LLM (DeepSeek). Фолбэк — локальный парсер.
-export async function aiParseInvoice(text, products = [], { apiKey, model } = {}) {
+export async function aiParseInvoice(text, products = [], { apiKey, model, baseUrl } = {}) {
   if (!apiKey) return parseInvoiceText(text, products)
   const prompt =
     'Ты помощник склада. Разбери текст накладной в JSON-массив позиций. ' +
     'Каждый элемент: {"name": строка, "qty": число, "unit": строка (шт/кг/уп/м/л и т.п.)}. ' +
     'Размеры (3.5x40) — часть названия, НЕ количество. Верни ТОЛЬКО JSON-массив, без пояснений.\n\nТекст:\n' +
     text
-  const raw = await askLLM(prompt, { apiKey, model })
+  const raw = await askLLM(prompt, { apiKey, model, baseUrl })
   const json = raw.slice(raw.indexOf('['), raw.lastIndexOf(']') + 1)
   let arr
   try {

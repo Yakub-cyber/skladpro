@@ -73,6 +73,7 @@ export default function Invoices() {
         result = await aiParseInvoice(text, products, {
           apiKey: settings.aiKey,
           model: settings.aiModel,
+          baseUrl: settings.aiBaseUrl,
         })
         setAiMode('DeepSeek')
       } else {

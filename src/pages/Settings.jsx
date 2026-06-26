@@ -36,6 +36,7 @@ export default function Settings() {
       const r = await askLLM('Ответь одним словом по-русски: работает?', {
         apiKey: settings.aiKey,
         model: settings.aiModel,
+        baseUrl: settings.aiBaseUrl,
       })
       setAiTest({ ok: true, msg: (r || 'OK').trim().slice(0, 80) })
     } catch (e) {
@@ -120,10 +121,10 @@ export default function Settings() {
             <Sparkles size={16} className="text-brand" /> Искусственный интеллект
           </span>
         }
-        subtitle="Накладные из текста и аналитика работают локально. Ключ нужен только для облачного режима (сложный «грязный» текст)."
+        subtitle="Накладные из текста и аналитика работают локально. Ключ нужен только для облачного режима. По умолчанию запросы идут через ProxyAPI (DeepSeek из РФ)."
       >
         <div className="grid sm:grid-cols-[1fr_200px] gap-4">
-          <Field label="API-ключ DeepSeek / OpenRouter" hint="Хранится только в этом браузере">
+          <Field label="API-ключ (ProxyAPI / DeepSeek)" hint="Хранится только в этом браузере, в код не попадает">
             <div className="relative">
               <KeyRound size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
               <Input
@@ -142,6 +143,17 @@ export default function Settings() {
             </Select>
           </Field>
         </div>
+        <Field
+          label="Endpoint (API URL)"
+          hint="ProxyAPI для DeepSeek. Можно поменять на свой прокси/OpenRouter."
+          className="mt-3"
+        >
+          <Input
+            value={settings.aiBaseUrl || ''}
+            onChange={(e) => set('aiBaseUrl', e.target.value)}
+            placeholder="https://api.proxyapi.ru/deepseek"
+          />
+        </Field>
         <div className="mt-3 flex flex-wrap items-center gap-3">
           <span className="flex items-center gap-2 text-[13px] text-muted">
             <span className={cx('w-2 h-2 rounded-full', settings.aiKey ? 'bg-ok' : 'bg-warn')} />

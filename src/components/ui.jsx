@@ -1,4 +1,5 @@
 import { useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import { X } from 'lucide-react'
 import { statusInfo } from '../lib/constants'
 import { initials } from '../lib/format'
@@ -182,14 +183,14 @@ export function Modal({ open, onClose, title, children, footer, wide }) {
     }
   }, [open, onClose])
   if (!open) return null
-  return (
+  return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/55 backdrop-blur-sm animate-fadeUp"
+      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/55 backdrop-blur-sm"
       onMouseDown={onClose}
     >
       <div
         className={cx(
-          'card w-full flex flex-col max-h-[calc(100dvh-1.5rem)] sm:max-h-[calc(100dvh-2rem)]',
+          'card w-full flex flex-col max-h-[calc(100dvh-1.5rem)] sm:max-h-[calc(100dvh-2rem)] animate-fadeUp',
           wide ? 'max-w-3xl' : 'max-w-lg',
         )}
         onMouseDown={(e) => e.stopPropagation()}
@@ -210,7 +211,8 @@ export function Modal({ open, onClose, title, children, footer, wide }) {
           </div>
         )}
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
 
