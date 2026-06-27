@@ -20,9 +20,10 @@ import {
 import { Section, Button, Field, Input, Select, Badge, cx } from '../components/ui'
 import { useStore } from '../store/useStore'
 import { askLLM } from '../lib/ai'
+import { changePassword } from '../lib/cloud'
 
 export default function Settings() {
-  const { settings, updateSettings, resetDemo } = useStore()
+  const { settings, updateSettings, resetDemo, cloud, companyName } = useStore()
   const [saved, setSaved] = useState(false)
   const [aiTest, setAiTest] = useState(null) // null | 'loading' | {ok, msg}
 
@@ -113,6 +114,8 @@ export default function Settings() {
       </Section>
 
       <PriceTypesSection />
+
+      {cloud && <PasswordSection companyName={companyName} />}
 
       {/* ИИ */}
       <Section
@@ -257,6 +260,46 @@ export default function Settings() {
         СкладПро · прототип складской системы с ИИ
       </p>
     </div>
+  )
+}
+
+function PasswordSection({ companyName }) {
+  const [pass, setPass] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState(null)
+
+  const submit = async () => {
+    if (pass.length < 6) return setMsg({ ok: false, m: 'Минимум 6 символов' })
+    setBusy(true)
+    const r = await changePassword(pass)
+    setBusy(false)
+    setMsg(r.ok ? { ok: true, m: 'Пароль изменён' } : { ok: false, m: r.error })
+    if (r.ok) setPass('')
+  }
+
+  return (
+    <Section
+      title={
+        <span className="flex items-center gap-2">
+          <KeyRound size={16} className="text-brand" /> Безопасность · пароль
+        </span>
+      }
+      subtitle={companyName ? `Облачный аккаунт · компания «${companyName}»` : 'Смена пароля от аккаунта'}
+    >
+      <div className="flex flex-wrap items-end gap-3">
+        <Field label="Новый пароль" hint="Минимум 6 символов" className="flex-1 min-w-[200px]">
+          <Input type="password" value={pass} onChange={(e) => setPass(e.target.value)} placeholder="••••••••" />
+        </Field>
+        <Button onClick={submit} disabled={busy || !pass}>
+          {busy ? 'Сохраняем…' : 'Сменить пароль'}
+        </Button>
+      </div>
+      {msg && (
+        <Badge tone={msg.ok ? 'ok' : 'bad'} className="mt-3">
+          {msg.ok && <Check size={12} />} {msg.m}
+        </Badge>
+      )}
+    </Section>
   )
 }
 

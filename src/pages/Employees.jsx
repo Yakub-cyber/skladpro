@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { Plus, Phone, KeyRound, Check, Trash2, ShieldCheck } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { Plus, Phone, KeyRound, Check, Trash2, ShieldCheck, Mail, Send, Clock, UserPlus } from 'lucide-react'
 import {
   Card,
   Section,
@@ -10,11 +10,14 @@ import {
   Input,
   Select,
   Avatar,
+  Empty,
   cx,
 } from '../components/ui'
 import { useStore } from '../store/useStore'
 import { ROLES, roleInfo } from '../lib/constants'
 import { NAV } from '../components/Layout'
+import { loadInvites, inviteMember, revokeInvite } from '../lib/cloud'
+import { dateFull } from '../lib/format'
 
 const PERM_LABEL = NAV.reduce((m, n) => {
   m[n.perm] = n.label
@@ -22,7 +25,7 @@ const PERM_LABEL = NAV.reduce((m, n) => {
 }, {})
 
 export default function Employees() {
-  const { employees, authUserId, updateEmployee, removeEmployee } = useStore()
+  const { employees, authUserId, updateEmployee, removeEmployee, cloud, companyId } = useStore()
   const [adding, setAdding] = useState(false)
 
   const changePin = (e) => {
@@ -44,6 +47,8 @@ export default function Employees() {
           Добавить
         </Button>
       </div>
+
+      {cloud && <TeamInvites companyId={companyId} />}
 
       {/* Роли и их доступ */}
       <Section title="Роли и права доступа">
@@ -216,6 +221,123 @@ function AddEmployeeModal({ open, onClose }) {
             inputMode="numeric"
           />
         </Field>
+      </div>
+    </Modal>
+  )
+}
+
+// ── Приглашения в команду (облако) ───────────────────────────────────────────
+function TeamInvites({ companyId }) {
+  const [invites, setInvites] = useState([])
+  const [open, setOpen] = useState(false)
+  const refresh = () => loadInvites().then(setInvites).catch(() => {})
+  useEffect(() => {
+    refresh()
+  }, [])
+
+  return (
+    <Section
+      title={
+        <span className="flex items-center gap-2">
+          <UserPlus size={16} className="text-brand" /> Приглашения в команду
+        </span>
+      }
+      subtitle="Пригласите сотрудника по email — он зарегистрируется и автоматически войдёт в вашу компанию"
+      action={
+        <Button size="sm" icon={Send} onClick={() => setOpen(true)}>
+          Пригласить
+        </Button>
+      }
+    >
+      {invites.length === 0 ? (
+        <Empty icon={Mail} title="Нет активных приглашений" text="Нажмите «Пригласить», чтобы добавить сотрудника." />
+      ) : (
+        <div className="space-y-2">
+          {invites.map((inv) => {
+            const r = roleInfo(inv.role)
+            return (
+              <div key={inv.id} className="flex items-center gap-3 p-3 rounded-xl bg-surface-2">
+                <div className="h-9 w-9 rounded-lg bg-brand-soft text-brand grid place-items-center shrink-0">
+                  <Mail size={17} />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="font-medium text-sm truncate">{inv.email}</div>
+                  <div className="text-[12px] text-muted flex items-center gap-1.5">
+                    <Clock size={11} /> Ожидает регистрации · {dateFull(inv.created_at)}
+                  </div>
+                </div>
+                <Badge tone="brand">{r.label}</Badge>
+                <button
+                  onClick={() => revokeInvite(inv.id).then(refresh)}
+                  className="text-muted hover:text-bad p-1"
+                  title="Отозвать приглашение"
+                >
+                  <Trash2 size={16} />
+                </button>
+              </div>
+            )
+          })}
+        </div>
+      )}
+      <InviteModal open={open} onClose={() => { setOpen(false); refresh() }} companyId={companyId} />
+    </Section>
+  )
+}
+
+function InviteModal({ open, onClose, companyId }) {
+  const [f, setF] = useState({ email: '', name: '', role: 'stock' })
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const set = (k, v) => setF((s) => ({ ...s, [k]: v }))
+
+  const submit = async () => {
+    if (!/^\S+@\S+\.\S+$/.test(f.email)) return setErr('Укажите корректный email')
+    setBusy(true)
+    setErr('')
+    const r = await inviteMember(companyId, f.email, f.role, f.name)
+    setBusy(false)
+    if (!r.ok) return setErr(r.error)
+    setF({ email: '', name: '', role: 'stock' })
+    onClose()
+  }
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="Пригласить сотрудника"
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>Отмена</Button>
+          <Button onClick={submit} disabled={busy} icon={Send}>
+            {busy ? 'Отправляем…' : 'Пригласить'}
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        <p className="text-[13px] text-muted">
+          Сотрудник зарегистрируется на этом же сайте с указанным email — и сразу окажется в вашей компании с выбранной ролью.
+        </p>
+        <Field label="Email сотрудника">
+          <div className="relative">
+            <Mail size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
+            <Input value={f.email} onChange={(e) => set('email', e.target.value)} placeholder="ivan@mail.ru" className="pl-9" />
+          </div>
+        </Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Имя (необязательно)">
+            <Input value={f.name} onChange={(e) => set('name', e.target.value)} placeholder="Иван" />
+          </Field>
+          <Field label="Роль">
+            <Select value={f.role} onChange={(e) => set('role', e.target.value)}>
+              {ROLES.map((r) => (
+                <option key={r.key} value={r.key}>{r.label}</option>
+              ))}
+            </Select>
+          </Field>
+        </div>
+        {err && <div className="text-[13px] text-bad">{err}</div>}
       </div>
     </Modal>
   )

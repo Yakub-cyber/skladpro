@@ -15,6 +15,7 @@ import {
   cloudSignOut,
   getMembership,
   createCompanyCloud,
+  acceptInvitation,
 } from '../lib/cloud'
 
 // Слой данных. Сейчас источник истины — localStorage (persist).
@@ -50,9 +51,14 @@ export const useStore = create(
             set({ authUserId: null, cloudReady: false, needOnboarding: false, companyId: null })
             return
           }
-          const membership = await getMembership()
+          let membership = await getMembership()
           if (!membership) {
-            // пользователь без компании → онбординг
+            // вдруг пользователь приглашён в компанию → привязать
+            const invitedCompany = await acceptInvitation()
+            if (invitedCompany) membership = await getMembership()
+          }
+          if (!membership) {
+            // пользователь без компании → онбординг (создать свою)
             set({ authUserId: null, needOnboarding: true, cloudReady: false })
             return
           }

@@ -150,6 +150,57 @@ export async function createCompanyCloud(companyName, userName) {
   return { ok: true, companyId: data }
 }
 
+// Принять приглашение (если пользователь приглашён в компанию) → company_id | null
+export async function acceptInvitation() {
+  const { data, error } = await supabase.rpc('accept_invitation')
+  if (error) return null
+  return data
+}
+
+// ── Команда: участники и приглашения ─────────────────────────────────────────
+export async function loadMembers() {
+  const { data } = await supabase
+    .from('memberships')
+    .select('user_id, role, name, active, created_at')
+  return data || []
+}
+export async function loadInvites() {
+  const { data } = await supabase.from('invitations').select('id, email, role, name, created_at')
+  return data || []
+}
+export async function inviteMember(companyId, email, role, name) {
+  const { error } = await supabase.from('invitations').insert({
+    company_id: companyId,
+    email: email.trim().toLowerCase(),
+    role,
+    name: name || null,
+  })
+  if (error) return { ok: false, error: error.message }
+  return { ok: true }
+}
+export async function revokeInvite(id) {
+  await supabase.from('invitations').delete().eq('id', id)
+}
+export async function updateMemberRole(userId, companyId, role) {
+  await supabase.from('memberships').update({ role }).eq('user_id', userId).eq('company_id', companyId)
+}
+export async function removeMember(userId, companyId) {
+  await supabase.from('memberships').delete().eq('user_id', userId).eq('company_id', companyId)
+}
+
+// ── Пароль ───────────────────────────────────────────────────────────────────
+export async function changePassword(newPassword) {
+  const { error } = await supabase.auth.updateUser({ password: newPassword })
+  if (error) return { ok: false, error: ruAuthError(error.message) }
+  return { ok: true }
+}
+export async function requestPasswordReset(email) {
+  const redirectTo = window.location.origin + window.location.pathname
+  const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), { redirectTo })
+  if (error) return { ok: false, error: ruAuthError(error.message) }
+  return { ok: true }
+}
+
 // ── Авторизация (Supabase Auth, email + пароль) ──────────────────────────────
 export async function getCloudSession() {
   const { data } = await supabase.auth.getSession()
