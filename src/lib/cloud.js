@@ -139,30 +139,27 @@ export async function getMembership() {
   return data
 }
 
-// Онбординг: создать компанию + сделать текущего пользователя её админом
+// Онбординг: создать компанию + членство атомарно через серверную RPC
+// (обходит гонку RLS: select компании до появления членства).
 export async function createCompanyCloud(companyName, userName) {
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return { ok: false, error: 'Нет сессии' }
-  const { data: company, error: e1 } = await supabase
-    .from('companies')
-    .insert({ name: companyName })
-    .select()
-    .single()
-  if (e1) return { ok: false, error: e1.message }
-  const { error: e2 } = await supabase.from('memberships').insert({
-    user_id: user.id,
-    company_id: company.id,
-    role: 'admin',
-    name: userName || user.email?.split('@')[0] || 'Администратор',
+  const { data, error } = await supabase.rpc('create_company', {
+    p_name: companyName,
+    p_user_name: userName || null,
   })
-  if (e2) return { ok: false, error: e2.message }
-  return { ok: true, company }
+  if (error) return { ok: false, error: error.message }
+  return { ok: true, companyId: data }
 }
 
 // ── Авторизация (Supabase Auth, email + пароль) ──────────────────────────────
 export async function getCloudSession() {
   const { data } = await supabase.auth.getSession()
   return data.session
+}
+
+// Надёжный источник состояния входа: реагирует на SIGNED_IN / SIGNED_OUT
+export function onAuthChange(cb) {
+  const { data } = supabase.auth.onAuthStateChange((_event, session) => cb(session))
+  return () => data.subscription.unsubscribe()
 }
 
 export async function cloudSignIn(email, password) {

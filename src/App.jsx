@@ -24,10 +24,10 @@ function AuthGate({ children }) {
   const authUserId = useStore((s) => s.authUserId)
   const cloud = useStore((s) => s.cloud)
   const needOnboarding = useStore((s) => s.needOnboarding)
-  const bootstrapCloud = useStore((s) => s.bootstrapCloud)
+  const initAuth = useStore((s) => s.initAuth)
 
   useEffect(() => {
-    if (cloud) bootstrapCloud()
+    if (cloud) initAuth()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 

@@ -9,6 +9,7 @@ import {
   cloudSeed,
   attachSync,
   getCloudSession,
+  onAuthChange,
   cloudSignIn,
   cloudSignUp,
   cloudSignOut,
@@ -28,15 +29,23 @@ export const useStore = create(
       cloud: hasSupabase, // работаем с облаком Supabase
       cloudReady: false, // данные из облака загружены
       cloudError: null,
+      _authInited: false,
       needOnboarding: false, // вошёл, но компании ещё нет
       companyId: null,
       companyName: null,
 
       // ── Облако (Supabase, мультитенант) ──────────────────────
-      bootstrapCloud: async () => {
+      // Единая точка реакции на вход/выход через onAuthStateChange
+      initAuth: () => {
+        if (!hasSupabase || get()._authInited) return
+        set({ _authInited: true })
+        onAuthChange((session) => get().bootstrapCloud(session))
+        getCloudSession().then((s) => get().bootstrapCloud(s))
+      },
+      bootstrapCloud: async (sessionArg) => {
         if (!hasSupabase) return
         try {
-          const session = await getCloudSession()
+          const session = sessionArg !== undefined ? sessionArg : await getCloudSession()
           if (!session) {
             set({ authUserId: null, cloudReady: false, needOnboarding: false, companyId: null })
             return
@@ -625,6 +634,11 @@ export const useStore = create(
     {
       name: 'sklad.db',
       version: 6,
+      // не сохраняем runtime-флаги облака (иначе после reload не переинициализируется)
+      partialize: (state) => {
+        const { _authInited, cloudReady, needOnboarding, cloudError, ...rest } = state
+        return rest
+      },
       migrate: (state, version) => {
         if (!state) return state
         if (version < 2) {
