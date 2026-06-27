@@ -21,19 +21,26 @@ const TRUCKS = ['Газель А231 РТ', 'Газель В784 КX', 'Борто
 const DELIVERABLE = ['new', 'confirmed', 'picking', 'packed', 'shipped']
 
 export default function Delivery() {
-  const { orders, customers, setOrderStatus } = useStore()
+  const { orders, customers, setOrderStatus, employees, authUserId } = useStore()
   const [selectedIds, setSelectedIds] = useState(() => new Set())
   const [inited, setInited] = useState(false)
   const [truck, setTruck] = useState(TRUCKS[0])
   const [osrm, setOsrm] = useState(null) // реальный маршрут по дорогам
   const [loadingRoute, setLoadingRoute] = useState(false)
 
+  // курьер видит на доставке только назначенные ему заказы
+  const me = employees.find((e) => e.id === authUserId)
+  const isCourier = me?.role === 'courier'
+
   const candidates = useMemo(
     () =>
       orders.filter(
-        (o) => DELIVERABLE.includes(o.status) && o.courier !== 'Самовывоз',
+        (o) =>
+          DELIVERABLE.includes(o.status) &&
+          o.courier !== 'Самовывоз' &&
+          (!isCourier || o.assignedTo === authUserId),
       ),
-    [orders],
+    [orders, isCourier, authUserId],
   )
 
   useEffect(() => {

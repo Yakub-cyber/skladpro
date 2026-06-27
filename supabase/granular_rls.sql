@@ -57,4 +57,13 @@ create policy "audit_insert_all" on public.audit
   for insert to authenticated
   with check (company_id = public.auth_company_id());
 
--- Готово. Курьер — только чтение + статусы заказов; остальные роли пишут.
+-- Каждый член компании может создать/обновить СВОЮ карточку сотрудника
+-- (нужно при первом входе: bootstrap создаёт employee с auth_uid = текущий).
+-- Без этого курьер не может завести свою запись и логинится дубликатом.
+drop policy if exists "employees_self" on public.employees;
+create policy "employees_self" on public.employees
+  for all to authenticated
+  using (company_id = public.auth_company_id() and auth_uid = auth.uid())
+  with check (company_id = public.auth_company_id() and auth_uid = auth.uid());
+
+-- Готово. Курьер — только чтение + статусы заказов + своя карточка; остальные роли пишут.

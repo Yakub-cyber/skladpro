@@ -7,6 +7,7 @@ import { hasSupabase } from '../lib/supabase'
 import {
   cloudLoadAll,
   cloudSeed,
+  cloudUpsert,
   remapSeedForCompany,
   attachSync,
   getCloudSession,
@@ -17,6 +18,8 @@ import {
   getMembership,
   createCompanyCloud,
   acceptInvitation,
+  checkRecovery,
+  changePassword,
 } from '../lib/cloud'
 
 // Слой данных. Сейчас источник истины — localStorage (persist).
@@ -33,12 +36,13 @@ export const useStore = create(
       cloudError: null,
       _authInited: false,
       needOnboarding: false, // вошёл, но компании ещё нет
+      recoveryMode: false, // перешёл по ссылке сброса пароля → ввод нового
       companyId: null,
       companyName: null,
 
       // ── Облако (Supabase, мультитенант) ──────────────────────
       // Единая точка реакции на вход/выход через onAuthStateChange
-      initAuth: () => {
+      initAuth: async () => {
         if (!hasSupabase || get()._authInited) return
         set({ _authInited: true })
         // onAuthChange — только выход (вход/токены обрабатываем явными
@@ -48,10 +52,14 @@ export const useStore = create(
             set({ authUserId: null, needOnboarding: false, companyId: null, companyName: null, cloudReady: false })
           }
         })
+        // переход по ссылке сброса пароля → экран ввода нового (без bootstrap)
+        if (await checkRecovery()) {
+          set({ recoveryMode: true })
+          return
+        }
         // восстановление сессии при загрузке
-        getCloudSession().then((s) => {
-          if (s) get().bootstrapCloud()
-        })
+        const s = await getCloudSession()
+        if (s) get().bootstrapCloud()
       },
       bootstrapCloud: async (sessionArg, opts = {}) => {
         if (!hasSupabase) return
@@ -110,6 +118,14 @@ export const useStore = create(
             }
             employees = [...employees, me]
             data.employees = employees
+            // заливаем сразу: autosync стартует позже и пропустил бы нового сотрудника,
+            // из-за чего при каждом входе создавался бы дубликат с новым id.
+            // Не валим bootstrap, если RLS отклонит (тогда просто синхронизируется позже).
+            try {
+              await cloudUpsert('employees', me, companyId)
+            } catch (e) {
+              console.warn('Не удалось сохранить карточку сотрудника:', e?.message || e)
+            }
           }
           set({
             ...data,
@@ -151,6 +167,15 @@ export const useStore = create(
       cloudLogout: async () => {
         await cloudSignOut()
         set({ authUserId: null, cloudReady: false, needOnboarding: false, companyId: null, companyName: null })
+      },
+      // Завершить сброс пароля: задать новый и войти в приложение
+      completePasswordReset: async (newPassword) => {
+        const r = await changePassword(newPassword)
+        if (r.ok) {
+          set({ recoveryMode: false })
+          await get().bootstrapCloud()
+        }
+        return r
       },
 
       // ── Аудит / лог действий ─────────────────────────────────
@@ -470,6 +495,20 @@ export const useStore = create(
         }))
         get().logAction(`Отменён заказ ${o?.no}`, { section: 'Заказы', type: 'delete' })
       },
+      // Назначить заказ конкретному курьеру (сотруднику) — он видит только свои
+      assignCourier: (id, employeeId) => {
+        const o = get().orders.find((x) => x.id === id)
+        const emp = get().employees.find((e) => e.id === employeeId)
+        set((s) => ({
+          orders: s.orders.map((x) =>
+            x.id === id ? { ...x, assignedTo: employeeId || null } : x,
+          ),
+        }))
+        get().logAction(
+          employeeId ? `Курьер «${emp?.name}» назначен на ${o?.no}` : `Снято назначение с ${o?.no}`,
+          { section: 'Доставка' },
+        )
+      },
 
       // ── Накладные ────────────────────────────────────────────
       addInvoice: (inv) => {
@@ -678,7 +717,7 @@ export const useStore = create(
       version: 6,
       // не сохраняем runtime-флаги облака (иначе после reload не переинициализируется)
       partialize: (state) => {
-        const { _authInited, _bootBusy, _creating, cloudReady, needOnboarding, cloudError, ...rest } = state
+        const { _authInited, _bootBusy, _creating, cloudReady, needOnboarding, recoveryMode, cloudError, ...rest } = state
         return rest
       },
       migrate: (state, version) => {

@@ -106,6 +106,7 @@ create table if not exists public.orders (
   status        text default 'new',
   priority      boolean default false,
   courier       text,
+  assigned_to   text,
   address       text,
   shift_id      text,
   track         jsonb default '[]'::jsonb,

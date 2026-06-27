@@ -48,11 +48,21 @@ const FILTERS = [
 ]
 
 export default function Orders() {
-  const orders = useStore((s) => s.orders)
+  const allOrders = useStore((s) => s.orders)
+  const employees = useStore((s) => s.employees)
+  const authUserId = useStore((s) => s.authUserId)
   const [params, setParams] = useSearchParams()
   const nav = useNavigate()
   const [filter, setFilter] = useState('all')
   const [q, setQ] = useState('')
+
+  // курьер видит только назначенные ему заказы
+  const me = employees.find((e) => e.id === authUserId)
+  const isCourier = me?.role === 'courier'
+  const orders = useMemo(
+    () => (isCourier ? allOrders.filter((o) => o.assignedTo === authUserId) : allOrders),
+    [allOrders, isCourier, authUserId],
+  )
 
   const selectedId = params.get('id') || orders[0]?.id
   const selected = orders.find((o) => o.id === selectedId)
@@ -171,8 +181,15 @@ export default function Orders() {
 function OrderDetail({ order }) {
   const advance = useStore((s) => s.advanceOrder)
   const cancel = useStore((s) => s.cancelOrder)
+  const assignCourier = useStore((s) => s.assignCourier)
+  const employees = useStore((s) => s.employees)
+  const authUserId = useStore((s) => s.authUserId)
   const [showRoute, setShowRoute] = useState(false)
   const [copied, setCopied] = useState(false)
+
+  const me = employees.find((e) => e.id === authUserId)
+  const canAssign = me?.role !== 'courier'
+  const couriers = employees.filter((e) => e.role === 'courier' && e.active)
 
   const cur = statusInfo(order.status)
   const nx = nextStatus(order.status)
@@ -394,13 +411,32 @@ function OrderDetail({ order }) {
             </tfoot>
           </table>
         </div>
-        <div className="flex flex-wrap gap-4 mt-4 pt-4 border-t border-line text-sm">
+        <div className="flex flex-wrap items-center gap-4 mt-4 pt-4 border-t border-line text-sm">
           <span className="flex items-center gap-2 text-muted">
             <Truck size={15} /> {order.courier}
           </span>
           <span className="flex items-center gap-2 text-muted">
             <MapPin size={15} /> {order.address}
           </span>
+          {/* Назначение курьера-сотрудника (только для не-курьеров) */}
+          {canAssign && couriers.length > 0 && (
+            <label className="flex items-center gap-2 ml-auto text-muted">
+              <Truck size={15} className="text-brand" />
+              <span className="text-[13px]">Курьер:</span>
+              <select
+                value={order.assignedTo || ''}
+                onChange={(e) => assignCourier(order.id, e.target.value || null)}
+                className="h-9 px-2 rounded-lg bg-surface-2 border border-line text-[13px] outline-none focus:border-brand"
+              >
+                <option value="">— не назначен —</option>
+                {couriers.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
         </div>
       </Card>
     </div>

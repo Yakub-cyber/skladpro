@@ -3,7 +3,7 @@
 //  авторизация. Активен только если задан Supabase (hasSupabase).
 //  Стор остаётся локальным кэшем (быстро, оффлайн), а изменения уходят в БД.
 // ──────────────────────────────────────────────────────────────────────────
-import { supabase } from './supabase'
+import { supabase, recoveryTokens } from './supabase'
 
 const toSnake = (s) => s.replace(/[A-Z]/g, (c) => '_' + c.toLowerCase())
 const toCamel = (s) => s.replace(/_([a-z])/g, (_, c) => c.toUpperCase())
@@ -91,6 +91,7 @@ export function remapSeedForCompany(state, companyId) {
       id: rid(o.id),
       customerId: rid(o.customerId),
       priceTypeId: rid(o.priceTypeId),
+      assignedTo: rid(o.assignedTo),
       items: remapItems(o.items),
     })),
     invoices: state.invoices.map((i) => ({
@@ -104,6 +105,14 @@ export function remapSeedForCompany(state, companyId) {
     shifts: state.shifts.map((s) => ({ ...s, id: rid(s.id) })),
     audit: state.audit.map((a) => ({ ...a, id: rid(a.id) })),
   }
+}
+
+// Явно записать одну сущность в БД (autosync стартует позже и пропустил бы её)
+export async function cloudUpsert(storeKey, obj, companyId) {
+  const cfg = TABLES.find((t) => t.key === storeKey)
+  if (!cfg) return
+  const { error } = await supabase.from(cfg.table).upsert({ ...toRow(obj, cfg), company_id: companyId })
+  if (error) throw error
 }
 
 // Залить начальное состояние (seed) в БД, пометив записи компанией
@@ -243,6 +252,14 @@ export async function requestPasswordReset(email) {
   const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), { redirectTo })
   if (error) return { ok: false, error: ruAuthError(error.message) }
   return { ok: true }
+}
+
+// Переход по ссылке из письма сброса: recoveryTokens захвачены в supabase.js
+// при загрузке модуля (до того, как HashRouter перепишет hash).
+export async function checkRecovery() {
+  if (!recoveryTokens?.access_token) return false
+  const { error } = await supabase.auth.setSession(recoveryTokens)
+  return !error
 }
 
 // ── Авторизация (Supabase Auth, email + пароль) ──────────────────────────────

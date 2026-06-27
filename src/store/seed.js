@@ -220,6 +220,7 @@ export function makeSeed() {
     }
     if (status === 'cancelled') track.push({ status: 'cancelled', at: iso(createdAt + day / 2), note: 'Клиент отменил' })
 
+    const courier = pick(couriers)
     return {
       id: `o${i + 1}`,
       no: `ЗК-2026-${String(101 + i).padStart(4, '0')}`,
@@ -229,7 +230,9 @@ export function makeSeed() {
       total,
       status,
       priority: rnd() > 0.8,
-      courier: pick(couriers),
+      courier,
+      // часть доставок назначена демо-курьеру (Олег Курьеров) — для роли «курьер»
+      assignedTo: courier !== 'Самовывоз' && i % 2 === 0 ? 'e4' : null,
       address: `${cust.city}, ${pick(streets)}`,
       createdAt: iso(createdAt),
       track,
