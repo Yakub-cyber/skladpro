@@ -7,6 +7,7 @@ import { hasSupabase } from '../lib/supabase'
 import {
   cloudLoadAll,
   cloudSeed,
+  remapSeedForCompany,
   attachSync,
   getCloudSession,
   onAuthChange,
@@ -40,13 +41,40 @@ export const useStore = create(
       initAuth: () => {
         if (!hasSupabase || get()._authInited) return
         set({ _authInited: true })
-        onAuthChange((session) => get().bootstrapCloud(session))
-        getCloudSession().then((s) => get().bootstrapCloud(s))
+        // onAuthChange — только выход (вход/токены обрабатываем явными
+        // вызовами bootstrap, чтобы не было параллельных гонок)
+        onAuthChange((event) => {
+          if (event === 'SIGNED_OUT') {
+            set({ authUserId: null, needOnboarding: false, companyId: null, companyName: null, cloudReady: false })
+          }
+        })
+        // восстановление сессии при загрузке
+        getCloudSession().then((s) => {
+          if (s) get().bootstrapCloud()
+        })
       },
-      bootstrapCloud: async (sessionArg) => {
+      bootstrapCloud: async (sessionArg, opts = {}) => {
         if (!hasSupabase) return
+        // во время онбординга (создания компании) фоновые вызовы от
+        // onAuthStateChange пропускаем — иначе перезаписывают результат
+        if (get()._creating && !opts.fromOnboarding) return
+        // мьютекс: не выполнять параллельно (иначе устаревший вызов
+        // перезаписывает результат свежего и сбрасывает authUserId)
+        if (get()._bootBusy) {
+          await new Promise((res) => {
+            const i = setInterval(() => {
+              if (!get()._bootBusy) {
+                clearInterval(i)
+                res()
+              }
+            }, 60)
+          })
+        }
+        set({ _bootBusy: true })
         try {
-          const session = sessionArg !== undefined ? sessionArg : await getCloudSession()
+          // сессию берём свежую внутри мьютекса (а не из аргумента —
+          // он мог устареть, пока ждали освобождения)
+          const session = await getCloudSession()
           if (!session) {
             set({ authUserId: null, cloudReady: false, needOnboarding: false, companyId: null })
             return
@@ -65,7 +93,7 @@ export const useStore = create(
           const companyId = membership.company_id
           let data = await cloudLoadAll()
           if (!data) {
-            const seed = makeSeed()
+            const seed = remapSeedForCompany(makeSeed(), companyId)
             await cloudSeed(seed, companyId)
             data = await cloudLoadAll()
           }
@@ -94,14 +122,22 @@ export const useStore = create(
           })
           attachSync(useStore)
         } catch (e) {
-          set({ cloudError: String(e.message || e) })
+          set({ cloudError: e?.message || e?.code || String(e) })
+        } finally {
+          set({ _bootBusy: false })
         }
       },
       createCompany: async (name, userName) => {
-        const r = await createCompanyCloud(name, userName)
-        if (r.ok) await get().bootstrapCloud()
-        return r
+        set({ _creating: true }) // блокируем фоновые bootstrap до завершения
+        try {
+          const r = await createCompanyCloud(name, userName)
+          if (r.ok) await get().bootstrapCloud(undefined, { fromOnboarding: true })
+          return r
+        } finally {
+          set({ _creating: false })
+        }
       },
+      // вход/регистрация: bootstrap зовём явно один раз (onAuthChange его не триггерит)
       signIn: async (email, password) => {
         const r = await cloudSignIn(email, password)
         if (r.ok) await get().bootstrapCloud()
@@ -642,7 +678,7 @@ export const useStore = create(
       version: 6,
       // не сохраняем runtime-флаги облака (иначе после reload не переинициализируется)
       partialize: (state) => {
-        const { _authInited, cloudReady, needOnboarding, cloudError, ...rest } = state
+        const { _authInited, _bootBusy, _creating, cloudReady, needOnboarding, cloudError, ...rest } = state
         return rest
       },
       migrate: (state, version) => {

@@ -62,6 +62,50 @@ export async function cloudLoadAll() {
   return total > 0 ? result : null
 }
 
+// Сделать id seed-записей уникальными для компании (иначе фиксированные id
+// вроде pt_retail / wh1 / A1 конфликтуют между тенантами по первичному ключу).
+// Префиксуем id и все ссылки на них; коды ячеек (cell) остаются как есть.
+export function remapSeedForCompany(state, companyId) {
+  const p = companyId.slice(0, 8) + '_'
+  const rid = (id) => (id ? p + id : id)
+  const remapItems = (items) =>
+    (items || []).map((it) => ({ ...it, productId: rid(it.productId) }))
+  return {
+    ...state,
+    priceTypes: state.priceTypes.map((t) => ({ ...t, id: rid(t.id) })),
+    warehouses: state.warehouses.map((w) => ({ ...w, id: rid(w.id) })),
+    cells: state.cells.map((c) => ({ ...c, id: rid(c.id), warehouseId: rid(c.warehouseId) })),
+    products: state.products.map((pr) => ({
+      ...pr,
+      id: rid(pr.id),
+      warehouseId: rid(pr.warehouseId),
+      prices: Object.fromEntries(
+        Object.entries(pr.prices || {}).map(([k, v]) => [rid(k), v]),
+      ),
+    })),
+    customers: state.customers.map((c) => ({ ...c, id: rid(c.id), priceTypeId: rid(c.priceTypeId) })),
+    suppliers: state.suppliers.map((s) => ({ ...s, id: rid(s.id) })),
+    employees: state.employees.map((e) => ({ ...e, id: rid(e.id) })),
+    orders: state.orders.map((o) => ({
+      ...o,
+      id: rid(o.id),
+      customerId: rid(o.customerId),
+      priceTypeId: rid(o.priceTypeId),
+      items: remapItems(o.items),
+    })),
+    invoices: state.invoices.map((i) => ({
+      ...i,
+      id: rid(i.id),
+      partyId: rid(i.partyId),
+      priceTypeId: rid(i.priceTypeId),
+      items: remapItems(i.items),
+    })),
+    movements: state.movements.map((m) => ({ ...m, id: rid(m.id), productId: rid(m.productId) })),
+    shifts: state.shifts.map((s) => ({ ...s, id: rid(s.id) })),
+    audit: state.audit.map((a) => ({ ...a, id: rid(a.id) })),
+  }
+}
+
 // Залить начальное состояние (seed) в БД, пометив записи компанией
 export async function cloudSeed(state, companyId) {
   for (const cfg of TABLES) {
@@ -207,9 +251,9 @@ export async function getCloudSession() {
   return data.session
 }
 
-// Надёжный источник состояния входа: реагирует на SIGNED_IN / SIGNED_OUT
+// Подписка на события авторизации. Передаём event, чтобы отличить выход.
 export function onAuthChange(cb) {
-  const { data } = supabase.auth.onAuthStateChange((_event, session) => cb(session))
+  const { data } = supabase.auth.onAuthStateChange((event, session) => cb(event, session))
   return () => data.subscription.unsubscribe()
 }
 
