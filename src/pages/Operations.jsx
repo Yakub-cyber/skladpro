@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   ArrowDownToLine,
   TrendingDown,
@@ -16,30 +17,38 @@ import {
   Eye,
   EyeOff,
   AlertTriangle,
+  ShoppingCart,
+  ArrowLeftRight,
+  Truck,
+  ChevronRight,
 } from 'lucide-react'
 import { Card, Button, Badge, Field, Select, Empty, cx } from '../components/ui'
 import ScannerInput from '../components/ScannerInput'
 import { useStore } from '../store/useStore'
 import { money, num, relTime } from '../lib/format'
+import { statusInfo } from '../lib/constants'
 import { resolveScan } from '../lib/barcode'
 
 const TABS = [
-  { key: 'receive', label: 'Приёмка', icon: ArrowDownToLine },
+  { key: 'sale', label: 'Продажа', icon: ShoppingCart },
+  { key: 'receive', label: 'Закупка', icon: ArrowDownToLine },
+  { key: 'sreturn', label: 'Возврат продажи', icon: Undo2 },
+  { key: 'preturn', label: 'Возврат поставщику', icon: Truck },
+  { key: 'transfer', label: 'Перемещение', icon: ArrowLeftRight },
   { key: 'writeoff', label: 'Списание', icon: TrendingDown },
-  { key: 'return', label: 'Возврат', icon: Undo2 },
   { key: 'inventory', label: 'Инвентаризация', icon: ClipboardCheck },
   { key: 'marking', label: 'Маркировка', icon: ShieldCheck },
   { key: 'journal', label: 'Журнал', icon: History },
 ]
 
 export default function Operations() {
-  const [tab, setTab] = useState('receive')
+  const [tab, setTab] = useState('sale')
   return (
     <div className="animate-fadeUp">
       <div className="mb-4">
-        <h2 className="text-xl font-semibold tracking-tight">Операции склада</h2>
+        <h2 className="text-xl font-semibold tracking-tight">Документы</h2>
         <p className="text-sm text-muted">
-          Приёмка со сканером, списание, возврат и инвентаризация — всё пишется в журнал.
+          Продажа, закупка, возвраты, перемещение, списание и инвентаризация — каждое движение пишется в журнал.
         </p>
       </div>
 
@@ -58,13 +67,168 @@ export default function Operations() {
         ))}
       </div>
 
+      {tab === 'sale' && <SaleTab />}
       {tab === 'receive' && <ReceiveTab />}
+      {tab === 'sreturn' && <ReturnTab />}
+      {tab === 'preturn' && <SupplierReturnTab />}
+      {tab === 'transfer' && <TransferTab />}
       {tab === 'writeoff' && <WriteOffTab />}
-      {tab === 'return' && <ReturnTab />}
       {tab === 'inventory' && <InventoryTab />}
       {tab === 'marking' && <MarkingTab />}
       {tab === 'journal' && <JournalTab />}
     </div>
+  )
+}
+
+// ── Продажа (открывает кассу) ───────────────────────────────────────────────
+function SaleTab() {
+  const nav = useNavigate()
+  const orders = useStore((s) => s.orders) || []
+  const recent = useMemo(
+    () => [...orders].sort((a, b) => (b.createdAt > a.createdAt ? 1 : -1)).slice(0, 8),
+    [orders],
+  )
+  return (
+    <div className="grid lg:grid-cols-2 gap-5 items-start">
+      <Card className="p-5">
+        <h3 className="font-semibold mb-1 flex items-center gap-2">
+          <ShoppingCart size={17} className="text-brand" /> Новая продажа
+        </h3>
+        <p className="text-[13px] text-muted mb-4">
+          Касса: сканируйте или ищите товар, выберите клиента и тип цены. Позиции спишутся со склада,
+          а документ попадёт в журнал продаж и смену.
+        </p>
+        <Button icon={Plus} onClick={() => nav('/orders/new')}>
+          Открыть кассу
+        </Button>
+      </Card>
+
+      <Card className="p-5">
+        <h3 className="font-semibold mb-3">Последние продажи</h3>
+        {recent.length === 0 ? (
+          <Empty icon={ShoppingCart} title="Продаж пока нет" text="Оформите первую через кассу." />
+        ) : (
+          <div className="divide-y divide-line -mx-1">
+            {recent.map((o) => {
+              const si = statusInfo(o.status)
+              return (
+                <button
+                  key={o.id}
+                  onClick={() => nav(`/orders?id=${o.id}`)}
+                  className="w-full flex items-center gap-3 px-1 py-2.5 text-left hover:bg-surface-2 rounded-lg"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-medium truncate">{o.customerName}</div>
+                    <div className="text-[12px] text-muted">{o.no} · {relTime(o.createdAt)}</div>
+                  </div>
+                  <span className="text-sm font-semibold tabular-nums shrink-0">{money(o.total)}</span>
+                  <Badge tone={si.color}>{si.label}</Badge>
+                </button>
+              )
+            })}
+          </div>
+        )}
+      </Card>
+    </div>
+  )
+}
+
+// ── Возврат поставщику ──────────────────────────────────────────────────────
+function SupplierReturnTab() {
+  const supplierReturn = useStore((s) => s.supplierReturn)
+  return (
+    <MoveForm
+      action={supplierReturn}
+      reasons={['Брак от поставщика', 'Пересорт', 'Излишек поставки', 'Не востребован', 'Прочее']}
+      tone="danger"
+      verb="Вернуть поставщику"
+      hint="Возврат поставщику уменьшает остаток на складе. Выберите товар, количество и причину — документ попадёт в журнал."
+    />
+  )
+}
+
+// ── Перемещение между складами ──────────────────────────────────────────────
+function TransferTab() {
+  const products = useStore((s) => s.products)
+  const warehouses = useStore((s) => s.warehouses) || []
+  const transferStock = useStore((s) => s.transferStock)
+  const [items, setItems] = useState([])
+  const [toWh, setToWh] = useState(warehouses[0]?.id || '')
+  const [done, setDone] = useState('')
+
+  const whName = (id) => warehouses.find((w) => w.id === id)?.name || '—'
+  const add = (p) => {
+    setDone('')
+    setItems((prev) =>
+      prev.find((x) => x.productId === p.id)
+        ? prev
+        : [...prev, { productId: p.id, name: p.name, unit: p.unit, qty: 1, fromWh: p.warehouseId }],
+    )
+  }
+  const apply = () => {
+    items.forEach((it) => transferStock(it.productId, toWh, '', it.qty))
+    setDone(`Перемещено ${items.length} поз. → ${whName(toWh)}`)
+    setItems([])
+    setTimeout(() => setDone(''), 3000)
+  }
+
+  return (
+    <Card className="p-5 max-w-xl">
+      <p className="text-[13px] text-muted mb-3">
+        Перемещение переносит товар на другой склад. Общий остаток не меняется — движение фиксируется в журнале.
+      </p>
+      {done && <div className="mb-3"><Toast>{done}</Toast></div>}
+
+      <Field label="Склад назначения">
+        <Select value={toWh} onChange={(e) => setToWh(e.target.value)}>
+          {warehouses.map((w) => (
+            <option key={w.id} value={w.id}>{w.name}</option>
+          ))}
+        </Select>
+      </Field>
+
+      <div className="mt-2">
+        <ProductSearch onPick={add} placeholder="Добавить товар к перемещению…" />
+      </div>
+
+      {items.length > 0 && (
+        <div className="mt-4 space-y-2">
+          {items.map((it) => (
+            <div key={it.productId} className="flex items-center gap-2 p-2.5 rounded-xl bg-surface-2">
+              <div className="flex-1 min-w-0">
+                <div className="text-sm truncate">{it.name}</div>
+                <div className="text-[11px] text-muted flex items-center gap-1">
+                  {whName(it.fromWh)} <ChevronRight size={11} /> {whName(toWh)}
+                </div>
+              </div>
+              <input
+                type="number"
+                min="1"
+                value={it.qty}
+                onChange={(e) =>
+                  setItems((arr) =>
+                    arr.map((x) =>
+                      x.productId === it.productId ? { ...x, qty: Math.max(1, +e.target.value) } : x,
+                    ),
+                  )
+                }
+                className="w-20 h-9 px-2 rounded-lg bg-surface border border-line text-sm text-center"
+              />
+              <span className="text-[12px] text-muted w-8">{it.unit}</span>
+              <button
+                onClick={() => setItems((arr) => arr.filter((x) => x.productId !== it.productId))}
+                className="text-muted hover:text-bad"
+              >
+                <Trash2 size={16} />
+              </button>
+            </div>
+          ))}
+          <Button icon={ArrowLeftRight} className="w-full mt-2" onClick={apply} disabled={!toWh}>
+            Переместить ({items.length})
+          </Button>
+        </div>
+      )}
+    </Card>
   )
 }
 
@@ -521,9 +685,11 @@ function MarkingTab() {
 
 // ── Журнал движений ─────────────────────────────────────────────────────────
 const MV = {
-  in: { label: 'Приёмка', icon: ArrowDownToLine, tone: 'ok' },
+  in: { label: 'Закупка', icon: ArrowDownToLine, tone: 'ok' },
   writeoff: { label: 'Списание', icon: TrendingDown, tone: 'bad' },
-  return: { label: 'Возврат', icon: Undo2, tone: 'info' },
+  return: { label: 'Возврат продажи', icon: Undo2, tone: 'info' },
+  supplier_return: { label: 'Возврат поставщику', icon: Truck, tone: 'bad' },
+  transfer: { label: 'Перемещение', icon: ArrowLeftRight, tone: 'info' },
   inventory: { label: 'Инвентаризация', icon: ClipboardCheck, tone: 'warn' },
 }
 
@@ -533,7 +699,7 @@ function JournalTab() {
   const nameOf = (id) => employees.find((e) => e.id === id)?.name || 'Система'
 
   if (!movements.length) {
-    return <Empty icon={History} title="Журнал пуст" text="Операции приёмки, списания и инвентаризации появятся здесь." />
+    return <Empty icon={History} title="Журнал пуст" text="Закупки, возвраты, перемещения, списания и инвентаризации появятся здесь." />
   }
 
   return (
@@ -553,9 +719,8 @@ function JournalTab() {
                 </div>
               </div>
               <div className="text-right shrink-0">
-                <div className={cx('text-sm font-semibold tabular-nums', m.delta >= 0 ? 'text-ok' : 'text-bad')}>
-                  {m.delta >= 0 ? '+' : ''}
-                  {num(m.delta)}
+                <div className={cx('text-sm font-semibold tabular-nums', m.delta === 0 ? 'text-muted' : m.delta > 0 ? 'text-ok' : 'text-bad')}>
+                  {m.delta === 0 ? '↔' : `${m.delta > 0 ? '+' : ''}${num(m.delta)}`}
                 </div>
                 <div className="text-[11px] text-muted">{relTime(m.at)}</div>
               </div>

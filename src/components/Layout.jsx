@@ -45,7 +45,7 @@ export const NAV = [
   { to: '/delivery', label: 'Доставка', icon: Navigation, perm: 'delivery' },
   { to: '/products', label: 'Товары', icon: Package, perm: 'products' },
   { to: '/warehouse', label: 'Карта склада', icon: WarehouseIcon, perm: 'warehouse' },
-  { to: '/operations', label: 'Операции', icon: ClipboardCheck, perm: 'operations' },
+  { to: '/operations', label: 'Документы', icon: ClipboardCheck, perm: 'operations' },
   { to: '/invoices', label: 'Накладные', icon: FileText, ai: true, perm: 'invoices' },
   { to: '/customers', label: 'Клиенты', icon: Users, perm: 'customers' },
   { to: '/suppliers', label: 'Поставщики', icon: Truck, perm: 'suppliers' },

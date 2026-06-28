@@ -412,6 +412,67 @@ export const useStore = create(
           type: 'inventory',
         })
       },
+      // Возврат поставщику (закупленный товар уходит со склада)
+      supplierReturn: (productId, qty, reason) => {
+        const p = get().products.find((x) => x.id === productId)
+        if (!p) return
+        set((s) => ({
+          products: s.products.map((x) =>
+            x.id === productId ? { ...x, stock: Math.max(0, x.stock - qty) } : x,
+          ),
+          movements: [
+            {
+              id: uid('mv'),
+              type: 'supplier_return',
+              productId,
+              name: p.name,
+              qty,
+              delta: -qty,
+              reason: reason || 'Возврат поставщику',
+              by: s.authUserId,
+              at: new Date().toISOString(),
+            },
+            ...s.movements,
+          ],
+        }))
+        get().logAction(`Возврат поставщику «${p.name}» −${qty} ${p.unit}`, {
+          section: 'Склад',
+          type: 'supplier_return',
+        })
+      },
+      // Перемещение между складами/ячейками (общий остаток не меняется)
+      transferStock: (productId, toWarehouseId, toCell, qty) => {
+        const p = get().products.find((x) => x.id === productId)
+        if (!p) return
+        const whName = (id) => get().warehouses?.find((w) => w.id === id)?.name || '—'
+        const from = `${whName(p.warehouseId)}${p.cell ? ' · ' + p.cell : ''}`
+        const to = `${whName(toWarehouseId)}${toCell ? ' · ' + toCell : ''}`
+        set((s) => ({
+          products: s.products.map((x) =>
+            x.id === productId
+              ? { ...x, warehouseId: toWarehouseId || x.warehouseId, cell: toCell || x.cell }
+              : x,
+          ),
+          movements: [
+            {
+              id: uid('mv'),
+              type: 'transfer',
+              productId,
+              name: p.name,
+              qty: qty || p.stock,
+              delta: 0,
+              reason: `Перемещение: ${from} → ${to}`,
+              by: s.authUserId,
+              at: new Date().toISOString(),
+            },
+            ...s.movements,
+          ],
+        }))
+        get().logAction(`Перемещение «${p.name}»: ${from} → ${to}`, {
+          section: 'Склад',
+          type: 'transfer',
+        })
+      },
 
       // ── Заказы ───────────────────────────────────────────────
       addOrder: (order) => {
