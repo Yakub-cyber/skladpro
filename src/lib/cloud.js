@@ -19,11 +19,18 @@ const TABLES = [
   { key: 'employees', table: 'employees' },
   { key: 'orders', table: 'orders' },
   { key: 'invoices', table: 'invoices' },
+  { key: 'documents', table: 'documents' },
   { key: 'movements', table: 'movements' },
   { key: 'shifts', table: 'shifts' },
   { key: 'audit', table: 'audit' },
 ]
 const byKey = Object.fromEntries(TABLES.map((t) => [t.key, t]))
+
+// Таблица ещё не создана в БД (новая фича до применения SQL) — не валим приложение
+const isMissingTable = (e) => {
+  const m = `${e?.message || ''} ${e?.code || ''}`
+  return /PGRST205|42P01|does not exist|find the table|schema cache/i.test(m)
+}
 
 function toRow(obj, cfg) {
   const out = {}
@@ -54,7 +61,14 @@ export async function cloudLoadAll() {
   await Promise.all(
     TABLES.map(async (cfg) => {
       const { data, error } = await supabase.from(cfg.table).select('*')
-      if (error) throw error
+      if (error) {
+        if (isMissingTable(error)) {
+          console.warn('cloudLoad: таблица отсутствует, пропуск', cfg.table)
+          result[cfg.key] = []
+          return
+        }
+        throw error
+      }
       result[cfg.key] = (data || []).map((r) => fromRow(r, cfg))
       total += result[cfg.key].length
     }),
@@ -101,6 +115,12 @@ export function remapSeedForCompany(state, companyId) {
       priceTypeId: rid(i.priceTypeId),
       items: remapItems(i.items),
     })),
+    documents: (state.documents || []).map((d) => ({
+      ...d,
+      id: rid(d.id),
+      toWarehouseId: rid(d.toWarehouseId),
+      items: remapItems(d.items),
+    })),
     movements: state.movements.map((m) => ({ ...m, id: rid(m.id), productId: rid(m.productId) })),
     shifts: state.shifts.map((s) => ({ ...s, id: rid(s.id) })),
     audit: state.audit.map((a) => ({ ...a, id: rid(a.id) })),
@@ -121,7 +141,13 @@ export async function cloudSeed(state, companyId) {
     const rows = (state[cfg.key] || []).map((o) => ({ ...toRow(o, cfg), company_id: companyId }))
     if (!rows.length) continue
     const { error } = await supabase.from(cfg.table).upsert(rows)
-    if (error) throw error
+    if (error) {
+      if (isMissingTable(error)) {
+        console.warn('cloudSeed: таблица отсутствует, пропуск', cfg.table)
+        continue
+      }
+      throw error
+    }
   }
 }
 

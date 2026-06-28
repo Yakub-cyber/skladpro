@@ -21,13 +21,28 @@ import {
   ArrowLeftRight,
   Truck,
   ChevronRight,
+  FileText,
+  Printer,
+  Ban,
+  FileEdit,
 } from 'lucide-react'
 import { Card, Button, Badge, Field, Select, Empty, cx } from '../components/ui'
 import ScannerInput from '../components/ScannerInput'
 import { useStore } from '../store/useStore'
 import { money, num, relTime } from '../lib/format'
-import { statusInfo } from '../lib/constants'
+import { statusInfo, docTypeInfo, DOC_STATUS } from '../lib/constants'
 import { resolveScan } from '../lib/barcode'
+
+// Иконка по типу документа
+const DOC_ICON = {
+  purchase: ArrowDownToLine,
+  sale: ShoppingCart,
+  sale_return: Undo2,
+  supplier_return: Truck,
+  transfer: ArrowLeftRight,
+  writeoff: TrendingDown,
+  inventory: ClipboardCheck,
+}
 
 const TABS = [
   { key: 'sale', label: 'Продажа', icon: ShoppingCart },
@@ -37,6 +52,7 @@ const TABS = [
   { key: 'transfer', label: 'Перемещение', icon: ArrowLeftRight },
   { key: 'writeoff', label: 'Списание', icon: TrendingDown },
   { key: 'inventory', label: 'Инвентаризация', icon: ClipboardCheck },
+  { key: 'registry', label: 'Реестр', icon: FileText },
   { key: 'marking', label: 'Маркировка', icon: ShieldCheck },
   { key: 'journal', label: 'Журнал', icon: History },
 ]
@@ -74,6 +90,7 @@ export default function Operations() {
       {tab === 'transfer' && <TransferTab />}
       {tab === 'writeoff' && <WriteOffTab />}
       {tab === 'inventory' && <InventoryTab />}
+      {tab === 'registry' && <DocumentsTab />}
       {tab === 'marking' && <MarkingTab />}
       {tab === 'journal' && <JournalTab />}
     </div>
@@ -135,23 +152,21 @@ function SaleTab() {
 
 // ── Возврат поставщику ──────────────────────────────────────────────────────
 function SupplierReturnTab() {
-  const supplierReturn = useStore((s) => s.supplierReturn)
   return (
     <MoveForm
-      action={supplierReturn}
+      docType="supplier_return"
       reasons={['Брак от поставщика', 'Пересорт', 'Излишек поставки', 'Не востребован', 'Прочее']}
       tone="danger"
       verb="Вернуть поставщику"
-      hint="Возврат поставщику уменьшает остаток на складе. Выберите товар, количество и причину — документ попадёт в журнал."
+      hint="Возврат поставщику уменьшает остаток на складе. Выберите товар, количество и причину — создаётся документ возврата."
     />
   )
 }
 
 // ── Перемещение между складами ──────────────────────────────────────────────
 function TransferTab() {
-  const products = useStore((s) => s.products)
   const warehouses = useStore((s) => s.warehouses) || []
-  const transferStock = useStore((s) => s.transferStock)
+  const addDocument = useStore((s) => s.addDocument)
   const [items, setItems] = useState([])
   const [toWh, setToWh] = useState(warehouses[0]?.id || '')
   const [done, setDone] = useState('')
@@ -165,9 +180,9 @@ function TransferTab() {
         : [...prev, { productId: p.id, name: p.name, unit: p.unit, qty: 1, fromWh: p.warehouseId }],
     )
   }
-  const apply = () => {
-    items.forEach((it) => transferStock(it.productId, toWh, '', it.qty))
-    setDone(`Перемещено ${items.length} поз. → ${whName(toWh)}`)
+  const submit = (post) => {
+    addDocument({ type: 'transfer', toWarehouseId: toWh, items }, { post })
+    setDone(post ? `Перемещено ${items.length} поз. → ${whName(toWh)}` : `Черновик перемещения на ${items.length} поз.`)
     setItems([])
     setTimeout(() => setDone(''), 3000)
   }
@@ -223,9 +238,14 @@ function TransferTab() {
               </button>
             </div>
           ))}
-          <Button icon={ArrowLeftRight} className="w-full mt-2" onClick={apply} disabled={!toWh}>
-            Переместить ({items.length})
-          </Button>
+          <div className="flex gap-2 mt-2">
+            <Button icon={ArrowLeftRight} className="flex-1" onClick={() => submit(true)} disabled={!toWh}>
+              Переместить ({items.length})
+            </Button>
+            <Button variant="soft" icon={FileEdit} onClick={() => submit(false)} disabled={!toWh}>
+              Черновик
+            </Button>
+          </div>
         </div>
       )}
     </Card>
@@ -287,7 +307,8 @@ function Toast({ children }) {
 
 // ── Приёмка ─────────────────────────────────────────────────────────────────
 function ReceiveTab() {
-  const { products, receiveOp } = useStore()
+  const products = useStore((s) => s.products)
+  const addDocument = useStore((s) => s.addDocument)
   const [items, setItems] = useState([])
   const [msg, setMsg] = useState('')
   const [done, setDone] = useState('')
@@ -311,9 +332,16 @@ function ReceiveTab() {
     if (r.weighed) setMsg(`Весовой: ${r.product.name} — ${r.weightKg} кг`)
   }
   const total = items.reduce((a, x) => a + x.qty, 0)
-  const apply = () => {
-    receiveOp(items, 'Приёмка на складе')
-    setDone(`Оприходовано ${total} ед. в ${items.length} позициях`)
+  const submit = (post) => {
+    addDocument(
+      {
+        type: 'purchase',
+        reason: 'Закупка',
+        items: items.map((it) => ({ productId: it.productId, name: it.name, unit: it.unit, qty: it.qty })),
+      },
+      { post },
+    )
+    setDone(post ? `Оприходовано ${total} ед. в ${items.length} поз.` : `Черновик закупки на ${items.length} поз.`)
     setItems([])
     setTimeout(() => setDone(''), 3000)
   }
@@ -373,9 +401,14 @@ function ReceiveTab() {
               ))}
             </div>
             {items.length > 0 && (
-              <Button icon={Check} className="w-full mt-4" onClick={apply}>
-                Оприходовать на склад
-              </Button>
+              <div className="flex gap-2 mt-4">
+                <Button icon={Check} className="flex-1" onClick={() => submit(true)}>
+                  Оприходовать на склад
+                </Button>
+                <Button variant="soft" icon={FileEdit} onClick={() => submit(false)}>
+                  Черновик
+                </Button>
+              </div>
             )}
           </>
         )}
@@ -384,18 +417,22 @@ function ReceiveTab() {
   )
 }
 
-// ── Списание / Возврат (общая форма) ───────────────────────────────────────
-function MoveForm({ action, reasons, tone, verb, hint }) {
+// ── Списание / Возврат (общая форма документа на одну позицию) ─────────────
+function MoveForm({ docType, reasons, tone, verb, hint }) {
   const products = useStore((s) => s.products)
+  const addDocument = useStore((s) => s.addDocument)
   const [sel, setSel] = useState(null)
   const [qty, setQty] = useState(1)
   const [reason, setReason] = useState(reasons[0])
   const [done, setDone] = useState('')
 
   const cur = sel && products.find((p) => p.id === sel.id)
-  const apply = () => {
-    action(sel.id, qty, reason)
-    setDone(`${verb}: ${sel.name} — ${qty} ${sel.unit}`)
+  const submit = (post) => {
+    addDocument(
+      { type: docType, reason, items: [{ productId: sel.id, name: sel.name, unit: sel.unit, qty }] },
+      { post },
+    )
+    setDone(`${post ? verb : 'Черновик'}: ${sel.name} — ${qty} ${sel.unit}`)
     setSel(null)
     setQty(1)
     setTimeout(() => setDone(''), 3000)
@@ -436,14 +473,14 @@ function MoveForm({ action, reasons, tone, verb, hint }) {
               </Select>
             </Field>
           </div>
-          <Button
-            className="w-full mt-4"
-            variant={tone}
-            onClick={apply}
-            icon={Check}
-          >
-            {verb} {qty} {sel.unit}
-          </Button>
+          <div className="flex gap-2 mt-4">
+            <Button className="flex-1" variant={tone} onClick={() => submit(true)} icon={Check}>
+              {verb} {qty} {sel.unit}
+            </Button>
+            <Button variant="soft" icon={FileEdit} onClick={() => submit(false)}>
+              Черновик
+            </Button>
+          </div>
         </div>
       )}
     </Card>
@@ -451,34 +488,33 @@ function MoveForm({ action, reasons, tone, verb, hint }) {
 }
 
 function WriteOffTab() {
-  const writeOff = useStore((s) => s.writeOff)
   return (
     <MoveForm
-      action={writeOff}
+      docType="writeoff"
       reasons={['Брак', 'Недостача', 'Порча', 'Истёк срок', 'Прочее']}
       tone="danger"
       verb="Списать"
-      hint="Списание уменьшает остаток. Укажите товар, количество и причину — операция попадёт в журнал."
+      hint="Списание уменьшает остаток. Укажите товар, количество и причину — создаётся документ списания."
     />
   )
 }
 
 function ReturnTab() {
-  const returnStock = useStore((s) => s.returnStock)
   return (
     <MoveForm
-      action={returnStock}
+      docType="sale_return"
       reasons={['Возврат от клиента', 'Не подошёл', 'Брак у клиента', 'Пересорт', 'Прочее']}
       tone="primary"
       verb="Вернуть"
-      hint="Возврат увеличивает остаток на складе. Выберите товар, количество и причину возврата."
+      hint="Возврат продажи увеличивает остаток на складе. Выберите товар, количество и причину возврата."
     />
   )
 }
 
 // ── Инвентаризация ──────────────────────────────────────────────────────────
 function InventoryTab() {
-  const { products, applyInventory } = useStore()
+  const products = useStore((s) => s.products)
+  const addDocument = useStore((s) => s.addDocument)
   const [counts, setCounts] = useState({})
   const [q, setQ] = useState('')
   const [done, setDone] = useState('')
@@ -495,11 +531,13 @@ function InventoryTab() {
     return p && v !== '' && Number(v) !== p.stock
   })
 
-  const apply = () => {
-    const payload = {}
-    changed.forEach(([id, v]) => (payload[id] = Number(v)))
-    applyInventory(payload)
-    setDone(`Применено по ${changed.length} позициям`)
+  const submit = (post) => {
+    const items = changed.map(([id, v]) => {
+      const p = products.find((x) => x.id === id)
+      return { productId: id, name: p.name, unit: p.unit, qty: Number(v), prevStock: p.stock }
+    })
+    addDocument({ type: 'inventory', reason: 'Инвентаризация', items }, { post })
+    setDone(post ? `Применено по ${changed.length} позициям` : `Черновик инвентаризации на ${changed.length} поз.`)
     setCounts({})
     setTimeout(() => setDone(''), 3000)
   }
@@ -512,9 +550,14 @@ function InventoryTab() {
           <p className="text-[13px] text-muted">Введите фактический остаток — система покажет расхождения.</p>
         </div>
         {changed.length > 0 && (
-          <Button icon={Check} onClick={apply}>
-            Применить ({changed.length})
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="soft" icon={FileEdit} onClick={() => submit(false)}>
+              Черновик
+            </Button>
+            <Button icon={Check} onClick={() => submit(true)}>
+              Применить ({changed.length})
+            </Button>
+          </div>
         )}
       </div>
       {done && <div className="mb-3"><Toast>{done}</Toast></div>}
@@ -679,6 +722,136 @@ function MarkingTab() {
           </Card>
         )
       })}
+    </div>
+  )
+}
+
+// ── Реестр документов ───────────────────────────────────────────────────────
+const REG_FILTERS = [
+  { key: 'all', label: 'Все' },
+  { key: 'posted', label: 'Проведённые' },
+  { key: 'draft', label: 'Черновики' },
+  { key: 'cancelled', label: 'Отменённые' },
+]
+
+// Печать документа в отдельном окне
+function printDocument(doc, byName) {
+  const ti = docTypeInfo(doc.type)
+  const rows = (doc.items || [])
+    .map(
+      (it, i) =>
+        `<tr><td>${i + 1}</td><td>${it.name}</td><td style="text-align:right">${it.qty}</td><td>${it.unit || ''}</td></tr>`,
+    )
+    .join('')
+  const html = `<!doctype html><html><head><meta charset="utf-8"><title>${doc.no}</title>
+    <style>
+      body{font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#111;padding:32px;}
+      h1{font-size:20px;margin:0 0 4px}.muted{color:#666;font-size:13px}
+      table{width:100%;border-collapse:collapse;margin-top:18px;font-size:14px}
+      th,td{border:1px solid #ccc;padding:8px 10px;text-align:left}th{background:#f3f3f3}
+      .foot{margin-top:24px;font-size:13px;color:#444}
+    </style></head><body>
+    <h1>${ti.label} № ${doc.no}</h1>
+    <div class="muted">${new Date(doc.createdAt).toLocaleString('ru-RU')} · ${byName}${doc.reason ? ' · ' + doc.reason : ''}</div>
+    <table><thead><tr><th>#</th><th>Наименование</th><th style="text-align:right">Кол-во</th><th>Ед.</th></tr></thead>
+    <tbody>${rows}</tbody></table>
+    <div class="foot">Позиций: ${(doc.items || []).length} · Всего: ${doc.totalQty} · Статус: ${(DOC_STATUS[doc.status] || {}).label || doc.status}</div>
+    </body></html>`
+  const w = window.open('', '_blank', 'width=720,height=900')
+  if (!w) return
+  w.document.write(html)
+  w.document.close()
+  w.focus()
+  setTimeout(() => w.print(), 250)
+}
+
+function DocumentsTab() {
+  const documents = useStore((s) => s.documents) || []
+  const employees = useStore((s) => s.employees) || []
+  const postDocument = useStore((s) => s.postDocument)
+  const cancelDocument = useStore((s) => s.cancelDocument)
+  const removeDocument = useStore((s) => s.removeDocument)
+  const [filter, setFilter] = useState('all')
+  const nameOf = (id) => employees.find((e) => e.id === id)?.name || 'Система'
+
+  const list = filter === 'all' ? documents : documents.filter((d) => d.status === filter)
+
+  if (!documents.length) {
+    return (
+      <Empty
+        icon={FileText}
+        title="Документов нет"
+        text="Создайте закупку, списание, перемещение или другой документ — он появится в реестре с номером и статусом."
+      />
+    )
+  }
+
+  return (
+    <div>
+      <div className="flex gap-1.5 overflow-x-auto no-scrollbar mb-3">
+        {REG_FILTERS.map((f) => (
+          <button
+            key={f.key}
+            onClick={() => setFilter(f.key)}
+            className={cx(
+              'px-3 h-9 rounded-lg text-[13px] font-medium whitespace-nowrap',
+              filter === f.key ? 'bg-surface-3 text-ink' : 'bg-surface-2 text-muted hover:text-ink',
+            )}
+          >
+            {f.label}
+          </button>
+        ))}
+      </div>
+      {list.length === 0 ? (
+        <Empty icon={FileText} title="Ничего не найдено" />
+      ) : (
+        <Card className="overflow-hidden">
+          <div className="divide-y divide-line">
+            {list.map((d) => {
+              const ti = docTypeInfo(d.type)
+              const st = DOC_STATUS[d.status] || DOC_STATUS.posted
+              const Icon = DOC_ICON[d.type] || FileText
+              return (
+                <div key={d.id} className="flex flex-wrap items-center gap-3 px-4 py-3">
+                  <div
+                    className={cx(
+                      'h-9 w-9 rounded-lg grid place-items-center shrink-0',
+                      d.status === 'cancelled' ? 'bg-surface-2 text-muted' : 'bg-brand-soft text-brand',
+                    )}
+                  >
+                    <Icon size={17} />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-medium truncate">
+                      {d.no} · {ti.label}
+                    </div>
+                    <div className="text-[12px] text-muted">
+                      {relTime(d.createdAt)} · {nameOf(d.by)} · {(d.items || []).length} поз. · {num(d.totalQty)} ед.
+                    </div>
+                  </div>
+                  <Badge tone={st.color}>{st.label}</Badge>
+                  <div className="flex items-center gap-1">
+                    {d.status === 'draft' && (
+                      <Button size="sm" variant="primary" icon={Check} onClick={() => postDocument(d.id)}>
+                        Провести
+                      </Button>
+                    )}
+                    {d.status === 'posted' && (
+                      <Button size="sm" variant="ghost" icon={Ban} onClick={() => cancelDocument(d.id)}>
+                        Отменить
+                      </Button>
+                    )}
+                    <Button size="sm" variant="ghost" icon={Printer} onClick={() => printDocument(d, nameOf(d.by))} />
+                    {d.status !== 'posted' && (
+                      <Button size="sm" variant="ghost" icon={Trash2} onClick={() => removeDocument(d.id)} />
+                    )}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </Card>
+      )}
     </div>
   )
 }

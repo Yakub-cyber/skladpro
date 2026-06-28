@@ -305,6 +305,7 @@ export function makeSeed() {
     activeShiftId: null,
     priceTypes: PRICE_TYPE_SEED.map(({ factor, ...t }) => t),
     invoices: [],
+    documents: [],
     cells: ALL_CELLS.map((c) => ({ ...c })),
     warehouses: WAREHOUSES.map((w) => ({ ...w })),
     activeWarehouseId: 'wh1',

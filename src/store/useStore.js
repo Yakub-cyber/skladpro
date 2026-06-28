@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { makeSeed } from './seed'
 import { uid, docNo } from '../lib/id'
-import { nextStatus, statusInfo } from '../lib/constants'
+import { nextStatus, statusInfo, docTypeInfo } from '../lib/constants'
 import { hasSupabase } from '../lib/supabase'
 import {
   cloudLoadAll,
@@ -25,6 +25,45 @@ import {
 // Слой данных. Сейчас источник истины — localStorage (persist).
 // Чтобы переключиться на реальный API/Supabase, эти actions заменяются
 // на сетевые вызовы — компоненты менять не нужно.
+
+// ── Движок проводки документов ─────────────────────────────────────────────
+// Тип движения и знак влияния на остаток при проводке (post).
+const POST_MV = { purchase: 'in', sale_return: 'return', writeoff: 'writeoff', supplier_return: 'supplier_return', sale: 'writeoff' }
+const POST_SIGN = { purchase: 1, sale_return: 1, writeoff: -1, supplier_return: -1, sale: -1 }
+
+// Применить документ к остаткам и журналу движений. dir=1 — провести, -1 — откатить.
+// Возвращает part state ({ products, movements }) для set().
+function applyDocToState(state, doc, dir, by) {
+  const at = new Date().toISOString()
+  const moves = []
+  let products = state.products
+  const setP = (id, fn) => { products = products.map((p) => (p.id === id ? fn(p) : p)) }
+  const reason = dir < 0 ? `Отмена · ${doc.no}` : (doc.reason || docTypeInfo(doc.type).label)
+
+  if (doc.type === 'transfer') {
+    for (const it of doc.items) {
+      const to = dir > 0 ? doc.toWarehouseId : it.fromWh
+      setP(it.productId, (p) => ({ ...p, warehouseId: to || p.warehouseId }))
+      moves.push({ id: uid('mv'), type: 'transfer', productId: it.productId, name: it.name, qty: it.qty, delta: 0, reason, by, at })
+    }
+  } else if (doc.type === 'inventory') {
+    for (const it of doc.items) {
+      const target = dir > 0 ? it.qty : it.prevStock
+      let delta = 0
+      setP(it.productId, (p) => { delta = target - p.stock; return { ...p, stock: Math.max(0, target) } })
+      if (delta !== 0) moves.push({ id: uid('mv'), type: 'inventory', productId: it.productId, name: it.name, qty: Math.abs(delta), delta, reason: dir < 0 ? reason : (delta > 0 ? 'Излишек' : 'Недостача'), by, at })
+    }
+  } else {
+    const sign = (POST_SIGN[doc.type] ?? -1) * dir
+    const mvType = POST_MV[doc.type] || 'writeoff'
+    for (const it of doc.items) {
+      const d = sign * it.qty
+      setP(it.productId, (p) => ({ ...p, stock: Math.max(0, p.stock + d) }))
+      moves.push({ id: uid('mv'), type: mvType, productId: it.productId, name: it.name, qty: it.qty, delta: d, reason, by, at })
+    }
+  }
+  return { products, movements: [...moves, ...state.movements] }
+}
 
 export const useStore = create(
   persist(
@@ -474,6 +513,71 @@ export const useStore = create(
         })
       },
 
+      // ── Документы (реестр складских документов) ───────────────
+      // doc: { type, items:[{productId,name,unit,qty,(prevStock|fromWh)}], toWarehouseId?, reason?, note? }
+      // opts.post=false → черновик (без влияния на остатки)
+      addDocument: (doc, opts = {}) => {
+        const post = opts.post !== false
+        const id = uid('doc')
+        const type = doc.type
+        set((s) => {
+          const seq = s.documents.filter((d) => d.type === type).length + 1
+          const header = {
+            id,
+            no: docNo(docTypeInfo(type).prefix, seq),
+            type,
+            status: post ? 'posted' : 'draft',
+            items: (doc.items || []).map((it) => ({ ...it })),
+            toWarehouseId: doc.toWarehouseId || null,
+            reason: doc.reason || '',
+            note: doc.note || '',
+            totalQty: (doc.items || []).reduce((a, x) => a + (Number(x.qty) || 0), 0),
+            by: s.authUserId,
+            createdAt: new Date().toISOString(),
+            postedAt: post ? new Date().toISOString() : null,
+            cancelledAt: null,
+          }
+          const base = { documents: [header, ...s.documents] }
+          return post ? { ...base, ...applyDocToState(s, header, 1, s.authUserId) } : base
+        })
+        const d = get().documents.find((x) => x.id === id)
+        get().logAction(
+          `Документ ${d?.no} · ${docTypeInfo(type).label} ${post ? 'проведён' : '— черновик'}`,
+          { section: 'Документы', type: post ? 'create' : 'draft' },
+        )
+        return id
+      },
+      // Провести черновик
+      postDocument: (id) => {
+        const d = get().documents.find((x) => x.id === id)
+        if (!d || d.status !== 'draft') return
+        set((s) => ({
+          ...applyDocToState(s, d, 1, s.authUserId),
+          documents: s.documents.map((x) =>
+            x.id === id ? { ...x, status: 'posted', postedAt: new Date().toISOString() } : x,
+          ),
+        }))
+        get().logAction(`Документ ${d.no} проведён`, { section: 'Документы', type: 'update' })
+      },
+      // Отменить проводку (откатить влияние на остатки)
+      cancelDocument: (id) => {
+        const d = get().documents.find((x) => x.id === id)
+        if (!d || d.status !== 'posted') return
+        set((s) => ({
+          ...applyDocToState(s, d, -1, s.authUserId),
+          documents: s.documents.map((x) =>
+            x.id === id ? { ...x, status: 'cancelled', cancelledAt: new Date().toISOString() } : x,
+          ),
+        }))
+        get().logAction(`Отменён документ ${d.no}`, { section: 'Документы', type: 'delete' })
+      },
+      // Удалить документ (только черновик или отменённый — проведённый сначала отменить)
+      removeDocument: (id) => {
+        const d = get().documents.find((x) => x.id === id)
+        if (!d || d.status === 'posted') return
+        set((s) => ({ documents: s.documents.filter((x) => x.id !== id) }))
+      },
+
       // ── Заказы ───────────────────────────────────────────────
       addOrder: (order) => {
         const id = uid('o')
@@ -775,7 +879,7 @@ export const useStore = create(
     }),
     {
       name: 'sklad.db',
-      version: 6,
+      version: 7,
       // не сохраняем runtime-флаги облака (иначе после reload не переинициализируется)
       partialize: (state) => {
         const { _authInited, _bootBusy, _creating, cloudReady, needOnboarding, recoveryMode, cloudError, ...rest } = state
@@ -854,6 +958,10 @@ export const useStore = create(
             ...c,
             balance: c.balance ?? seedC[c.id] ?? 0,
           }))
+        }
+        if (version < 7) {
+          // реестр документов
+          state.documents = state.documents || []
         }
         return state
       },

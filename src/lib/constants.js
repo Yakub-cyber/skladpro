@@ -21,6 +21,25 @@ export const nextStatus = (key) => {
   return TRACK_FLOW.find((s) => s.step === cur.step + 1)?.key || null
 }
 
+// Типы складских документов (реестр)
+export const DOC_TYPES = [
+  { key: 'purchase', label: 'Закупка', prefix: 'ЗАК' },
+  { key: 'sale', label: 'Продажа', prefix: 'ПРД' },
+  { key: 'sale_return', label: 'Возврат продажи', prefix: 'ВЗП' },
+  { key: 'supplier_return', label: 'Возврат поставщику', prefix: 'ВЗС' },
+  { key: 'transfer', label: 'Перемещение', prefix: 'ПРМ' },
+  { key: 'writeoff', label: 'Списание', prefix: 'СПС' },
+  { key: 'inventory', label: 'Инвентаризация', prefix: 'ИНВ' },
+]
+export const docTypeInfo = (key) => DOC_TYPES.find((d) => d.key === key) || DOC_TYPES[0]
+
+// Статусы документа
+export const DOC_STATUS = {
+  draft: { label: 'Черновик', color: 'warn' },
+  posted: { label: 'Проведён', color: 'ok' },
+  cancelled: { label: 'Отменён', color: 'bad' },
+}
+
 // Категории товаров
 export const CATEGORIES = [
   { key: 'Крепёж', color: '#f59e0b', icon: 'Wrench' },
