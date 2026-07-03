@@ -841,7 +841,9 @@ function DocumentsTab() {
                         Отменить
                       </Button>
                     )}
-                    <Button size="sm" variant="ghost" icon={Printer} onClick={() => printDocument(d, nameOf(d.by))} />
+                    <Button size="sm" variant="soft" icon={Printer} onClick={() => printDocument(d, nameOf(d.by))}>
+                      Печать
+                    </Button>
                     {d.status !== 'posted' && (
                       <Button size="sm" variant="ghost" icon={Trash2} onClick={() => removeDocument(d.id)} />
                     )}
