@@ -212,7 +212,11 @@ export default function Settings() {
             <Database size={16} className="text-brand" /> Данные
           </span>
         }
-        subtitle="Сейчас данные хранятся в браузере (localStorage). Слой данных готов к подключению реального API."
+        subtitle={
+          cloud
+            ? 'Данные синхронизируются с облаком (Supabase) между устройствами. Локальная копия — офлайн-кэш и быстрый доступ.'
+            : 'Данные хранятся в браузере (localStorage). Задайте ключи Supabase в .env, чтобы включить облачную синхронизацию.'
+        }
       >
         <div className="flex flex-wrap gap-2">
           <Button variant="soft" icon={Download} onClick={exportData}>
@@ -234,9 +238,10 @@ export default function Settings() {
       >
         <div className="space-y-2.5 text-sm">
           {[
-            ['Веб-версия (сейчас)', 'React + Vite, работает оффлайн', true],
-            ['Реальный бэкенд', 'Supabase/Node — общий API для веба и мобайла', false],
-            ['Мобильное приложение', 'React Native: сборщик с маршрутом в кармане, сканер штрихкодов', false],
+            ['Веб-версия', 'React + Vite, работает оффлайн', true],
+            ['Облачный бэкенд', 'Supabase: мультитенант, роли, синхронизация — готово', true],
+            ['PWA', 'Установка на телефон, офлайн-режим, сканер камерой', false],
+            ['Мобильное приложение', 'React Native: сборщик с маршрутом в кармане, сканер ТСД', false],
           ].map(([t, d, done]) => (
             <div key={t} className="flex items-center gap-3">
               <span

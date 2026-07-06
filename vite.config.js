@@ -11,4 +11,9 @@ export default defineConfig(({ command }) => ({
     host: true,
     port: 5180,
   },
+  // Vitest: юнит-тесты чистой логики (lib/*). DOM не требуется.
+  test: {
+    environment: 'node',
+    include: ['src/**/*.{test,spec}.{js,jsx}'],
+  },
 }))
