@@ -19,7 +19,7 @@ import {
 } from 'lucide-react'
 import { Section, Button, Field, Input, Select, Badge, cx } from '../components/ui'
 import { useStore } from '../store/useStore'
-import { askLLM } from '../lib/ai'
+import { askLLM, aiConfig, aiEnabled, AI_MODELS, ENV_AI_KEY } from '../lib/ai'
 import { changePassword } from '../lib/cloud'
 
 export default function Settings() {
@@ -28,17 +28,13 @@ export default function Settings() {
   const [aiTest, setAiTest] = useState(null) // null | 'loading' | {ok, msg}
 
   const testAI = async () => {
-    if (!settings.aiKey) {
+    if (!aiEnabled(settings)) {
       setAiTest({ ok: false, msg: 'Сначала введите API-ключ' })
       return
     }
     setAiTest('loading')
     try {
-      const r = await askLLM('Ответь одним словом по-русски: работает?', {
-        apiKey: settings.aiKey,
-        model: settings.aiModel,
-        baseUrl: settings.aiBaseUrl,
-      })
+      const r = await askLLM('Ответь одним словом по-русски: работает?', aiConfig(settings))
       setAiTest({ ok: true, msg: (r || 'OK').trim().slice(0, 80) })
     } catch (e) {
       setAiTest({ ok: false, msg: String(e.message || e).slice(0, 90) })
@@ -124,43 +120,46 @@ export default function Settings() {
             <Sparkles size={16} className="text-brand" /> Искусственный интеллект
           </span>
         }
-        subtitle="Накладные из текста и аналитика работают локально. Ключ нужен только для облачного режима. По умолчанию запросы идут через ProxyAPI (DeepSeek из РФ)."
+        subtitle="Разбор накладных и аналитика работают локально без ключа. Ключ включает облачный режим — реальный ИИ (OpenAI) через ProxyAPI из РФ."
       >
         <div className="grid sm:grid-cols-[1fr_200px] gap-4">
-          <Field label="API-ключ (ProxyAPI / DeepSeek)" hint="Хранится только в этом браузере, в код не попадает">
+          <Field label="API-ключ ProxyAPI" hint={ENV_AI_KEY ? 'Ключ задан в .env — можно оставить поле пустым' : 'Хранится только в этом браузере, в код не попадает'}>
             <div className="relative">
               <KeyRound size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
               <Input
                 type="password"
                 value={settings.aiKey}
                 onChange={(e) => set('aiKey', e.target.value)}
-                placeholder="sk-..."
+                placeholder={ENV_AI_KEY ? 'использую ключ из .env' : 'sk-...'}
                 className="pl-9"
               />
             </div>
           </Field>
           <Field label="Модель">
             <Select value={settings.aiModel} onChange={(e) => set('aiModel', e.target.value)}>
-              <option value="deepseek-chat">deepseek-chat</option>
-              <option value="deepseek-reasoner">deepseek-reasoner</option>
+              {AI_MODELS.map((m) => (
+                <option key={m.value} value={m.value}>
+                  {m.label}
+                </option>
+              ))}
             </Select>
           </Field>
         </div>
         <Field
           label="Endpoint (API URL)"
-          hint="ProxyAPI для DeepSeek. Можно поменять на свой прокси/OpenRouter."
+          hint="ProxyAPI для OpenAI. Можно указать свой прокси/провайдера."
           className="mt-3"
         >
           <Input
             value={settings.aiBaseUrl || ''}
             onChange={(e) => set('aiBaseUrl', e.target.value)}
-            placeholder="https://api.proxyapi.ru/deepseek"
+            placeholder="https://api.proxyapi.ru/openai/v1"
           />
         </Field>
         <div className="mt-3 flex flex-wrap items-center gap-3">
           <span className="flex items-center gap-2 text-[13px] text-muted">
-            <span className={cx('w-2 h-2 rounded-full', settings.aiKey ? 'bg-ok' : 'bg-warn')} />
-            {settings.aiKey
+            <span className={cx('w-2 h-2 rounded-full', aiEnabled(settings) ? 'bg-ok' : 'bg-warn')} />
+            {aiEnabled(settings)
               ? 'Облачный режим доступен'
               : 'Локальный режим (оффлайн) — без ключа, мгновенно'}
           </span>

@@ -1,7 +1,9 @@
 // ──────────────────────────────────────────────────────────────────────────
 //  ИИ-движок СкладПро
-//  Работает полностью локально и оффлайн. Точка расширения под облачный LLM
-//  (DeepSeek/OpenRouter) — askLLM(): подставь ключ в настройках и включи.
+//  Базовые функции (разбор накладной, аналитика) работают локально и оффлайн.
+//  Облачный режим — реальный LLM через ProxyAPI (OpenAI из РФ): askLLM().
+//  Ключ задаётся в Настройках (хранится в браузере) или в .env (VITE_AI_KEY,
+//  для локальной разработки). В публичный бандл ключ из Настроек не попадает.
 // ──────────────────────────────────────────────────────────────────────────
 
 // Единицы измерения и их синонимы → нормализованная форма
@@ -310,17 +312,39 @@ function sum(arr) {
   return arr.reduce((a, b) => a + (Number(b) || 0), 0)
 }
 
-// ── Точка расширения под облачный LLM ──────────────────────────────────────
-// Когда добавишь ключ DeepSeek/OpenRouter в Настройках — этот вызов можно
-// включить для разбора «грязного» текста и генерации текстовых отчётов.
-// baseUrl по умолчанию — ProxyAPI (через него ходит DeepSeek из РФ).
-// Прямой api.deepseek.com из РФ часто недоступен/отдаёт 401.
+// ── Облачный LLM через ProxyAPI (OpenAI) ───────────────────────────────────
+// ProxyAPI проксирует OpenAI из РФ. Путь — /openai/v1 (см. док. ProxyAPI).
+// Ключ ProxyAPI можно задать в Настройках или в .env (VITE_AI_KEY) для локалки.
+export const ENV_AI_KEY = import.meta.env.VITE_AI_KEY || ''
+export const AI_DEFAULT_MODEL = 'gpt-4o-mini'
+export const AI_DEFAULT_BASE = 'https://api.proxyapi.ru/openai/v1'
+
+// Доступные модели (ProxyAPI/OpenAI). value — id модели, label — для UI.
+export const AI_MODELS = [
+  { value: 'gpt-4o-mini', label: 'gpt-4o-mini · быстрая и дешёвая' },
+  { value: 'gpt-4o', label: 'gpt-4o · умнее, дороже' },
+  { value: 'gpt-4.1-mini', label: 'gpt-4.1-mini' },
+]
+
+// Эффективная конфигурация ИИ: настройки пользователя поверх дефолтов и .env.
+export function aiConfig(settings = {}) {
+  return {
+    apiKey: settings.aiKey || ENV_AI_KEY,
+    model: settings.aiModel || AI_DEFAULT_MODEL,
+    baseUrl: settings.aiBaseUrl || AI_DEFAULT_BASE,
+  }
+}
+// Включён ли облачный ИИ (есть ключ — в настройках или в .env).
+export function aiEnabled(settings = {}) {
+  return !!(settings.aiKey || ENV_AI_KEY)
+}
+
 export async function askLLM(
   prompt,
-  { apiKey, model = 'deepseek-chat', baseUrl } = {},
+  { apiKey, model = AI_DEFAULT_MODEL, baseUrl } = {},
 ) {
   if (!apiKey) throw new Error('Нет API-ключа: работаем локально')
-  const base = (baseUrl || 'https://api.proxyapi.ru/deepseek').replace(/\/$/, '')
+  const base = (baseUrl || AI_DEFAULT_BASE).replace(/\/$/, '')
   const res = await fetch(`${base}/chat/completions`, {
     method: 'POST',
     headers: {

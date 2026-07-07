@@ -24,7 +24,7 @@ import {
 } from '../components/ui'
 import { useStore } from '../store/useStore'
 import { money, num, dateFull } from '../lib/format'
-import { parseInvoiceText, aiParseInvoice } from '../lib/ai'
+import { parseInvoiceText, aiParseInvoice, aiEnabled, aiConfig } from '../lib/ai'
 import { priceFor } from '../lib/constants'
 
 const EXAMPLES = [
@@ -47,7 +47,7 @@ export default function Invoices() {
   const [aiMode, setAiMode] = useState('')
 
   const parties = kind === 'out' ? customers : suppliers
-  const usingAI = !!settings.aiKey
+  const usingAI = aiEnabled(settings)
 
   // подставить цены по выбранной категории (для расхода) / закупке (для прихода)
   const applyType = (list, ptId) =>
@@ -70,12 +70,9 @@ export default function Invoices() {
     try {
       let result
       if (usingAI) {
-        result = await aiParseInvoice(text, products, {
-          apiKey: settings.aiKey,
-          model: settings.aiModel,
-          baseUrl: settings.aiBaseUrl,
-        })
-        setAiMode('DeepSeek')
+        const cfg = aiConfig(settings)
+        result = await aiParseInvoice(text, products, cfg)
+        setAiMode(`ИИ · ${cfg.model}`)
       } else {
         await new Promise((r) => setTimeout(r, 450))
         result = parseInvoiceText(text, products)

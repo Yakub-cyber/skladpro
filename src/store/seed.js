@@ -313,8 +313,8 @@ export function makeSeed() {
       company: 'СкладПро',
       currency: '₽',
       aiKey: '',
-      aiModel: 'deepseek-chat',
-      aiBaseUrl: 'https://api.proxyapi.ru/deepseek',
+      aiModel: 'gpt-4o-mini',
+      aiBaseUrl: 'https://api.proxyapi.ru/openai/v1',
     },
   }
 }
