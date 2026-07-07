@@ -13,6 +13,7 @@ import {
   Search,
   Flag,
   Copy,
+  Printer,
 } from 'lucide-react'
 import {
   Card,
@@ -37,6 +38,7 @@ import {
   priceFor,
 } from '../lib/constants'
 import { buildPickRoute } from '../lib/ai'
+import { printInvoiceBill } from '../lib/print'
 import { cellById } from '../store/seed'
 
 const FILTERS = [
@@ -184,6 +186,8 @@ function OrderDetail({ order }) {
   const assignCourier = useStore((s) => s.assignCourier)
   const employees = useStore((s) => s.employees)
   const authUserId = useStore((s) => s.authUserId)
+  const settings = useStore((s) => s.settings)
+  const customers = useStore((s) => s.customers)
   const [showRoute, setShowRoute] = useState(false)
   const [copied, setCopied] = useState(false)
 
@@ -293,6 +297,18 @@ function OrderDetail({ order }) {
           </Button>
           <Button variant="soft" icon={copied ? Check : Link2} onClick={copyLink}>
             {copied ? 'Скопировано' : 'Ссылка клиенту'}
+          </Button>
+          <Button
+            variant="soft"
+            icon={Printer}
+            onClick={() =>
+              printInvoiceBill(order, {
+                settings,
+                customer: customers.find((c) => c.id === order.customerId) || null,
+              })
+            }
+          >
+            Счёт
           </Button>
           {order.status !== 'cancelled' && order.status !== 'delivered' && (
             <Button
