@@ -135,6 +135,35 @@ describe('applyDocToState — откат проводки (dir=-1)', () => {
   })
 })
 
+describe('applyDocToState — себестоимость при закупке', () => {
+  const stateWithCost = () => ({
+    products: [{ id: 'p1', name: 'Гвозди', unit: 'кг', stock: 100, cost: 10, warehouseId: 'wh1' }],
+    movements: [],
+  })
+  const costOf = (s, id) => s.products.find((p) => p.id === id).cost
+
+  it('обновляет себестоимость по средневзвешенной', () => {
+    const doc = { type: 'purchase', no: 'ЗАК-1', items: [{ productId: 'p1', name: 'Гвозди', qty: 100, cost: 20 }] }
+    const next = applyDocToState(stateWithCost(), doc, 1, 'u1')
+    expect(costOf(next, 'p1')).toBe(15) // (100*10 + 100*20)/200
+    expect(stockOf(next, 'p1')).toBe(200)
+  })
+
+  it('без цены прихода себестоимость не меняется', () => {
+    const doc = { type: 'purchase', no: 'ЗАК-2', items: [{ productId: 'p1', name: 'Гвозди', qty: 100 }] }
+    const next = applyDocToState(stateWithCost(), doc, 1, 'u1')
+    expect(costOf(next, 'p1')).toBe(10)
+  })
+
+  it('откат закупки возвращает прежнюю себестоимость', () => {
+    const doc = { type: 'purchase', no: 'ЗАК-3', items: [{ productId: 'p1', name: 'Гвозди', qty: 100, cost: 20 }] }
+    const posted = applyDocToState(stateWithCost(), doc, 1, 'u1')
+    const rolled = applyDocToState(posted, doc, -1, 'u1')
+    expect(costOf(rolled, 'p1')).toBe(10)
+    expect(stockOf(rolled, 'p1')).toBe(100)
+  })
+})
+
 describe('applyDocToState — чистота функции', () => {
   it('не мутирует исходное состояние', () => {
     const state = makeState()

@@ -319,7 +319,7 @@ function ReceiveTab() {
     setItems((prev) =>
       prev.find((x) => x.productId === p.id)
         ? prev.map((x) => (x.productId === p.id ? { ...x, qty: round3(x.qty + q) } : x))
-        : [...prev, { productId: p.id, name: p.name, unit: p.unit, qty: q, weighted: p.weighted }],
+        : [...prev, { productId: p.id, name: p.name, unit: p.unit, qty: q, weighted: p.weighted, cost: p.cost ?? 0 }],
     )
   }
   const onScan = (code) => {
@@ -337,7 +337,7 @@ function ReceiveTab() {
       {
         type: 'purchase',
         reason: 'Закупка',
-        items: items.map((it) => ({ productId: it.productId, name: it.name, unit: it.unit, qty: it.qty })),
+        items: items.map((it) => ({ productId: it.productId, name: it.name, unit: it.unit, qty: it.qty, cost: it.cost })),
       },
       { post },
     )
@@ -391,6 +391,22 @@ function ReceiveTab() {
                     className="w-20 h-9 px-2 rounded-lg bg-surface border border-line text-sm text-center"
                   />
                   <span className="text-[12px] text-muted w-8">{it.unit}</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={it.cost}
+                    title="Цена закупки за единицу — обновит себестоимость (средневзвешенно)"
+                    onChange={(e) =>
+                      setItems((arr) =>
+                        arr.map((x) =>
+                          x.productId === it.productId ? { ...x, cost: Math.max(0, +e.target.value) } : x,
+                        ),
+                      )
+                    }
+                    className="w-24 h-9 px-2 rounded-lg bg-surface border border-line text-sm text-center"
+                  />
+                  <span className="text-[12px] text-muted">₽</span>
                   <button
                     onClick={() => setItems((arr) => arr.filter((x) => x.productId !== it.productId))}
                     className="text-muted hover:text-bad"

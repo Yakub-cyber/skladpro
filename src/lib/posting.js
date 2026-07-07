@@ -5,6 +5,7 @@
 // ──────────────────────────────────────────────────────────────────────────
 import { uid } from './id'
 import { docTypeInfo } from './constants'
+import { weightedCost } from './cost'
 
 // Тип движения и знак влияния на остаток при проводке (post).
 export const POST_MV = {
@@ -55,9 +56,22 @@ export function applyDocToState(state, doc, dir, by) {
   } else {
     const sign = (POST_SIGN[doc.type] ?? -1) * dir
     const mvType = POST_MV[doc.type] || 'writeoff'
+    const isPurchase = doc.type === 'purchase'
     for (const it of doc.items) {
       const d = sign * it.qty
-      setP(it.productId, (p) => ({ ...p, stock: Math.max(0, p.stock + d) }))
+      setP(it.productId, (p) => {
+        const np = { ...p, stock: Math.max(0, p.stock + d) }
+        // Приход обновляет себестоимость (средневзвешенную), если задана цена.
+        if (isPurchase && it.cost != null) {
+          if (dir > 0) {
+            it.prevCost = p.cost // запоминаем для отката проводки
+            np.cost = weightedCost(p.stock, p.cost, it.qty, it.cost)
+          } else if (it.prevCost != null) {
+            np.cost = it.prevCost // откат: возвращаем прежнюю себестоимость
+          }
+        }
+        return np
+      })
       moves.push({ id: uid('mv'), type: mvType, productId: it.productId, name: it.name, qty: it.qty, delta: d, reason, by, at })
     }
   }
