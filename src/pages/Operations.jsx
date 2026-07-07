@@ -25,6 +25,7 @@ import {
   Printer,
   Ban,
   FileEdit,
+  Download,
 } from 'lucide-react'
 import { Card, Button, Badge, Field, Select, Empty, cx } from '../components/ui'
 import ScannerInput from '../components/ScannerInput'
@@ -32,6 +33,7 @@ import { useStore } from '../store/useStore'
 import { money, num, relTime } from '../lib/format'
 import { statusInfo, docTypeInfo, DOC_STATUS } from '../lib/constants'
 import { resolveScan } from '../lib/barcode'
+import { downloadCsv } from '../lib/export'
 
 // Иконка по типу документа
 const DOC_ICON = {
@@ -893,12 +895,32 @@ function JournalTab() {
     return <Empty icon={History} title="Журнал пуст" text="Закупки, возвраты, перемещения, списания и инвентаризации появятся здесь." />
   }
 
+  const exportCsv = () =>
+    downloadCsv(`Движения-${new Date().toISOString().slice(0, 10)}`, movements, [
+      { key: 'at', label: 'Дата', map: (v) => new Date(v).toLocaleString('ru-RU') },
+      { key: 'type', label: 'Операция', map: (v) => (MV[v] || MV.in).label },
+      { key: 'name', label: 'Товар' },
+      { key: 'qty', label: 'Кол-во' },
+      { key: 'delta', label: 'Изменение остатка' },
+      { key: 'reason', label: 'Причина' },
+      { key: 'by', label: 'Сотрудник', map: (v) => nameOf(v) },
+    ])
+
   return (
-    <Card className="overflow-hidden">
-      <div className="divide-y divide-line">
-        {movements.slice(0, 100).map((m) => {
-          const info = MV[m.type] || MV.in
-          return (
+    <>
+      <div className="flex items-center justify-between mb-3">
+        <span className="text-[13px] text-muted">
+          Показаны последние {Math.min(movements.length, 100)} из {movements.length}
+        </span>
+        <Button variant="soft" size="sm" icon={Download} onClick={exportCsv}>
+          Экспорт CSV
+        </Button>
+      </div>
+      <Card className="overflow-hidden">
+        <div className="divide-y divide-line">
+          {movements.slice(0, 100).map((m) => {
+            const info = MV[m.type] || MV.in
+            return (
             <div key={m.id} className="flex items-center gap-3 px-4 py-3">
               <div className={cx('h-9 w-9 rounded-lg grid place-items-center shrink-0', `bg-${info.tone}-soft text-${info.tone}`)}>
                 <info.icon size={17} />
@@ -918,7 +940,8 @@ function JournalTab() {
             </div>
           )
         })}
-      </div>
-    </Card>
+        </div>
+      </Card>
+    </>
   )
 }

@@ -18,11 +18,13 @@ import {
   ShoppingCart,
   Activity,
   Receipt,
+  Download,
 } from 'lucide-react'
 import { Card, Section, Button, Badge, Field, Empty, cx } from '../components/ui'
 import { useStore } from '../store/useStore'
 import { money, num, dateTime, relTime } from '../lib/format'
 import { roleInfo } from '../lib/constants'
+import { downloadCsv } from '../lib/export'
 
 const TABS = [
   { key: 'shift', label: 'Смена', icon: Clock },
@@ -218,10 +220,17 @@ function AuditTab() {
 
   const sections = ['all', ...new Set(audit.map((a) => a.section))]
   const list = audit.filter((a) => section === 'all' || a.section === section)
+  const exportCsv = () =>
+    downloadCsv(`Журнал-действий-${new Date().toISOString().slice(0, 10)}`, list, [
+      { key: 'at', label: 'Дата', map: (v) => new Date(v).toLocaleString('ru-RU') },
+      { key: 'section', label: 'Раздел' },
+      { key: 'title', label: 'Действие' },
+      { key: 'by', label: 'Сотрудник', map: (v) => nameOf(v) },
+    ])
 
   return (
     <Card className="overflow-hidden">
-      <div className="flex gap-1.5 p-3 border-b border-line overflow-x-auto no-scrollbar">
+      <div className="flex items-center gap-1.5 p-3 border-b border-line overflow-x-auto no-scrollbar">
         {sections.map((s) => (
           <button
             key={s}
@@ -234,6 +243,17 @@ function AuditTab() {
             {s === 'all' ? 'Все' : s}
           </button>
         ))}
+        {list.length > 0 && (
+          <Button
+            variant="soft"
+            size="sm"
+            icon={Download}
+            onClick={exportCsv}
+            className="ml-auto shrink-0"
+          >
+            <span className="hidden sm:inline">Экспорт</span>
+          </Button>
+        )}
       </div>
       {list.length === 0 ? (
         <Empty icon={Activity} title="Журнал пуст" text="Действия сотрудников появятся здесь." />

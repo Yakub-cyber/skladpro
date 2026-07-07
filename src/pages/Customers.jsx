@@ -10,6 +10,7 @@ import {
   Building2,
   Wallet,
   X,
+  Download,
 } from 'lucide-react'
 import {
   Card,
@@ -27,6 +28,7 @@ import {
 import { useStore } from '../store/useStore'
 import { money, num, dateFull, dateShort, relTime } from '../lib/format'
 import { TIERS, tierFor, statusInfo } from '../lib/constants'
+import { downloadCsv } from '../lib/export'
 
 export default function Customers() {
   const { customers, orders } = useStore()
@@ -60,9 +62,31 @@ export default function Customers() {
             {money(customers.reduce((a, c) => a + c.totalSpent, 0))}
           </p>
         </div>
-        <Button icon={Plus} onClick={() => setAdding(true)}>
-          Добавить
-        </Button>
+        <div className="flex gap-2">
+          <Button
+            variant="soft"
+            icon={Download}
+            disabled={!list.length}
+            onClick={() =>
+              downloadCsv(`Взаиморасчёты-${new Date().toISOString().slice(0, 10)}`, list, [
+                { key: 'name', label: 'Наименование' },
+                { key: 'type', label: 'Тип' },
+                { key: 'city', label: 'Город' },
+                { key: 'contact', label: 'Контакт' },
+                { key: 'phone', label: 'Телефон' },
+                { key: 'totalSpent', label: 'Оборот', map: (v) => Math.round(v || 0) },
+                { key: 'balance', label: 'Долг', map: (v) => Math.round(v || 0) },
+                { key: 'bonus', label: 'Бонусы', map: (v) => Math.round(v || 0) },
+                { key: 'totalSpent', label: 'Уровень', map: (v) => tierFor(v || 0).label },
+              ])
+            }
+          >
+            <span className="hidden sm:inline">Экспорт</span>
+          </Button>
+          <Button icon={Plus} onClick={() => setAdding(true)}>
+            Добавить
+          </Button>
+        </div>
       </div>
 
       <div className="relative mb-4 max-w-sm">
