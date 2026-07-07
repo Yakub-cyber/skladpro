@@ -46,6 +46,7 @@ import { CATEGORIES, catInfo } from '../lib/constants'
 import { CELLS } from '../store/seed'
 import { printLabels, printPriceTags, barcodeSVG } from '../lib/labels'
 import { parsePriceTable, SAMPLE_TEMPLATE } from '../lib/importPrice'
+import { downloadCsv } from '../lib/export'
 import { generateEan13 } from '../lib/barcode'
 import ScannerInput from '../components/ScannerInput'
 
@@ -78,6 +79,20 @@ export default function Products() {
 
   const totalValue = products.reduce((a, p) => a + p.stock * p.cost, 0)
 
+  // Экспорт видимого списка (с учётом поиска и фильтра категории) в CSV/Excel
+  const exportCsv = () =>
+    downloadCsv(`Товары-${new Date().toISOString().slice(0, 10)}`, list, [
+      { key: 'sku', label: 'Артикул' },
+      { key: 'name', label: 'Название' },
+      { key: 'category', label: 'Категория' },
+      { key: 'unit', label: 'Ед.' },
+      { key: 'stock', label: 'Остаток' },
+      { key: 'minStock', label: 'Мин. остаток' },
+      { key: 'cost', label: 'Себестоимость' },
+      { key: 'stock', label: 'Сумма в закупке', map: (_, p) => Math.round(p.stock * p.cost) },
+      { key: 'cell', label: 'Ячейка' },
+    ])
+
   return (
     <div className="animate-fadeUp">
       <div className="flex items-center justify-between gap-3 mb-4">
@@ -90,6 +105,9 @@ export default function Products() {
         <div className="flex gap-2">
           <Button variant="soft" icon={Tags} onClick={() => setShowLabels(true)}>
             <span className="hidden sm:inline">Этикетки</span>
+          </Button>
+          <Button variant="soft" icon={Download} onClick={exportCsv} disabled={!list.length}>
+            <span className="hidden sm:inline">Экспорт</span>
           </Button>
           <Button variant="soft" icon={FileUp} onClick={() => setShowImport(true)}>
             <span className="hidden sm:inline">Импорт</span>
