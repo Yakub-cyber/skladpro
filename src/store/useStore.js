@@ -4,6 +4,7 @@ import { makeSeed } from './seed'
 import { uid, docNo } from '../lib/id'
 import { nextStatus, statusInfo, docTypeInfo } from '../lib/constants'
 import { applyDocToState } from '../lib/posting'
+import { applyOrderStock } from '../lib/orders'
 import { hasSupabase } from '../lib/supabase'
 import {
   cloudLoadAll,
@@ -545,7 +546,7 @@ export const useStore = create(
         const id = uid('o')
         set((s) => {
           const seq = s.orders.length + 101
-          const o = {
+          const base = {
             id,
             no: docNo('ЗК', seq),
             status: 'new',
@@ -555,25 +556,9 @@ export const useStore = create(
             shiftId: s.activeShiftId || null,
             ...order,
           }
-          // резерв остатков + выбытие кодов маркировки «Честный знак»
-          const products = s.products.map((p) => {
-            const it = (order.items || []).find((x) => x.productId === p.id)
-            if (!it) return p
-            const np = { ...p, stock: Math.max(0, p.stock - it.qty) }
-            if (p.marked && p.codes?.length) {
-              np.codes = p.codes.slice(Math.ceil(it.qty)) // первые коды выбывают
-            }
-            return np
-          })
-          // заказ «в долг» увеличивает задолженность контрагента
-          let customers = s.customers
-          if (order.onCredit && order.customerId) {
-            customers = s.customers.map((c) =>
-              c.id === order.customerId
-                ? { ...c, balance: (c.balance || 0) + order.total }
-                : c,
-            )
-          }
+          // резерв остатков + выбытие кодов маркировки + долг «в долг».
+          // order сохраняем с записанными кодами — чтобы отмена их вернула.
+          const { products, customers, order: o } = applyOrderStock(s, base, -1)
           return { orders: [o, ...s.orders], products, customers }
         })
         const o = get().orders.find((x) => x.id === id)
@@ -604,23 +589,33 @@ export const useStore = create(
         const nx = o && nextStatus(o.status)
         if (nx) get().setOrderStatus(id, nx)
       },
-      cancelOrder: (id) => {
+      cancelOrder: (id, note) => {
         const o = get().orders.find((x) => x.id === id)
-        set((s) => ({
-          orders: s.orders.map((x) =>
-            x.id === id
-              ? {
-                  ...x,
-                  status: 'cancelled',
-                  track: [
-                    ...(x.track || []),
-                    { status: 'cancelled', at: new Date().toISOString() },
-                  ],
-                }
-              : x,
-          ),
-        }))
-        get().logAction(`Отменён заказ ${o?.no}`, { section: 'Заказы', type: 'delete' })
+        if (!o || o.status === 'cancelled') return // идемпотентность: не откатываем дважды
+        set((s) => {
+          // возврат остатков, кодов маркировки и списание долга
+          const { products, customers } = applyOrderStock(s, o, 1)
+          return {
+            products,
+            customers,
+            orders: s.orders.map((x) =>
+              x.id === id
+                ? {
+                    ...x,
+                    status: 'cancelled',
+                    track: [
+                      ...(x.track || []),
+                      { status: 'cancelled', at: new Date().toISOString(), ...(note ? { note } : {}) },
+                    ],
+                  }
+                : x,
+            ),
+          }
+        })
+        get().logAction(`Отменён заказ ${o.no} · остатки возвращены`, {
+          section: 'Заказы',
+          type: 'delete',
+        })
       },
       // Назначить заказ конкретному курьеру (сотруднику) — он видит только свои
       assignCourier: (id, employeeId) => {
