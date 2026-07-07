@@ -71,13 +71,13 @@ export const ROLES = [
     key: 'manager',
     label: 'Менеджер',
     color: '#38bdf8',
-    access: ['dashboard', 'orders', 'delivery', 'products', 'warehouse', 'invoices', 'operations', 'customers', 'suppliers', 'analytics', 'storefront', 'journal'],
+    access: ['dashboard', 'orders', 'delivery', 'products', 'warehouse', 'invoices', 'operations', 'customers', 'suppliers', 'analytics', 'assistant', 'storefront', 'journal'],
   },
   {
     key: 'stock',
     label: 'Кладовщик',
     color: '#10b981',
-    access: ['dashboard', 'orders', 'products', 'warehouse', 'invoices', 'operations'],
+    access: ['dashboard', 'orders', 'products', 'warehouse', 'invoices', 'operations', 'assistant'],
   },
   {
     key: 'courier',

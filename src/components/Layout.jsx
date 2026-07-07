@@ -13,6 +13,7 @@ import {
   UserCog,
   History,
   BarChart3,
+  Bot,
   Store,
   Settings as SettingsIcon,
   Sparkles,
@@ -50,6 +51,7 @@ export const NAV = [
   { to: '/customers', label: 'Клиенты', icon: Users, perm: 'customers' },
   { to: '/suppliers', label: 'Поставщики', icon: Truck, perm: 'suppliers' },
   { to: '/analytics', label: 'Аналитика', icon: BarChart3, ai: true, perm: 'analytics' },
+  { to: '/assistant', label: 'ИИ-ассистент', icon: Bot, ai: true, perm: 'assistant' },
   { to: '/storefront', label: 'Витрина', icon: Store, perm: 'storefront' },
   { to: '/journal', label: 'Смены и журнал', icon: History, perm: 'journal' },
   { to: '/employees', label: 'Сотрудники', icon: UserCog, perm: 'employees' },
@@ -133,14 +135,18 @@ function Sidebar({ open, onClose }) {
           ))}
         </nav>
         <div className="p-3 border-t border-line">
-          <div className="rounded-xl bg-gradient-to-br from-brand/15 to-brand/5 border border-brand/20 p-3">
+          <NavLink
+            to="/assistant"
+            onClick={onClose}
+            className="block rounded-xl bg-gradient-to-br from-brand/15 to-brand/5 border border-brand/20 p-3 hover:border-brand/40 transition-colors"
+          >
             <div className="flex items-center gap-2 text-brand font-medium text-[13px]">
               <Sparkles size={15} /> ИИ-помощник
             </div>
             <p className="text-[12px] text-muted mt-1 leading-relaxed">
-              Накладные из текста и прогноз закупок работают на борту.
+              Спросите про остатки, долги и закупки — ответит по вашим данным.
             </p>
-          </div>
+          </NavLink>
         </div>
       </aside>
     </>

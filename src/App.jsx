@@ -14,6 +14,7 @@ import Invoices from './pages/Invoices'
 import Customers from './pages/Customers'
 import Suppliers from './pages/Suppliers'
 import Analytics from './pages/Analytics'
+import Assistant from './pages/Assistant'
 import Storefront from './pages/Storefront'
 import Journal from './pages/Journal'
 import Employees from './pages/Employees'
@@ -61,6 +62,7 @@ export default function App() {
         <Route path="customers" element={<Customers />} />
         <Route path="suppliers" element={<Suppliers />} />
         <Route path="analytics" element={<Analytics />} />
+        <Route path="assistant" element={<Assistant />} />
         <Route path="storefront" element={<Storefront />} />
         <Route path="journal" element={<Journal />} />
         <Route path="employees" element={<Employees />} />
