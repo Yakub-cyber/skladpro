@@ -101,4 +101,12 @@ describe('soldByProduct / analyticsInsights', () => {
     const insights = analyticsInsights({ products, orders })
     expect(insights.some((i) => i.id === 'low')).toBe(true)
   })
+
+  it('«ниже минимума» учитывает резерв открытых заказов (по доступному)', () => {
+    // Физически 15 > мин 10 (не низкий), но открытый заказ резервирует 10 →
+    // доступно 5 ≤ 10 → должен попасть в инсайт о закупке.
+    const products = [{ id: 'p1', name: 'Гвозди', stock: 15, minStock: 10, cost: 50, unit: 'кг' }]
+    expect(analyticsInsights({ products, orders: [] }).some((i) => i.id === 'low')).toBe(false)
+    expect(analyticsInsights({ products, orders }).some((i) => i.id === 'low')).toBe(true)
+  })
 })

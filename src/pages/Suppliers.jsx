@@ -21,6 +21,7 @@ import {
 } from '../components/ui'
 import { useStore } from '../store/useStore'
 import { money, num } from '../lib/format'
+import { reservedByProduct, availableStock } from '../lib/orders'
 
 // Подбор поставщика под категорию товара
 function supplierFor(category, suppliers) {
@@ -37,13 +38,16 @@ function supplierFor(category, suppliers) {
 }
 
 export default function Suppliers() {
-  const { suppliers, products, addInvoice, addSupplier } = useStore()
+  const { suppliers, products, orders, addInvoice, addSupplier } = useStore()
   const [adding, setAdding] = useState(false)
   const [done, setDone] = useState(null)
 
-  // Рекомендованные закупки: всё ниже минимума, сгруппировано по поставщику
+  // Рекомендованные закупки: всё ниже минимума по ДОСТУПНОМУ (остаток − резерв
+  // открытых заказов), сгруппировано по поставщику. Зарезервированное вот-вот
+  // отгрузится, поэтому заявка формируется вовремя и на нужное количество.
   const purchaseGroups = useMemo(() => {
-    const low = products.filter((p) => p.stock <= p.minStock)
+    const reserved = reservedByProduct(orders)
+    const low = products.filter((p) => availableStock(p, reserved) <= p.minStock)
     const groups = {}
     for (const p of low) {
       const sup = supplierFor(p.category, suppliers)
@@ -51,12 +55,12 @@ export default function Suppliers() {
         productId: p.id,
         name: p.name,
         unit: p.unit,
-        qty: Math.max(1, Math.ceil(p.minStock * 2 - p.stock)),
+        qty: Math.max(1, Math.ceil(p.minStock * 2 - availableStock(p, reserved))),
         price: p.cost,
       })
     }
     return Object.values(groups)
-  }, [products, suppliers])
+  }, [products, suppliers, orders])
 
   const createPO = (group) => {
     const total = group.items.reduce((a, it) => a + it.qty * it.price, 0)

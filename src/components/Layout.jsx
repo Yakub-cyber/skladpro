@@ -31,6 +31,7 @@ import { cx, Badge, Avatar } from './ui'
 import CommandPalette from './CommandPalette'
 import { useStore } from '../store/useStore'
 import { canAccess, roleInfo } from '../lib/constants'
+import { reservedByProduct, availableStock } from '../lib/orders'
 
 // текущий авторизованный сотрудник и его роль
 function useCurrentUser() {
@@ -83,7 +84,8 @@ function Sidebar({ open, onClose }) {
   const activeOrders = orders.filter((o) =>
     ['new', 'confirmed', 'picking', 'packed'].includes(o.status),
   ).length
-  const lowStock = products.filter((p) => p.stock <= p.minStock).length
+  const reserved = reservedByProduct(orders)
+  const lowStock = products.filter((p) => availableStock(p, reserved) <= p.minStock).length
 
   const counts = { '/orders': activeOrders, '/products': lowStock }
   const items = NAV.filter((n) => canAccess(me.role, n.perm))

@@ -47,6 +47,16 @@ describe('buildAssistantContext', () => {
     expect(ctx).toContain('себест. 10')
   })
 
+  it('показывает резерв и доступное, не выдавая зарезервированное за остаток', () => {
+    const s = {
+      products: [{ id: 'p1', name: 'Гвозди', sku: 'GV-1', stock: 100, minStock: 5, unit: 'шт', cost: 10, price: 18 }],
+      orders: [{ id: 'o1', status: 'picking', items: [{ productId: 'p1', qty: 30 }] }],
+      customers: [],
+    }
+    const c = buildAssistantContext(s)
+    expect(c).toContain('резерв 30, доступно 70') // в каталоге виден резерв
+  })
+
   it('отмечает усечение при большом каталоге', () => {
     const big = { products: Array.from({ length: 100 }, (_, i) => ({ id: 'p' + i, name: 'Товар ' + i, stock: 1, unit: 'шт' })), orders: [], customers: [] }
     const c = buildAssistantContext(big, { maxProducts: 80 })

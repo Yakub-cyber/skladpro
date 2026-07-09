@@ -25,6 +25,7 @@ import { Stat, Card, Section, StatusBadge, Badge, Progress, Button, cx } from '.
 import { useStore } from '../store/useStore'
 import { money, num, dateShort, plural } from '../lib/format'
 import { analyticsInsights, soldByProduct } from '../lib/ai'
+import { reservedByProduct, availableStock } from '../lib/orders'
 import { catInfo } from '../lib/constants'
 
 const INSIGHT_ICON = { PackageMinus, TrendingDown, Flame, Snowflake }
@@ -54,7 +55,9 @@ export default function Dashboard() {
     )
     const valid = orders.filter((o) => o.status !== 'cancelled')
     const revenue = valid.reduce((a, o) => a + o.total, 0)
-    const low = products.filter((p) => p.stock <= p.minStock)
+    // «Ниже минимума» — по доступному (остаток − резерв открытых заказов)
+    const reserved = reservedByProduct(orders)
+    const low = products.filter((p) => availableStock(p, reserved) <= p.minStock)
     const avg = valid.length ? revenue / valid.length : 0
 
     const sold = soldByProduct(orders)

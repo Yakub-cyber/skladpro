@@ -5,6 +5,7 @@
 //  Ключ задаётся в Настройках (хранится в браузере) или в .env (VITE_AI_KEY,
 //  для локальной разработки). В публичный бандл ключ из Настроек не попадает.
 // ──────────────────────────────────────────────────────────────────────────
+import { reservedByProduct, availableStock } from './orders'
 
 // Единицы измерения и их синонимы → нормализованная форма
 const UNIT_MAP = {
@@ -219,11 +220,15 @@ export function buildPickRoute(points, start = { x: 0, y: 0 }) {
 // ── Аналитические инсайты (локальная «ИИ-аналитика») ───────────────────────
 export function analyticsInsights({ products = [], orders = [] }) {
   const out = []
+  // Резерв открытых заказов: зарезервированное вот-вот уйдёт со склада,
+  // поэтому сигнал «пора закупить» считаем по ДОСТУПНОМУ (остаток − резерв).
+  const reserved = reservedByProduct(orders)
+  const availOf = (p) => availableStock(p, reserved)
 
   // 1. Низкие остатки → совет закупить
   const low = products
-    .filter((p) => p.stock <= p.minStock)
-    .sort((a, b) => a.stock - a.minStock - (b.stock - b.minStock))
+    .filter((p) => availOf(p) <= p.minStock)
+    .sort((a, b) => availOf(a) - a.minStock - (availOf(b) - b.minStock))
   if (low.length) {
     out.push({
       id: 'low',

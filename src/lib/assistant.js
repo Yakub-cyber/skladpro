@@ -4,6 +4,7 @@
 //  чтобы уложиться в разумное число токенов и не раскрывать лишнего.
 // ──────────────────────────────────────────────────────────────────────────
 import { soldByProduct } from './ai'
+import { reservedByProduct, availableStock } from './orders'
 
 const n0 = (v) => Math.round(Number(v) || 0)
 
@@ -14,6 +15,8 @@ export function buildAssistantContext(state, { currency = '₽', maxProducts = 8
   const customers = state.customers || []
 
   const sold = soldByProduct(orders)
+  const reserved = reservedByProduct(orders)
+  const availOf = (p) => availableStock(p, reserved)
   const active = orders.filter((o) => o.status !== 'cancelled')
   const revenue = active.reduce((a, o) => a + (o.total || 0), 0)
   const stockValue = products.reduce((a, p) => a + (p.stock || 0) * (p.cost || 0), 0)
@@ -25,16 +28,18 @@ export function buildAssistantContext(state, { currency = '₽', maxProducts = 8
       `заказов ${orders.length}, выручка ${n0(revenue)}.`,
   )
 
-  // Остатки ниже минимума
+  // Остатки ниже минимума (по доступному = остаток − резерв открытых заказов)
   const low = products
-    .filter((p) => (p.stock || 0) <= (p.minStock || 0))
-    .sort((a, b) => a.stock - a.minStock - (b.stock - b.minStock))
+    .filter((p) => availOf(p) <= (p.minStock || 0))
+    .sort((a, b) => availOf(a) - a.minStock - (availOf(b) - b.minStock))
   if (low.length) {
     lines.push('')
     lines.push(`НИЖЕ МИНИМУМА (${low.length}):`)
-    low.slice(0, 20).forEach((p) =>
-      lines.push(`- ${p.name}: ${p.stock} ${p.unit || 'шт'} (мин ${p.minStock || 0})`),
-    )
+    low.slice(0, 20).forEach((p) => {
+      const r = reserved[p.id] || 0
+      const suffix = r > 0 ? `, резерв ${r} → доступно ${availOf(p)}` : ''
+      lines.push(`- ${p.name}: ${p.stock} ${p.unit || 'шт'} (мин ${p.minStock || 0}${suffix})`)
+    })
   }
 
   // Топ продаж
@@ -76,14 +81,19 @@ export function buildAssistantContext(state, { currency = '₽', maxProducts = 8
   // Каталог (с лимитом)
   lines.push('')
   lines.push(`КАТАЛОГ (${Math.min(products.length, maxProducts)} из ${products.length}):`)
-  products.slice(0, maxProducts).forEach((p) =>
+  products.slice(0, maxProducts).forEach((p) => {
+    const r = reserved[p.id] || 0
+    const stockPart =
+      r > 0
+        ? `остаток ${p.stock} ${p.unit || 'шт'} (резерв ${r}, доступно ${availOf(p)})`
+        : `остаток ${p.stock} ${p.unit || 'шт'}`
     lines.push(
-      `- ${p.name} [${p.sku || 'без арт.'}]: остаток ${p.stock} ${p.unit || 'шт'}, ` +
+      `- ${p.name} [${p.sku || 'без арт.'}]: ${stockPart}, ` +
         `себест. ${n0(p.cost)}, цена ${n0(p.price ?? 0)}` +
         (p.cell ? `, ячейка ${p.cell}` : '') +
         (p.category ? `, ${p.category}` : ''),
-    ),
-  )
+    )
+  })
   if (products.length > maxProducts) {
     lines.push(`…и ещё ${products.length - maxProducts} товаров (не показаны).`)
   }
