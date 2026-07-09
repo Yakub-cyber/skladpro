@@ -23,13 +23,17 @@ import { useStore } from '../store/useStore'
 import { money, num } from '../lib/format'
 import { CATEGORIES, catInfo, priceFor } from '../lib/constants'
 import { resolveScan } from '../lib/barcode'
+import { reservedByProduct } from '../lib/orders'
 
 const CAT_ICON = { Wrench, Hammer, Zap, Droplets, PaintBucket, Package }
 
 export default function NewOrder() {
   const nav = useNavigate()
-  const { customers, products, priceTypes, addOrder } = useStore()
+  const { customers, products, priceTypes, addOrder, orders } = useStore()
   const defType = priceTypes.find((t) => t.default)?.id || priceTypes[0]?.id
+  // Доступно к продаже = остаток − резерв открытых заказов
+  const reserved = useMemo(() => reservedByProduct(orders), [orders])
+  const availOf = (p) => (p.stock || 0) - (reserved[p.id] || 0)
 
   const [customerId, setCustomerId] = useState('')
   const [priceTypeId, setPriceTypeId] = useState(defType)
@@ -59,6 +63,11 @@ export default function NewOrder() {
   const round3 = (n) => Math.round(n * 1000) / 1000
   const add = (p, qty = 1) => {
     setMsg('')
+    // мягкое предупреждение: доступное (с учётом резерва) уже выбрано в чек
+    const inCart = rows.find((x) => x.productId === p.id)?.qty || 0
+    if (inCart + qty > availOf(p)) {
+      setMsg(`«${p.name}»: доступно ${num(Math.max(0, availOf(p)))} ${p.unit} (остальное в резерве) — заказ всё равно можно оформить`)
+    }
     setRows((r) =>
       r.find((x) => x.productId === p.id)
         ? r.map((x) =>
@@ -212,7 +221,9 @@ export default function NewOrder() {
                       {money(priceFor(p, priceTypeId))}
                       {p.weighted && <span className="text-[10px] text-muted font-normal">/кг</span>}
                     </span>
-                    <span className="text-[11px] text-muted">ост. {num(p.stock)}</span>
+                    <span className={cx('text-[11px]', availOf(p) <= 0 ? 'text-bad font-medium' : 'text-muted')}>
+                      дост. {num(availOf(p))}
+                    </span>
                   </div>
                 </button>
               )

@@ -28,11 +28,12 @@ import { Card, Button, Badge, Modal, Field, Input, Empty, cx } from '../componen
 import { useStore } from '../store/useStore'
 import { money, num } from '../lib/format'
 import { CATEGORIES, catInfo, priceFor } from '../lib/constants'
+import { reservedByProduct, availableStock } from '../lib/orders'
 
 const CAT_ICON = { Wrench, Hammer, Zap, Droplets, PaintBucket, Package }
 
 export default function Storefront() {
-  const { products, priceTypes, addOrder, addCustomer } = useStore()
+  const { products, priceTypes, orders, addOrder, addCustomer } = useStore()
   const defType = priceTypes.find((t) => t.default)?.id || priceTypes[0]?.id
   const [q, setQ] = useState('')
   const [cat, setCat] = useState('all')
@@ -40,14 +41,20 @@ export default function Storefront() {
   const [cartOpen, setCartOpen] = useState(false)
   const [placed, setPlaced] = useState(null)
 
+  // Доступно клиенту = остаток − резерв открытых заказов. Витрина не должна
+  // продавать зарезервированное, поэтому фильтр/лимиты — по доступному.
+  const reserved = useMemo(() => reservedByProduct(orders), [orders])
+  const availOf = (p) => availableStock(p, reserved)
+
   const list = useMemo(() => {
     const s = q.toLowerCase()
     return products.filter((p) => {
       const okC = cat === 'all' || p.category === cat
       const okQ = !s || p.name.toLowerCase().includes(s) || p.sku.toLowerCase().includes(s)
-      return okC && okQ && p.stock > 0
+      return okC && okQ && availOf(p) > 0
     })
-  }, [products, q, cat])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [products, q, cat, reserved])
 
   const cartRows = Object.entries(cart)
     .map(([id, qty]) => ({ p: products.find((x) => x.id === id), qty }))
@@ -58,8 +65,10 @@ export default function Storefront() {
   const setQty = (id, qty) =>
     setCart((c) => {
       const n = { ...c }
-      if (qty <= 0) delete n[id]
-      else n[id] = qty
+      const max = availOf(products.find((p) => p.id === id) || {})
+      const capped = Math.min(qty, Math.max(0, max)) // не даём заказать больше доступного
+      if (capped <= 0) delete n[id]
+      else n[id] = capped
       return n
     })
 
@@ -207,7 +216,7 @@ export default function Storefront() {
                     {money(price)}
                     {p.weighted && <span className="text-[11px] text-muted font-normal"> /кг</span>}
                   </div>
-                  <div className="text-[11px] text-ok">В наличии: {num(p.stock)} {p.unit}</div>
+                  <div className="text-[11px] text-ok">В наличии: {num(availOf(p))} {p.unit}</div>
                 </div>
                 {inCart ? (
                   <div className="flex items-center gap-1.5">
@@ -215,7 +224,11 @@ export default function Storefront() {
                       <Minus size={15} />
                     </button>
                     <span className="w-6 text-center text-sm font-medium tabular-nums">{inCart}</span>
-                    <button onClick={() => setQty(p.id, inCart + 1)} className="h-8 w-8 rounded-lg bg-brand text-brand-ink grid place-items-center">
+                    <button
+                      onClick={() => setQty(p.id, inCart + 1)}
+                      disabled={inCart >= availOf(p)}
+                      className="h-8 w-8 rounded-lg bg-brand text-brand-ink grid place-items-center disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
                       <Plus size={15} />
                     </button>
                   </div>

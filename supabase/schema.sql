@@ -104,6 +104,7 @@ create table if not exists public.orders (
   price_type_id text,
   on_credit     boolean default false,
   status        text default 'new',
+  stock_consumed boolean default false,         -- остаток физически списан (при отгрузке)
   priority      boolean default false,
   courier       text,
   assigned_to   text,

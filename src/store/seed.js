@@ -229,6 +229,8 @@ export function makeSeed() {
       items,
       total,
       status,
+      // отгруженные/доставленные уже физически списаны со склада
+      stockConsumed: status === 'shipped' || status === 'delivered',
       priority: rnd() > 0.8,
       courier,
       // часть доставок назначена демо-курьеру (Олег Курьеров) — для роли «курьер»
@@ -263,6 +265,7 @@ export function makeSeed() {
       items,
       total,
       status: 'delivered',
+      stockConsumed: true, // доставлен → остаток уже списан
       priority: false,
       courier: 'Самовывоз',
       address: cust.city,

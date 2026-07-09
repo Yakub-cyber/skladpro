@@ -4,7 +4,7 @@ import { makeSeed } from './seed'
 import { uid, docNo } from '../lib/id'
 import { nextStatus, statusInfo, docTypeInfo } from '../lib/constants'
 import { applyDocToState } from '../lib/posting'
-import { applyOrderStock } from '../lib/orders'
+import { applyOrderStock, migrateReservationV8, stockConsumedFromStatus } from '../lib/orders'
 import { hasSupabase } from '../lib/supabase'
 import {
   cloudLoadAll,
@@ -106,6 +106,18 @@ export const useStore = create(
             const seed = remapSeedForCompany(makeSeed(), companyId)
             await cloudSeed(seed, companyId)
             data = await cloudLoadAll()
+          }
+          // Заказы из облака до модели резервирования приходят без stockConsumed
+          // (в т.ч. пока не применён reservation_migration.sql) — выводим флаг из
+          // статуса, иначе отгруженный заказ спишется повторно, а отмена не
+          // вернёт остаток. Остаток здесь НЕ трогаем: разовый возврат для старых
+          // открытых заказов делает серверная миграция (см. supabase/*.sql).
+          if (data.orders) {
+            data.orders = data.orders.map((o) =>
+              o.stockConsumed != null
+                ? o
+                : { ...o, stockConsumed: stockConsumedFromStatus(o.status) },
+            )
           }
           let employees = data.employees || []
           let me = employees.find((e) => e.authUid === session.user.id)
@@ -546,7 +558,7 @@ export const useStore = create(
         const id = uid('o')
         set((s) => {
           const seq = s.orders.length + 101
-          const base = {
+          const o = {
             id,
             no: docNo('ЗК', seq),
             status: 'new',
@@ -554,30 +566,50 @@ export const useStore = create(
             track: [{ status: 'new', at: new Date().toISOString() }],
             priority: false,
             shiftId: s.activeShiftId || null,
+            stockConsumed: false, // физически спишется при отгрузке
             ...order,
           }
-          // резерв остатков + выбытие кодов маркировки + долг «в долг».
-          // order сохраняем с записанными кодами — чтобы отмена их вернула.
-          const { products, customers, order: o } = applyOrderStock(s, base, -1)
-          return { orders: [o, ...s.orders], products, customers }
+          // Заказ резервирует остаток (через открытый статус), физически со
+          // склада не списывает — это произойдёт при отгрузке. Долг «в долг»
+          // начисляем сразу.
+          let customers = s.customers
+          if (o.onCredit && o.customerId) {
+            customers = s.customers.map((c) =>
+              c.id === o.customerId ? { ...c, balance: (c.balance || 0) + (o.total || 0) } : c,
+            )
+          }
+          return { orders: [o, ...s.orders], customers }
         })
         const o = get().orders.find((x) => x.id === id)
-        get().logAction(`Создан заказ ${o?.no} на ${order.total || 0} ₽`, {
+        get().logAction(`Создан заказ ${o?.no} на ${order.total || 0} ₽ (резерв)`, {
           section: 'Заказы',
           type: 'create',
         })
       },
       setOrderStatus: (id, status, note) => {
-        set((s) => ({
-          orders: s.orders.map((o) => {
-            if (o.id !== id) return o
-            const track = [
-              ...(o.track || []),
-              { status, at: new Date().toISOString(), ...(note ? { note } : {}) },
-            ]
-            return { ...o, status, track }
-          }),
-        }))
+        set((s) => {
+          const o = s.orders.find((x) => x.id === id)
+          if (!o) return {}
+          const track = [
+            ...(o.track || []),
+            { status, at: new Date().toISOString(), ...(note ? { note } : {}) },
+          ]
+          // Отгрузка (shipped/delivered) → физическое списание со склада и
+          // выбытие кодов маркировки. Один раз (флаг stockConsumed).
+          const shipNow = (status === 'shipped' || status === 'delivered') && !o.stockConsumed
+          if (shipNow) {
+            const { products, order: consumed } = applyOrderStock(s, o, -1)
+            return {
+              products,
+              orders: s.orders.map((x) =>
+                x.id === id ? { ...consumed, status, stockConsumed: true, track } : x,
+              ),
+            }
+          }
+          return {
+            orders: s.orders.map((x) => (x.id === id ? { ...x, status, track } : x)),
+          }
+        })
         const o = get().orders.find((x) => x.id === id)
         get().logAction(`Заказ ${o?.no} → ${statusInfo(status).label}`, {
           section: 'Заказы',
@@ -593,8 +625,19 @@ export const useStore = create(
         const o = get().orders.find((x) => x.id === id)
         if (!o || o.status === 'cancelled') return // идемпотентность: не откатываем дважды
         set((s) => {
-          // возврат остатков, кодов маркировки и списание долга
-          const { products, customers } = applyOrderStock(s, o, 1)
+          // Если заказ уже отгружен — возвращаем остаток и коды на склад.
+          // Если ещё не отгружен — просто снимаем резерв (через статус).
+          let products = s.products
+          if (o.stockConsumed) {
+            products = applyOrderStock(s, o, 1).products
+          }
+          // Реверс долга «в долг».
+          let customers = s.customers
+          if (o.onCredit && o.customerId) {
+            customers = s.customers.map((c) =>
+              c.id === o.customerId ? { ...c, balance: Math.max(0, (c.balance || 0) - (o.total || 0)) } : c,
+            )
+          }
           return {
             products,
             customers,
@@ -612,10 +655,10 @@ export const useStore = create(
             ),
           }
         })
-        get().logAction(`Отменён заказ ${o.no} · остатки возвращены`, {
-          section: 'Заказы',
-          type: 'delete',
-        })
+        get().logAction(
+          `Отменён заказ ${o.no} · ${o.stockConsumed ? 'остатки возвращены' : 'резерв снят'}`,
+          { section: 'Заказы', type: 'delete' },
+        )
       },
       // Назначить заказ конкретному курьеру (сотруднику) — он видит только свои
       assignCourier: (id, employeeId) => {
@@ -836,7 +879,7 @@ export const useStore = create(
     }),
     {
       name: 'sklad.db',
-      version: 7,
+      version: 8,
       // не сохраняем runtime-флаги облака (иначе после reload не переинициализируется)
       partialize: (state) => {
         const { _authInited, _bootBusy, _creating, cloudReady, needOnboarding, recoveryMode, cloudError, ...rest } = state
@@ -919,6 +962,15 @@ export const useStore = create(
         if (version < 7) {
           // реестр документов
           state.documents = state.documents || []
+        }
+        if (version < 8) {
+          // Резерв остатков. Раньше заказ списывал остаток при создании; теперь
+          // открытый заказ лишь резервирует, списание — при отгрузке. Открытым
+          // заказам возвращаем остаток и коды маркировки (их удержит резерв),
+          // отгруженным ставим stockConsumed=true. См. migrateReservationV8.
+          const migrated = migrateReservationV8(state)
+          state.orders = migrated.orders
+          state.products = migrated.products
         }
         return state
       },

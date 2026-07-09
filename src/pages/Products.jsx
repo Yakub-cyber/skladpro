@@ -47,6 +47,7 @@ import { CELLS } from '../store/seed'
 import { printLabels, printPriceTags, barcodeSVG } from '../lib/labels'
 import { parsePriceTable, SAMPLE_TEMPLATE } from '../lib/importPrice'
 import { downloadCsv } from '../lib/export'
+import { reservedByProduct } from '../lib/orders'
 import { generateEan13 } from '../lib/barcode'
 import ScannerInput from '../components/ScannerInput'
 
@@ -57,6 +58,8 @@ const stockTone = (p) =>
 
 export default function Products() {
   const products = useStore((s) => s.products)
+  const orders = useStore((s) => s.orders)
+  const reserved = useMemo(() => reservedByProduct(orders), [orders])
   const [params] = useSearchParams()
   const [q, setQ] = useState(params.get('q') || '')
   const [cat, setCat] = useState('all')
@@ -216,6 +219,11 @@ export default function Products() {
                       <Badge tone={stockTone(p)}>
                         {num(p.stock)} {p.unit}
                       </Badge>
+                      {reserved[p.id] > 0 && (
+                        <div className="text-[11px] text-muted mt-0.5 tabular-nums">
+                          резерв {num(reserved[p.id])} · дост. {num(p.stock - reserved[p.id])}
+                        </div>
+                      )}
                     </td>
                     <td className="py-2.5 pr-3 text-muted">
                       <Pencil size={15} />
