@@ -1,5 +1,6 @@
 import { Component } from 'react'
 import { RotateCcw, TriangleAlert } from 'lucide-react'
+import { reportError } from '../lib/monitoring'
 
 // Глобальная «сеть безопасности»: ловит ошибки рендера в дереве и показывает
 // понятный экран вместо белого. Класс — потому что error boundary нельзя
@@ -12,8 +13,8 @@ export default class ErrorBoundary extends Component {
   }
 
   componentDidCatch(error, info) {
-    // Точка для будущего Sentry (ROADMAP, Фаза 0). Пока — в консоль.
     console.error('Необработанная ошибка приложения:', error, info?.componentStack)
+    reportError(error, info) // Sentry (no-op без VITE_SENTRY_DSN)
   }
 
   handleReload = () => {
