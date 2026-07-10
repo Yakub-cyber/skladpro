@@ -1,25 +1,30 @@
-import { useEffect } from 'react'
+import { lazy, Suspense, useEffect } from 'react'
 import { Routes, Route } from 'react-router-dom'
 import Layout from './components/Layout'
 import Login, { Onboarding, ResetPassword } from './pages/Login'
+import PageLoader from './components/PageLoader'
 import { useStore } from './store/useStore'
-import Dashboard from './pages/Dashboard'
-import Orders from './pages/Orders'
-import NewOrder from './pages/NewOrder'
-import Delivery from './pages/Delivery'
-import Products from './pages/Products'
-import Warehouse from './pages/Warehouse'
-import Operations from './pages/Operations'
-import Invoices from './pages/Invoices'
-import Customers from './pages/Customers'
-import Suppliers from './pages/Suppliers'
-import Analytics from './pages/Analytics'
-import Assistant from './pages/Assistant'
-import Storefront from './pages/Storefront'
-import Journal from './pages/Journal'
-import Employees from './pages/Employees'
-import Settings from './pages/Settings'
-import Tracking from './pages/Tracking'
+
+// Ленивая загрузка страниц (code-splitting): тяжёлые зависимости
+// (recharts, leaflet, jsbarcode) уезжают в отдельные чанки и не грузятся,
+// пока пользователь не откроет соответствующий раздел.
+const Dashboard = lazy(() => import('./pages/Dashboard'))
+const Orders = lazy(() => import('./pages/Orders'))
+const NewOrder = lazy(() => import('./pages/NewOrder'))
+const Delivery = lazy(() => import('./pages/Delivery'))
+const Products = lazy(() => import('./pages/Products'))
+const Warehouse = lazy(() => import('./pages/Warehouse'))
+const Operations = lazy(() => import('./pages/Operations'))
+const Invoices = lazy(() => import('./pages/Invoices'))
+const Customers = lazy(() => import('./pages/Customers'))
+const Suppliers = lazy(() => import('./pages/Suppliers'))
+const Analytics = lazy(() => import('./pages/Analytics'))
+const Assistant = lazy(() => import('./pages/Assistant'))
+const Storefront = lazy(() => import('./pages/Storefront'))
+const Journal = lazy(() => import('./pages/Journal'))
+const Employees = lazy(() => import('./pages/Employees'))
+const Settings = lazy(() => import('./pages/Settings'))
+const Tracking = lazy(() => import('./pages/Tracking'))
 
 function AuthGate({ children }) {
   const authUserId = useStore((s) => s.authUserId)
@@ -42,7 +47,14 @@ export default function App() {
   return (
     <Routes>
       {/* Публичная страница трекинга — без авторизации (для клиента) */}
-      <Route path="/track/:id" element={<Tracking />} />
+      <Route
+        path="/track/:id"
+        element={
+          <Suspense fallback={<PageLoader />}>
+            <Tracking />
+          </Suspense>
+        }
+      />
 
       <Route
         element={

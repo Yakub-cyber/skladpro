@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, Suspense } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import {
   LayoutDashboard,
@@ -32,6 +32,7 @@ import CommandPalette from './CommandPalette'
 import { useStore } from '../store/useStore'
 import { canAccess, roleInfo } from '../lib/constants'
 import { reservedByProduct, availableStock } from '../lib/orders'
+import PageLoader from './PageLoader'
 
 // текущий авторизованный сотрудник и его роль
 function useCurrentUser() {
@@ -272,7 +273,9 @@ export default function Layout() {
         <Topbar onMenu={() => setNavOpen(true)} onSearch={() => setCmdOpen(true)} />
         <main className="flex-1 p-4 lg:p-6 max-w-[1400px] w-full mx-auto">
           {allowed ? (
-            <Outlet />
+            <Suspense fallback={<PageLoader />}>
+              <Outlet />
+            </Suspense>
           ) : (
             <div className="grid place-items-center py-24 text-center">
               <div>
