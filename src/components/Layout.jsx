@@ -26,12 +26,16 @@ import {
   ChevronDown,
   LogOut,
   ShieldX,
+  Cloud,
+  CloudOff,
+  CloudUpload,
 } from 'lucide-react'
 import { cx, Badge, Avatar } from './ui'
 import CommandPalette from './CommandPalette'
 import { useStore } from '../store/useStore'
 import { canAccess, roleInfo } from '../lib/constants'
 import { reservedByProduct, availableStock } from '../lib/orders'
+import { syncNow } from '../lib/cloud'
 import PageLoader from './PageLoader'
 
 // текущий авторизованный сотрудник и его роль
@@ -156,6 +160,39 @@ function Sidebar({ open, onClose }) {
   )
 }
 
+// Индикатор облачной синхронизации: зелёное облако — всё отправлено,
+// стрелка с числом — ожидают отправки, перечёркнутое — ошибка (клик = повторить).
+function SyncBadge() {
+  const cloud = useStore((s) => s.cloud)
+  const ready = useStore((s) => s.cloudReady)
+  const pending = useStore((s) => s.syncPending || 0)
+  const state = useStore((s) => s.syncState || 'ok')
+  if (!cloud || !ready) return null
+  const cfg =
+    state === 'error'
+      ? { Icon: CloudOff, cls: 'text-bad', title: `Ошибка синхронизации, изменений в очереди: ${pending}. Нажмите, чтобы повторить` }
+      : pending > 0
+        ? { Icon: CloudUpload, cls: 'text-warn', title: `Ожидает отправки: ${pending}` }
+        : { Icon: Cloud, cls: 'text-ok', title: 'Синхронизировано с облаком' }
+  return (
+    <button
+      onClick={() => syncNow()}
+      title={cfg.title}
+      className={cx(
+        'relative h-10 w-10 grid place-items-center rounded-xl hover:bg-surface-2 shrink-0',
+        cfg.cls,
+      )}
+    >
+      <cfg.Icon size={19} />
+      {pending > 0 && (
+        <span className="absolute -top-0.5 -right-0.5 text-[10px] font-semibold min-w-4 h-4 px-1 grid place-items-center rounded-full bg-warn text-white">
+          {pending > 99 ? '99+' : pending}
+        </span>
+      )}
+    </button>
+  )
+}
+
 function Topbar({ onMenu, onSearch }) {
   const { pathname } = useLocation()
   const title =
@@ -193,6 +230,7 @@ function Topbar({ onMenu, onSearch }) {
         </kbd>
       </button>
 
+      <SyncBadge />
       <button
         onClick={toggleTheme}
         className="h-10 w-10 grid place-items-center rounded-xl hover:bg-surface-2 text-muted hover:text-ink shrink-0"

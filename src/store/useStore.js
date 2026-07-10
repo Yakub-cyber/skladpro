@@ -7,11 +7,13 @@ import { applyDocToState } from '../lib/posting'
 import { applyOrderStock, migrateReservationV8, stockConsumedFromStatus } from '../lib/orders'
 import { hasSupabase } from '../lib/supabase'
 import {
-  cloudLoadAll,
+  cloudLoadMerged,
   cloudSeed,
   cloudUpsert,
   remapSeedForCompany,
   attachSync,
+  pauseSync,
+  resumeSync,
   getCloudSession,
   onAuthChange,
   cloudSignIn,
@@ -36,6 +38,9 @@ export const useStore = create(
       cloud: hasSupabase, // работаем с облаком Supabase
       cloudReady: false, // данные из облака загружены
       cloudError: null,
+      syncPending: 0, // изменений в очереди на отправку (outbox)
+      syncState: 'ok', // ok | pending | syncing | error
+      syncError: null,
       _authInited: false,
       needOnboarding: false, // вошёл, но компании ещё нет
       recoveryMode: false, // перешёл по ссылке сброса пароля → ввод нового
@@ -101,11 +106,13 @@ export const useStore = create(
             return
           }
           const companyId = membership.company_id
-          let data = await cloudLoadAll()
+          // cloudLoadMerged: сначала досылает локальную очередь outbox, потом
+          // читает сервер; недоставленное накладывает поверх (см. cloud.js)
+          let data = await cloudLoadMerged()
           if (!data) {
             const seed = remapSeedForCompany(makeSeed(), companyId)
             await cloudSeed(seed, companyId)
-            data = await cloudLoadAll()
+            data = await cloudLoadMerged()
           }
           // Заказы из облака до модели резервирования приходят без stockConsumed
           // (в т.ч. пока не применён reservation_migration.sql) — выводим флаг из
@@ -141,15 +148,24 @@ export const useStore = create(
               console.warn('Не удалось сохранить карточку сотрудника:', e?.message || e)
             }
           }
-          set({
-            ...data,
-            companyId,
-            companyName: membership.companies?.name || 'Компания',
-            authUserId: me.id,
-            cloudReady: true,
-            needOnboarding: false,
-            cloudError: null,
-          })
+          // Настройки: серверные значения поверх локальных, но локальные
+          // ключи, которых нет в облаке (aiKey и пр.), сохраняем.
+          if (data.settings) data.settings = { ...get().settings, ...data.settings }
+          // Применение серверных данных не должно эхом уехать обратно в outbox
+          pauseSync()
+          try {
+            set({
+              ...data,
+              companyId,
+              companyName: membership.companies?.name || 'Компания',
+              authUserId: me.id,
+              cloudReady: true,
+              needOnboarding: false,
+              cloudError: null,
+            })
+          } finally {
+            resumeSync(useStore)
+          }
           attachSync(useStore)
         } catch (e) {
           set({ cloudError: e?.message || e?.code || String(e) })
@@ -882,7 +898,9 @@ export const useStore = create(
       version: 8,
       // не сохраняем runtime-флаги облака (иначе после reload не переинициализируется)
       partialize: (state) => {
-        const { _authInited, _bootBusy, _creating, cloudReady, needOnboarding, recoveryMode, cloudError, ...rest } = state
+        const rest = { ...state }
+        for (const k of ['_authInited', '_bootBusy', '_creating', 'cloudReady', 'needOnboarding', 'recoveryMode', 'cloudError', 'syncPending', 'syncState', 'syncError'])
+          delete rest[k]
         return rest
       },
       migrate: (state, version) => {

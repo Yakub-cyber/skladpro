@@ -4,6 +4,7 @@
 //  Стор остаётся локальным кэшем (быстро, оффлайн), а изменения уходят в БД.
 // ──────────────────────────────────────────────────────────────────────────
 import { supabase, recoveryTokens } from './supabase'
+import { createOutbox } from './outbox'
 
 const toSnake = (s) => s.replace(/[A-Z]/g, (c) => '_' + c.toLowerCase())
 const toCamel = (s) => s.replace(/_([a-z])/g, (_, c) => c.toUpperCase())
@@ -58,8 +59,8 @@ function fromRow(row, cfg) {
 export async function cloudLoadAll() {
   const result = {}
   let total = 0
-  await Promise.all(
-    TABLES.map(async (cfg) => {
+  await Promise.all([
+    ...TABLES.map(async (cfg) => {
       const { data, error } = await supabase.from(cfg.table).select('*')
       if (error) {
         if (isMissingTable(error)) {
@@ -72,7 +73,17 @@ export async function cloudLoadAll() {
       result[cfg.key] = (data || []).map((r) => fromRow(r, cfg))
       total += result[cfg.key].length
     }),
-  )
+    // настройки компании — одна jsonb-строка на компанию (RLS сузит выборку);
+    // в total не считаем: пустая компания определяется по таблицам данных
+    (async () => {
+      const { data, error } = await supabase.from('settings').select('data').maybeSingle()
+      if (error) {
+        if (isMissingTable(error)) return // миграция ещё не применена
+        throw error
+      }
+      if (data?.data) result.settings = data.data
+    })(),
+  ])
   return total > 0 ? result : null
 }
 
@@ -151,7 +162,9 @@ export async function cloudSeed(state, companyId) {
   }
 }
 
-// ── Автосинхронизация: diff коллекций стора → upsert/delete в БД ─────────────
+// ── Автосинхронизация: diff коллекций стора → персистентный outbox → БД ──────
+//  Изменения стора попадают в outbox (localStorage) и удаляются оттуда только
+//  после подтверждения сервера; неудачи ретраятся с бэкоффом (см. outbox.js).
 const snap = (state) =>
   Object.fromEntries(
     TABLES.map((t) => [
@@ -160,47 +173,167 @@ const snap = (state) =>
     ]),
   )
 
-let queue = [] // { op:'upsert'|'delete', cfg, row|id }
-let timer = null
-function flush() {
-  timer = null
-  const batch = queue
-  queue = []
-  // группируем по таблице
-  for (const cfg of TABLES) {
-    const ups = batch.filter((b) => b.cfg === cfg && b.op === 'upsert').map((b) => b.row)
-    const dels = batch.filter((b) => b.cfg === cfg && b.op === 'delete').map((b) => b.id)
-    if (ups.length) supabase.from(cfg.table).upsert(ups).then(({ error }) => error && console.warn('sync upsert', cfg.table, error.message))
-    if (dels.length) supabase.from(cfg.table).delete().in('id', dels).then(({ error }) => error && console.warn('sync delete', cfg.table, error.message))
-  }
+// Локальные секреты не выгружаем в облако: ключ ИИ по задумке живёт только
+// в браузере (см. ai.js) — в облачной строке настроек его быть не должно.
+const LOCAL_ONLY_SETTINGS = ['aiKey']
+const settingsForCloud = (s = {}) => {
+  const out = { ...s }
+  for (const k of LOCAL_ONLY_SETTINGS) delete out[k]
+  return out
 }
-function enqueue(item) {
-  queue.push(item)
-  if (!timer) timer = setTimeout(flush, 400)
+
+// Неисправимая ошибка: ретраить бессмысленно, элемент выбрасываем с warn.
+// 42xxx — права/несуществующий объект, 23xxx — нарушение ограничений,
+// PGRST204 — неизвестная колонка (миграция не применена).
+const isPermanentError = (e) => {
+  const code = String(e?.code || '')
+  return isMissingTable(e) || /^(42|23)\d+/.test(code) || code === 'PGRST204'
+}
+
+// Транспорт outbox: батч → upsert/delete по таблицам.
+// Возвращает { sent, dropped, error }: sent — подтверждено сервером,
+// dropped — неисправимые (не ретраим), error — транзиент (оставить и повторить).
+async function sendBatch(items) {
+  const sent = []
+  const dropped = []
+  let error = null
+  // группируем по (таблица, компания, операция) — company_id важен, если
+  // элемент остался в очереди от прошлой сессии другой компании
+  const groups = new Map()
+  for (const it of items) {
+    const gk = `${it.key}|${it.companyId}|${it.op}`
+    ;(groups.get(gk) || groups.set(gk, []).get(gk)).push(it)
+  }
+  for (const group of groups.values()) {
+    const { key, companyId, op } = group[0]
+    let res
+    if (key === 'settings') {
+      res = await supabase
+        .from('settings')
+        .upsert({ company_id: companyId, data: group[group.length - 1].obj })
+    } else {
+      const cfg = byKey[key]
+      if (!cfg) {
+        dropped.push(...group)
+        continue
+      }
+      res =
+        op === 'delete'
+          ? await supabase.from(cfg.table).delete().in('id', group.map((it) => it.id))
+          : await supabase
+              .from(cfg.table)
+              .upsert(group.map((it) => ({ ...toRow(it.obj, cfg), company_id: companyId })))
+    }
+    if (!res.error) sent.push(...group)
+    else if (isPermanentError(res.error)) {
+      console.warn('sync: неисправимая ошибка, пропуск', key, res.error.message)
+      dropped.push(...group)
+    } else error = res.error // транзиент: элементы остаются в очереди
+  }
+  return { sent, dropped, error }
+}
+
+// Единственный экземпляр очереди (экспорт — для тестов и служебных нужд)
+export const syncOutbox = createOutbox({ send: sendBatch })
+export const syncNow = () => syncOutbox.flushNow()
+
+// вернулась сеть → досылаем сразу, не дожидаясь бэкоффа
+if (typeof window !== 'undefined') {
+  window.addEventListener('online', () => syncOutbox.flushNow())
 }
 
 let attached = false
+let paused = false
+let prev = null
+let prevSettings = null
+
+// На время применения серверных данных (bootstrap) захват отключаем, иначе
+// загруженное эхом уедет обратно в облако и раздует очередь.
+export function pauseSync() {
+  paused = true
+}
+export function resumeSync(useStore) {
+  paused = false
+  if (!attached) return
+  const s = useStore.getState()
+  prev = snap(s)
+  prevSettings = s.settings
+}
+
 export function attachSync(useStore) {
   if (attached) return
   attached = true
-  let prev = snap(useStore.getState())
+  const st = useStore.getState()
+  prev = snap(st)
+  prevSettings = st.settings
+  // статус очереди → стор (индикатор в шапке)
+  syncOutbox.onChange(({ pending, state, error }) =>
+    useStore.setState({ syncPending: pending, syncState: state, syncError: error }),
+  )
   useStore.subscribe((state) => {
+    if (paused) return
     const companyId = state.companyId
     if (!companyId) return // без компании не синхронизируем
+    const batch = []
     for (const cfg of TABLES) {
       const next = new Map((state[cfg.key] || []).map((o) => [o.id, o]))
       const old = prev[cfg.key]
       // новые / изменённые
       for (const [id, obj] of next) {
         const before = old.get(id)
-        if (!before || before !== obj)
-          enqueue({ op: 'upsert', cfg, row: { ...toRow(obj, cfg), company_id: companyId } })
+        if (!before || before !== obj) batch.push({ op: 'upsert', key: cfg.key, id, obj, companyId })
       }
       // удалённые
-      for (const id of old.keys()) if (!next.has(id)) enqueue({ op: 'delete', cfg, id })
+      for (const id of old.keys())
+        if (!next.has(id)) batch.push({ op: 'delete', key: cfg.key, id, companyId })
     }
-    prev = snap(state)
+    if (state.settings !== prevSettings)
+      batch.push({
+        op: 'upsert',
+        key: 'settings',
+        id: companyId,
+        obj: settingsForCloud(state.settings),
+        companyId,
+      })
+    if (!batch.length) return
+    // Снапшот двигаем только после того, как изменения надёжно захвачены
+    // персистентной очередью; иначе следующий diff захватит их повторно
+    // (компакция по id делает это безопасным).
+    if (syncOutbox.enqueue(batch)) {
+      prev = snap(state)
+      prevSettings = state.settings
+    }
   })
+}
+
+// ── Загрузка с учётом неотправленного ─────────────────────────────────────────
+// Порядок bootstrap: сначала дослать локальную очередь (иначе чтение перетрёт
+// несинхронизированные правки), затем читать сервер. Если дослать не удалось
+// (офлайн) — читаем, но накладываем неотправленное поверх: локальное побеждает,
+// outbox доставит его позже.
+export async function cloudLoadMerged() {
+  await syncOutbox.flushNow().catch(() => {})
+  const data = await cloudLoadAll()
+  const pending = syncOutbox.items()
+  if (data && pending.length) applyPendingToData(data, pending)
+  return data
+}
+
+export function applyPendingToData(data, pending) {
+  for (const it of pending) {
+    if (it.key === 'settings') {
+      if (it.op === 'upsert') data.settings = { ...(data.settings || {}), ...it.obj }
+      continue
+    }
+    const arr = data[it.key]
+    if (!Array.isArray(arr)) continue
+    const i = arr.findIndex((r) => r.id === it.id)
+    if (it.op === 'delete') {
+      if (i >= 0) arr.splice(i, 1)
+    } else if (i >= 0) arr[i] = it.obj
+    else arr.push(it.obj)
+  }
+  return data
 }
 
 // ── Компании (тенанты) ───────────────────────────────────────────────────────
