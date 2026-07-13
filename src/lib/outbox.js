@@ -20,6 +20,11 @@ const STORAGE_KEY = 'sklad.outbox'
 const DEBOUNCE_MS = 400
 const BASE_DELAY_MS = 1000
 const MAX_DELAY_MS = 30000
+// «Ядовитая» запись: транзиентная ошибка с кодом вне списка перманентных
+// (isPermanentError) сама по себе ретраится бесконечно. Отсечка страхует
+// от бесконечных попыток одной битой записи. Кап высокий — оффлайн-режим
+// с большой очередью успевает залогинить много неудач подряд.
+const MAX_ITEM_ATTEMPTS = 100
 
 // localStorage может отсутствовать (node/тесты) или бросать (приватный режим)
 export function safeStorage() {
@@ -45,6 +50,7 @@ export function createOutbox({
   debounceMs = DEBOUNCE_MS,
   baseDelayMs = BASE_DELAY_MS,
   maxDelayMs = MAX_DELAY_MS,
+  maxItemAttempts = MAX_ITEM_ATTEMPTS,
 } = {}) {
   let items = restore()
   let attempts = 0 // подряд неудачных flush (для бэкоффа)
@@ -64,6 +70,34 @@ export function createOutbox({
     } catch {
       return []
     }
+  }
+
+  // Слить внешние items (из другой вкладки) с in-memory. Компакция по (key,id):
+  // если элемент есть и там, и тут — оставляем внешний (он свежее в persist —
+  // другая вкладка только что записала). Такая же семантика, как enqueue.
+  function mergeExternal(external) {
+    if (!Array.isArray(external)) return false
+    let changed = false
+    const memKeys = new Set(items.map(itemKey))
+    // 1. Внешние элементы, которых у нас нет — добавляем.
+    for (const it of external) {
+      if (memKeys.has(itemKey(it))) continue
+      items.push(it)
+      changed = true
+    }
+    // 2. Пересечение: заменяем нашу версию внешней (другая вкладка успела
+    //    обновить объект после нашего снимка).
+    for (const it of external) {
+      const k = itemKey(it)
+      const i = items.findIndex((x) => itemKey(x) === k)
+      if (i >= 0 && items[i] !== it) {
+        items[i] = it
+        changed = true
+      }
+    }
+    // 3. Наши локальные, которых нет во внешних — оставляем (они ещё не
+    //    успели уйти в storage, persist() их сохранит следующим ходом).
+    return changed
   }
 
   // → true, если очередь надёжно сохранена (иначе элементы живут в памяти
@@ -146,12 +180,33 @@ export function createOutbox({
       items = items.filter((it) => !(gone.has(itemKey(it)) && batch.includes(it)))
       persist()
       if (res.error) throw res.error
+      // сбрасываем per-item попытки на успешном flush (переживший элемент —
+      // это тот, что был компактирован во время отправки, а не «плохой»)
+      for (const it of items) delete it._attempts
       attempts = 0
       lastError = null
       ok = items.length === 0
     } catch (e) {
       attempts += 1
       lastError = e?.message || String(e)
+      // Cap per-item: неисправимо застрявший элемент дропаем после
+      // maxItemAttempts подряд неудач. Логируем, чтобы не терялось тихо.
+      const kept = []
+      const dead = []
+      for (const it of batch) {
+        it._attempts = (it._attempts || 0) + 1
+        if (it._attempts > maxItemAttempts) dead.push(it)
+        else kept.push(it)
+      }
+      if (dead.length) {
+        console.warn(
+          `outbox: сброшено ${dead.length} «застрявших» записей после ${maxItemAttempts} попыток`,
+          dead.map(itemKey),
+        )
+        const drop = new Set(dead.map(itemKey))
+        items = items.filter((it) => !drop.has(itemKey(it)))
+      }
+      persist()
       schedule(Math.min(baseDelayMs * 2 ** (attempts - 1), maxDelayMs))
     }
     flushing = null
@@ -162,6 +217,31 @@ export function createOutbox({
     }
     notify()
     return ok
+  }
+
+  // Мультивкладочность: другая вкладка изменила sklad.outbox → сливаем.
+  // Без этого persist() каждой вкладки перезаписывал ключ целиком, теряя
+  // элементы, которые ещё не увидела эта вкладка. storage-event срабатывает
+  // только на КРОСС-вкладочные записи (не на нашу же), так что цикла нет.
+  function onStorage(e) {
+    if (!e || e.key !== storageKey) return
+    let external = []
+    try {
+      external = e.newValue ? JSON.parse(e.newValue)?.items || [] : []
+    } catch {
+      return
+    }
+    if (mergeExternal(external)) {
+      persist() // сохранить объединённое (наши локальные + чужие)
+      notify()
+      // проснуться и попробовать отправить — вдруг у другой вкладки был офлайн
+      if (!timer && !flushing) schedule(debounceMs)
+    }
+  }
+  let detachStorage = null
+  if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+    window.addEventListener('storage', onStorage)
+    detachStorage = () => window.removeEventListener('storage', onStorage)
   }
 
   return {
@@ -185,5 +265,14 @@ export function createOutbox({
       persist()
       lastNotified = null
     },
+    // для тестов и unmount: снять глобальный слушатель storage
+    destroy: () => {
+      if (timer) clearTimeout(timer)
+      timer = null
+      listeners.clear()
+      detachStorage?.()
+    },
+    // для тестов: имитировать сообщение из другой вкладки
+    _onStorageEvent: onStorage,
   }
 }

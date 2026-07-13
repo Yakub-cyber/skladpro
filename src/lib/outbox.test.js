@@ -194,3 +194,90 @@ describe('outbox — автоотправка и статус', () => {
     expect(seen.filter((s) => s === 'pending:1')).toHaveLength(1) // после отписки тишина
   })
 })
+
+describe('outbox — мультивкладочность', () => {
+  it('другая вкладка добавила элемент → in-memory сливаем без потерь', () => {
+    const storage = memStorage()
+    const box = createOutbox({ send: vi.fn(), storage })
+    box.enqueue([up('p1', { name: 'A' })]) // локальное изменение
+    expect(box.status().pending).toBe(1)
+
+    // «другая вкладка» кладёт свой элемент в тот же storage
+    const external = { v: 1, items: [up('p2', { name: 'B' })] }
+    storage.setItem('sklad.outbox', JSON.stringify(external))
+    box._onStorageEvent({ key: 'sklad.outbox', newValue: JSON.stringify(external) })
+
+    // после слияния — оба элемента, локальный не потерян
+    expect(box.status().pending).toBe(2)
+    const ids = box.items().map((it) => it.id).sort()
+    expect(ids).toEqual(['p1', 'p2'])
+
+    // и на диске тоже оба (persist после merge)
+    const saved = JSON.parse(storage.getItem('sklad.outbox'))
+    expect(saved.items.map((it) => it.id).sort()).toEqual(['p1', 'p2'])
+  })
+
+  it('внешний upsert того же id обновляет нашу версию', () => {
+    const storage = memStorage()
+    const box = createOutbox({ send: vi.fn(), storage })
+    box.enqueue([up('p1', { name: 'старый' })])
+
+    const external = { v: 1, items: [up('p1', { name: 'новый из B' })] }
+    storage.setItem('sklad.outbox', JSON.stringify(external))
+    box._onStorageEvent({ key: 'sklad.outbox', newValue: JSON.stringify(external) })
+
+    expect(box.items()).toHaveLength(1)
+    expect(box.items()[0].obj.name).toBe('новый из B')
+  })
+
+  it('пустое newValue (другая вкладка очистила после flush) не тронет локальные', () => {
+    const storage = memStorage()
+    const box = createOutbox({ send: vi.fn(), storage })
+    box.enqueue([up('p_local')])
+    box._onStorageEvent({ key: 'sklad.outbox', newValue: null })
+    expect(box.items().map((it) => it.id)).toEqual(['p_local'])
+  })
+
+  it('storage-событие с чужим ключом игнорируется', () => {
+    const storage = memStorage()
+    const box = createOutbox({ send: vi.fn(), storage })
+    box.enqueue([up('p1')])
+    box._onStorageEvent({ key: 'unrelated', newValue: '{}' })
+    expect(box.items()).toHaveLength(1)
+  })
+})
+
+describe('outbox — защита от «ядовитой» записи (кап попыток)', () => {
+  it('после MAX_ITEM_ATTEMPTS транзиентных ошибок элемент сбрасывается', async () => {
+    // сеть всегда падает транзиентом (не в isPermanentError, ретраится)
+    const send = vi.fn(async () => ({ error: { message: 'timeout' } }))
+    const box = createOutbox({
+      send, storage: memStorage(), maxItemAttempts: 3, baseDelayMs: 1, maxDelayMs: 1,
+    })
+    box.enqueue([up('p1')])
+    // 4 попытки: 1-3 копят attempts, 4-я превышает cap → drop
+    for (let i = 0; i < 4; i++) {
+      await box.flushNow()
+      await vi.advanceTimersByTimeAsync(2)
+    }
+    expect(box.items()).toHaveLength(0) // «ядовитый» сброшен
+    expect(box.status().pending).toBe(0)
+  })
+
+  it('успех сбрасывает счётчик попыток', async () => {
+    let calls = 0
+    const send = vi.fn(async (batch) => {
+      calls++
+      if (calls === 1) return { error: { message: 'flaky' } }
+      return { sent: batch }
+    })
+    const box = createOutbox({
+      send, storage: memStorage(), maxItemAttempts: 2, baseDelayMs: 1, maxDelayMs: 1,
+    })
+    box.enqueue([up('p1')])
+    await box.flushNow() // фейл, attempts=1
+    await vi.advanceTimersByTimeAsync(2)
+    await box.flushNow() // успех, отправлено
+    expect(box.status().pending).toBe(0)
+  })
+})
