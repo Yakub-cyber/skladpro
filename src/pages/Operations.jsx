@@ -445,11 +445,19 @@ function MoveForm({ docType, reasons, tone, verb, hint }) {
   const [done, setDone] = useState('')
 
   const cur = sel && products.find((p) => p.id === sel.id)
+  const [err, setErr] = useState('')
   const submit = (post) => {
-    addDocument(
+    setErr('')
+    const r = addDocument(
       { type: docType, reason, items: [{ productId: sel.id, name: sel.name, unit: sel.unit, qty }] },
       { post },
     )
+    // addDocument возвращает id при успехе или { ok:false, error } при
+    // превышении остатка на списании/продаже/возврате поставщику
+    if (r && typeof r === 'object' && r.ok === false) {
+      setErr(r.error)
+      return
+    }
     setDone(`${post ? verb : 'Черновик'}: ${sel.name} — ${qty} ${sel.unit}`)
     setSel(null)
     setQty(1)
@@ -499,6 +507,7 @@ function MoveForm({ docType, reasons, tone, verb, hint }) {
               Черновик
             </Button>
           </div>
+          {err && <div className="mt-3 text-[13px] text-bad">{err}</div>}
         </div>
       )}
     </Card>

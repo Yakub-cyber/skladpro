@@ -322,7 +322,7 @@ function CloudLogin({ onBack }) {
       setErr(r.error)
       setBusy(false)
     } else if (r.needConfirm) {
-      setErr('Аккаунт создан, но включено подтверждение email. Подтвердите по ссылке из письма — или отключите подтверждение в Supabase (Authentication → Email → Confirm email), затем войдите.')
+      setInfo(`Аккаунт создан. На ${email} отправлено письмо с подтверждением — перейдите по ссылке в письме и войдите.`)
       setMode('signin')
       setBusy(false)
     }

@@ -365,13 +365,22 @@ export const useStore = create(
           type: 'in',
         })
       },
-      // Списание (брак/недостача/порча)
+      // Списание (брак/недостача/порча). Возвращает { ok, error? } — UI
+      // должен показать причину отказа. Без проверки списание молча уходило
+      // в ноль (Math.max), скрывая от пользователя расхождение с фактом.
       writeOff: (productId, qty, reason) => {
         const p = get().products.find((x) => x.id === productId)
-        if (!p) return
+        if (!p) return { ok: false, error: 'Товар не найден' }
+        const n = Number(qty) || 0
+        if (n <= 0) return { ok: false, error: 'Укажите количество' }
+        if (n > p.stock)
+          return {
+            ok: false,
+            error: `Списание превышает остаток: ${p.stock} ${p.unit || 'шт'}`,
+          }
         set((s) => ({
           products: s.products.map((x) =>
-            x.id === productId ? { ...x, stock: Math.max(0, x.stock - qty) } : x,
+            x.id === productId ? { ...x, stock: x.stock - n } : x,
           ),
           movements: [
             {
@@ -379,8 +388,8 @@ export const useStore = create(
               type: 'writeoff',
               productId,
               name: p.name,
-              qty,
-              delta: -qty,
+              qty: n,
+              delta: -n,
               reason: reason || 'Списание',
               by: s.authUserId,
               at: new Date().toISOString(),
@@ -388,10 +397,11 @@ export const useStore = create(
             ...s.movements,
           ],
         }))
-        get().logAction(`Списание «${p.name}» −${qty} ${p.unit} (${reason || 'Списание'})`, {
+        get().logAction(`Списание «${p.name}» −${n} ${p.unit} (${reason || 'Списание'})`, {
           section: 'Склад',
           type: 'writeoff',
         })
+        return { ok: true }
       },
       // Возврат на склад (от клиента)
       returnStock: (productId, qty, reason) => {
@@ -453,13 +463,21 @@ export const useStore = create(
           type: 'inventory',
         })
       },
-      // Возврат поставщику (закупленный товар уходит со склада)
+      // Возврат поставщику (закупленный товар уходит со склада).
+      // Как и writeOff — возвращает { ok, error? } и блокирует превышение.
       supplierReturn: (productId, qty, reason) => {
         const p = get().products.find((x) => x.id === productId)
-        if (!p) return
+        if (!p) return { ok: false, error: 'Товар не найден' }
+        const n = Number(qty) || 0
+        if (n <= 0) return { ok: false, error: 'Укажите количество' }
+        if (n > p.stock)
+          return {
+            ok: false,
+            error: `Возврат превышает остаток: ${p.stock} ${p.unit || 'шт'}`,
+          }
         set((s) => ({
           products: s.products.map((x) =>
-            x.id === productId ? { ...x, stock: Math.max(0, x.stock - qty) } : x,
+            x.id === productId ? { ...x, stock: x.stock - n } : x,
           ),
           movements: [
             {
@@ -467,8 +485,8 @@ export const useStore = create(
               type: 'supplier_return',
               productId,
               name: p.name,
-              qty,
-              delta: -qty,
+              qty: n,
+              delta: -n,
               reason: reason || 'Возврат поставщику',
               by: s.authUserId,
               at: new Date().toISOString(),
@@ -476,10 +494,11 @@ export const useStore = create(
             ...s.movements,
           ],
         }))
-        get().logAction(`Возврат поставщику «${p.name}» −${qty} ${p.unit}`, {
+        get().logAction(`Возврат поставщику «${p.name}» −${n} ${p.unit}`, {
           section: 'Склад',
           type: 'supplier_return',
         })
+        return { ok: true }
       },
       // Перемещение между складами/ячейками (общий остаток не меняется)
       transferStock: (productId, toWarehouseId, toCell, qty) => {
@@ -518,10 +537,31 @@ export const useStore = create(
       // ── Документы (реестр складских документов) ───────────────
       // doc: { type, items:[{productId,name,unit,qty,(prevStock|fromWh)}], toWarehouseId?, reason?, note? }
       // opts.post=false → черновик (без влияния на остатки)
+      // Возвращает id (успех) или { ok: false, error } — превышение остатка
+      // на списании/продаже/возврате поставщику блокируется, чтобы не
+      // прятать расхождение с фактом через Math.max(0, ...).
       addDocument: (doc, opts = {}) => {
         const post = opts.post !== false
-        const id = uid('doc')
         const type = doc.type
+        const items = doc.items || []
+        // Предпроверка остатков — только для типов, которые списывают со
+        // склада, и только при проведении. Draft можно сохранить в минус.
+        if (post && (type === 'sale' || type === 'writeoff' || type === 'supplier_return')) {
+          const products = get().products
+          for (const it of items) {
+            const p = products.find((x) => x.id === it.productId)
+            const need = Number(it.qty) || 0
+            const have = p ? p.stock : 0
+            if (need > have) {
+              const label = docTypeInfo(type).label
+              return {
+                ok: false,
+                error: `${label}: «${it.name}» — не хватает остатка (${have} из ${need} ${p?.unit || 'шт'})`,
+              }
+            }
+          }
+        }
+        const id = uid('doc')
         set((s) => {
           const seq = s.documents.filter((d) => d.type === type).length + 1
           const header = {
@@ -529,11 +569,11 @@ export const useStore = create(
             no: docNo(docTypeInfo(type).prefix, seq),
             type,
             status: post ? 'posted' : 'draft',
-            items: (doc.items || []).map((it) => ({ ...it })),
+            items: items.map((it) => ({ ...it })),
             toWarehouseId: doc.toWarehouseId || null,
             reason: doc.reason || '',
             note: doc.note || '',
-            totalQty: (doc.items || []).reduce((a, x) => a + (Number(x.qty) || 0), 0),
+            totalQty: items.reduce((a, x) => a + (Number(x.qty) || 0), 0),
             by: s.authUserId,
             createdAt: new Date().toISOString(),
             postedAt: post ? new Date().toISOString() : null,
