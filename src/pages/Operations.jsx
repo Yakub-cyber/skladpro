@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   ArrowDownToLine,
@@ -553,6 +553,16 @@ function InventoryTab() {
     )
   }, [products, q])
 
+  // Пагинация: каждая строка — контролируемый input, полный рендер
+  // тысяч товаров даёт заметный лаг ввода. Показываем окно + «Показать
+  // ещё»; при поиске сбрасываем окно.
+  const PAGE_SIZE = 100
+  const [visible, setVisible] = useState(PAGE_SIZE)
+  useEffect(() => {
+    setVisible(PAGE_SIZE)
+  }, [q])
+  const shown = list.slice(0, visible)
+
   const changed = Object.entries(counts).filter(([id, v]) => {
     const p = products.find((x) => x.id === id)
     return p && v !== '' && Number(v) !== p.stock
@@ -610,7 +620,7 @@ function InventoryTab() {
             </tr>
           </thead>
           <tbody className="divide-y divide-line">
-            {list.map((p) => {
+            {shown.map((p) => {
               const raw = counts[p.id]
               const fact = raw === '' || raw == null ? null : Number(raw)
               const diff = fact == null ? null : fact - p.stock
@@ -648,6 +658,16 @@ function InventoryTab() {
           </tbody>
         </table>
       </div>
+      {visible < list.length && (
+        <div className="mt-3 flex items-center justify-between gap-3">
+          <div className="text-[12px] text-muted">
+            Показано {shown.length} из {list.length}
+          </div>
+          <Button variant="soft" onClick={() => setVisible((v) => v + PAGE_SIZE)}>
+            Показать ещё {Math.min(PAGE_SIZE, list.length - visible)}
+          </Button>
+        </div>
+      )}
     </Card>
   )
 }

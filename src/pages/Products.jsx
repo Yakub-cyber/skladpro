@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import {
   Search,
@@ -80,6 +80,18 @@ export default function Products() {
     })
   }, [products, q, cat])
 
+  // Пагинация: на демо-30 SKU незаметно, на реальном оптовом каталоге
+  // (тысячи позиций) полный рендер таблицы тормозит. Показываем окно
+  // фиксированного размера, кнопкой добираем ещё. Сброс при смене
+  // фильтра/поиска — чтобы пользователь видел свежий срез, а не «висящий»
+  // конец прошлого фильтра.
+  const PAGE_SIZE = 100
+  const [visible, setVisible] = useState(PAGE_SIZE)
+  useEffect(() => {
+    setVisible(PAGE_SIZE)
+  }, [q, cat])
+  const shown = list.slice(0, visible)
+
   const totalValue = products.reduce((a, p) => a + p.stock * p.cost, 0)
 
   // Экспорт видимого списка (с учётом поиска и фильтра категории) в CSV/Excel
@@ -160,7 +172,7 @@ export default function Products() {
               </tr>
             </thead>
             <tbody className="divide-y divide-line">
-              {list.map((p) => {
+              {shown.map((p) => {
                 const c = catInfo(p.category)
                 const Icon = CAT_ICON[c.icon] || Package
                 return (
@@ -237,6 +249,19 @@ export default function Products() {
             <Empty icon={Package} title="Ничего не найдено" text="Измените запрос или фильтр." />
           )}
         </div>
+        {visible < list.length && (
+          <div className="border-t border-line p-3 flex items-center justify-between gap-3">
+            <div className="text-[12px] text-muted">
+              Показано {shown.length} из {list.length}
+            </div>
+            <Button
+              variant="soft"
+              onClick={() => setVisible((v) => v + PAGE_SIZE)}
+            >
+              Показать ещё {Math.min(PAGE_SIZE, list.length - visible)}
+            </Button>
+          </div>
+        )}
       </Card>
 
       {edit && (
