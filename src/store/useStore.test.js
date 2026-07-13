@@ -341,17 +341,29 @@ describe('addDocument — предпроверка остатка', () => {
 
   it('purchase обновляет средневзвешенную себестоимость', () => {
     const p = state().products[0]
-    // приводим к известному состоянию
+    // приводим к известному состоянию: одна партия 10 по 100. С FIFO это
+    // одновременно и stock, и полный набор батчей (batches — источник истины).
     useStore.setState((s) => ({
-      products: s.products.map((x) => (x.id === p.id ? { ...x, stock: 10, cost: 100 } : x)),
+      products: s.products.map((x) =>
+        x.id === p.id
+          ? {
+              ...x,
+              stock: 10,
+              cost: 100,
+              batches: [{ id: 'b_seed', qty: 10, cost: 100, at: '2026-01-01T00:00:00Z' }],
+            }
+          : x,
+      ),
     }))
     state().addDocument({
       type: 'purchase',
       items: [{ productId: p.id, name: p.name, unit: p.unit, qty: 10, cost: 200 }],
     })
-    // средневзвешенная: (10*100 + 10*200) / (10+10) = 150
+    // взвешенная по остатку: (10*100 + 10*200) / 20 = 150
     expect(productById(p.id).cost).toBeCloseTo(150, 2)
     expect(productById(p.id).stock).toBe(20)
+    // и появилась вторая партия
+    expect(productById(p.id).batches).toHaveLength(2)
   })
 })
 

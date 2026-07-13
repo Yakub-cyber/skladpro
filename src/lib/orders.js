@@ -3,7 +3,20 @@
 //  Модель: заказ РЕЗЕРВИРУЕТ остаток (пока открыт), физическое списание со
 //  склада происходит при ОТГРУЗКЕ. Доступно к продаже = остаток − резерв.
 //  Долг «в долг» — отдельно (начисляется при создании), здесь только склад.
+//
+//  Партионный учёт: если у товара есть batches, отгрузка списывает по FIFO
+//  и запоминает потреблённые партии в позиции заказа (it.consumed), чтобы
+//  отмена отгрузки могла восстановить их точно. Товары без batches —
+//  legacy fallback на stock напрямую.
 // ──────────────────────────────────────────────────────────────────────────
+import {
+  addBatch,
+  consumeFIFO,
+  reverseConsume,
+  totalStock,
+  weightedCostFromBatches,
+  hasBatches,
+} from './batches'
 
 // Статусы, в которых заказ держит резерв (ещё не отгружен и не отменён).
 export const OPEN_STATUSES = ['new', 'confirmed', 'picking', 'packed']
@@ -38,13 +51,46 @@ export function availableStock(product, reservedMap = {}) {
 // dir = -1 — отгрузка (списываем со склада, коды выбывают),
 // dir = +1 — возврат при отмене отгруженного заказа.
 // Возвращает { products, order } — order с записанными выбывшими кодами
-// (чтобы отмена могла их восстановить).
+// (чтобы отмена могла их восстановить) и потреблёнными партиями (для
+// точного возврата в те же партии).
 export function applyOrderStock(state, order, dir) {
   const items = (order.items || []).map((it) => ({ ...it }))
+  const at = new Date().toISOString()
   const products = state.products.map((p) => {
     const it = items.find((x) => x.productId === p.id)
     if (!it) return p
-    const np = { ...p, stock: Math.max(0, (p.stock || 0) + dir * it.qty) }
+    let np
+    // ── Партионная ветка ─────────────────────────────────────────────
+    if (hasBatches(p)) {
+      let batches = p.batches
+      if (dir < 0) {
+        // Отгрузка: FIFO-списание, запоминаем потреблённые партии.
+        const r = consumeFIFO(batches, it.qty)
+        batches = r.batches
+        it.consumed = r.consumed
+      } else if (dir > 0) {
+        // Отмена отгрузки: восстанавливаем потреблённые партии обратно,
+        // либо, если consumed не записан (старый заказ до этого патча),
+        // создаём одну партию с последней средней ценой.
+        if (it.consumed?.length) {
+          batches = reverseConsume(batches, it.consumed)
+          it.consumed = null
+        } else {
+          const cost = weightedCostFromBatches(batches) || Number(p.cost) || 0
+          const r = addBatch(batches, it.qty, cost, at)
+          batches = r.batches
+        }
+      }
+      np = {
+        ...p,
+        batches,
+        stock: totalStock(batches),
+        cost: weightedCostFromBatches(batches) || p.cost || 0,
+      }
+    } else {
+      // ── Legacy: stock напрямую ─────────────────────────────────────
+      np = { ...p, stock: Math.max(0, (p.stock || 0) + dir * it.qty) }
+    }
     if (p.marked) {
       if (dir < 0) {
         // отгрузка: первые ceil(qty) кодов выбывают — запоминаем их в позиции

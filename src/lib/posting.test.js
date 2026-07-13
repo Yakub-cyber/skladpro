@@ -164,6 +164,126 @@ describe('applyDocToState — себестоимость при закупке',
   })
 })
 
+// ── Партионный учёт (FIFO) ────────────────────────────────────────────
+// Товары с полем batches работают по новой модели: приход добавляет партию,
+// расход списывает по FIFO, cost — производная weightedCostFromBatches().
+
+describe('applyDocToState — FIFO при списании', () => {
+  const withBatches = () => ({
+    products: [
+      {
+        id: 'p1',
+        name: 'Гвозди',
+        unit: 'кг',
+        warehouseId: 'wh1',
+        stock: 20, // 10 старой партии по 100 + 10 новой по 200
+        cost: 150,
+        batches: [
+          { id: 'b1', qty: 10, cost: 100, at: '2026-01-01T00:00:00Z' },
+          { id: 'b2', qty: 10, cost: 200, at: '2026-06-01T00:00:00Z' },
+        ],
+      },
+    ],
+    movements: [],
+  })
+
+  it('продажа списывает старейшую партию первой; movement.cost = COGS', () => {
+    const doc = { type: 'sale', no: 'ПРД-1', items: [{ productId: 'p1', name: 'Гвозди', qty: 15 }] }
+    const next = applyDocToState(withBatches(), doc, 1, 'u1')
+    const p = next.products[0]
+    expect(p.stock).toBe(5) // 20 - 15
+    // 10 из партии-100 + 5 из партии-200 = 1000 + 1000 = 2000
+    expect(next.movements[0].cost).toBe(2000)
+    // Осталась одна партия по 200
+    expect(p.batches).toHaveLength(1)
+    expect(p.batches[0].qty).toBe(5)
+    expect(p.batches[0].cost).toBe(200)
+    // cost товара — теперь weighted по остатку
+    expect(p.cost).toBe(200)
+  })
+
+  it('закупка добавляет партию по своей цене, не смешивая со старыми', () => {
+    const doc = { type: 'purchase', no: 'ЗАК-1', items: [{ productId: 'p1', name: 'Гвозди', qty: 10, cost: 300 }] }
+    const next = applyDocToState(withBatches(), doc, 1, 'u1')
+    const p = next.products[0]
+    expect(p.stock).toBe(30)
+    expect(p.batches).toHaveLength(3)
+    // Средняя по остатку: (10*100 + 10*200 + 10*300) / 30 = 200
+    expect(p.cost).toBe(200)
+  })
+
+  it('откат продажи возвращает партии в исходное состояние', () => {
+    const doc = { type: 'sale', no: 'ПРД-2', items: [{ productId: 'p1', name: 'Гвозди', qty: 15 }] }
+    const posted = applyDocToState(withBatches(), doc, 1, 'u1')
+    const rolled = applyDocToState(posted, doc, -1, 'u1')
+    const p = rolled.products[0]
+    expect(p.stock).toBe(20)
+    // Обе партии восстановлены — 10 по 100 и 10 по 200
+    const byCost = Object.fromEntries(p.batches.map((b) => [b.cost, b.qty]))
+    expect(byCost[100]).toBe(10)
+    expect(byCost[200]).toBe(10)
+  })
+
+  it('откат закупки удаляет только добавленную партию', () => {
+    const doc = { type: 'purchase', no: 'ЗАК-2', items: [{ productId: 'p1', name: 'Гвозди', qty: 10, cost: 300 }] }
+    const posted = applyDocToState(withBatches(), doc, 1, 'u1')
+    const rolled = applyDocToState(posted, doc, -1, 'u1')
+    const p = rolled.products[0]
+    expect(p.stock).toBe(20)
+    expect(p.batches).toHaveLength(2)
+    expect(p.batches.some((b) => b.cost === 300)).toBe(false)
+  })
+
+  it('возврат от клиента добавляет партию (по текущей средней), не трогая существующие', () => {
+    const doc = { type: 'sale_return', no: 'ВЗП-1', items: [{ productId: 'p1', name: 'Гвозди', qty: 5 }] }
+    const next = applyDocToState(withBatches(), doc, 1, 'u1')
+    const p = next.products[0]
+    expect(p.stock).toBe(25)
+    expect(p.batches).toHaveLength(3) // 2 + 1 новая
+    // Новая партия — по текущей средней 150 (10*100 + 10*200)/20 = 150
+    expect(p.batches.some((b) => b.qty === 5 && b.cost === 150)).toBe(true)
+  })
+
+  it('возврат поставщику списывает по FIFO (как sale)', () => {
+    const doc = { type: 'supplier_return', no: 'ВЗС-1', items: [{ productId: 'p1', name: 'Гвозди', qty: 12 }] }
+    const next = applyDocToState(withBatches(), doc, 1, 'u1')
+    const p = next.products[0]
+    expect(p.stock).toBe(8) // 20 - 12
+    // 10 из старой (100) + 2 из новой (200) = 1400
+    expect(next.movements[0].cost).toBe(1400)
+    expect(p.batches).toHaveLength(1)
+    expect(p.batches[0].qty).toBe(8)
+    expect(p.batches[0].cost).toBe(200)
+  })
+
+  it('инвентаризация излишек: добавляется партия по текущей средней', () => {
+    const doc = {
+      type: 'inventory',
+      no: 'ИНВ-1',
+      items: [{ productId: 'p1', name: 'Гвозди', qty: 25, prevStock: 20 }], // излишек +5
+    }
+    const next = applyDocToState(withBatches(), doc, 1, 'u1')
+    const p = next.products[0]
+    expect(p.stock).toBe(25)
+    // Есть добавленная партия +5 по средней 150
+    expect(p.batches.some((b) => b.qty === 5 && b.cost === 150)).toBe(true)
+  })
+
+  it('инвентаризация недостача: списывается по FIFO', () => {
+    const doc = {
+      type: 'inventory',
+      no: 'ИНВ-2',
+      items: [{ productId: 'p1', name: 'Гвозди', qty: 5, prevStock: 20 }], // недостача −15
+    }
+    const next = applyDocToState(withBatches(), doc, 1, 'u1')
+    const p = next.products[0]
+    expect(p.stock).toBe(5)
+    // Партия-100 съедена полностью, партия-200 стала 5
+    expect(p.batches).toHaveLength(1)
+    expect(p.batches[0].cost).toBe(200)
+  })
+})
+
 describe('applyDocToState — чистота функции', () => {
   it('не мутирует исходное состояние', () => {
     const state = makeState()

@@ -4,9 +4,10 @@
 //
 // Идемпотентно: каждое поле досыпается только если отсутствует. Все
 // блоки выполняются последовательно от старой версии к текущей, поэтому
-// пользователь на v3 после `if (version < 4)` пойдёт дальше в v5..v8.
+// пользователь на v3 после `if (version < 4)` пойдёт дальше в v5..v9.
 import { makeSeed } from './seed'
 import { migrateReservationV8 } from '../lib/orders'
+import { uid } from '../lib/id'
 
 export function persistMigrate(state, version) {
   if (!state) return state
@@ -101,6 +102,22 @@ export function persistMigrate(state, version) {
     const migrated = migrateReservationV8(state)
     state.orders = migrated.orders
     state.products = migrated.products
+  }
+
+  if (version < 9) {
+    // Партионный учёт FIFO: у товара появляется массив batches. Существующий
+    // stock превращается в единственную партию по текущей cost с датой
+    // конца эпохи — так все последующие приходы уходят в новые партии, а
+    // «наследство» списывается первым (как самое старое).
+    const at = new Date(0).toISOString() // Unix epoch — заведомо раньше любого нового прихода
+    state.products = (state.products || []).map((p) => {
+      if (Array.isArray(p.batches)) return p // уже есть (напр., импорт)
+      const s = Math.max(0, Number(p.stock) || 0)
+      return {
+        ...p,
+        batches: s > 0 ? [{ id: uid('b'), qty: s, cost: Number(p.cost) || 0, at }] : [],
+      }
+    })
   }
 
   return state
