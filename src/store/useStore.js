@@ -4,28 +4,10 @@ import { makeSeed } from './seed'
 import { uid, docNo } from '../lib/id'
 import { nextStatus, statusInfo, docTypeInfo } from '../lib/constants'
 import { applyDocToState } from '../lib/posting'
-import { applyOrderStock, migrateReservationV8, stockConsumedFromStatus } from '../lib/orders'
-import { hasSupabase } from '../lib/supabase'
-import { hashPin, verifyPin } from '../lib/crypto'
-import {
-  cloudLoadMerged,
-  cloudSeed,
-  cloudUpsert,
-  remapSeedForCompany,
-  attachSync,
-  pauseSync,
-  resumeSync,
-  getCloudSession,
-  onAuthChange,
-  cloudSignIn,
-  cloudSignUp,
-  cloudSignOut,
-  getMembership,
-  createCompanyCloud,
-  acceptInvitation,
-  checkRecovery,
-  changePassword,
-} from '../lib/cloud'
+import { applyOrderStock } from '../lib/orders'
+import { persistMigrate, persistPartialize } from './persistMigrate'
+import { createHrSlice } from './slices/hrSlice'
+import { createCloudSlice, cloudInitialState, bindStore } from './slices/cloudSlice'
 
 // Слой данных. Сейчас источник истины — localStorage (persist).
 // Чтобы переключиться на реальный API/Supabase, эти actions заменяются
@@ -35,189 +17,10 @@ export const useStore = create(
   persist(
     (set, get) => ({
       ...makeSeed(), // audit/shifts/activeShiftId приходят отсюда
-      authUserId: null, // кто авторизован (null = показать экран входа)
-      cloud: hasSupabase, // работаем с облаком Supabase
-      cloudReady: false, // данные из облака загружены
-      cloudError: null,
-      syncPending: 0, // изменений в очереди на отправку (outbox)
-      syncState: 'ok', // ok | pending | syncing | error
-      syncError: null,
-      _authInited: false,
-      needOnboarding: false, // вошёл, но компании ещё нет
-      recoveryMode: false, // перешёл по ссылке сброса пароля → ввод нового
-      companyId: null,
-      companyName: null,
+      ...cloudInitialState, // authUserId, cloud, companyId, runtime-флаги…
 
-      // ── Облако (Supabase, мультитенант) ──────────────────────
-      // Единая точка реакции на вход/выход через onAuthStateChange
-      initAuth: async () => {
-        if (!hasSupabase || get()._authInited) return
-        set({ _authInited: true })
-        // onAuthChange — только выход (вход/токены обрабатываем явными
-        // вызовами bootstrap, чтобы не было параллельных гонок)
-        onAuthChange((event) => {
-          if (event === 'SIGNED_OUT') {
-            set({ authUserId: null, needOnboarding: false, companyId: null, companyName: null, cloudReady: false })
-          }
-        })
-        // переход по ссылке сброса пароля → экран ввода нового (без bootstrap)
-        if (await checkRecovery()) {
-          set({ recoveryMode: true })
-          return
-        }
-        // восстановление сессии при загрузке
-        const s = await getCloudSession()
-        if (s) get().bootstrapCloud()
-      },
-      bootstrapCloud: async (sessionArg, opts = {}) => {
-        if (!hasSupabase) return
-        // во время онбординга (создания компании) фоновые вызовы от
-        // onAuthStateChange пропускаем — иначе перезаписывают результат
-        if (get()._creating && !opts.fromOnboarding) return
-        // мьютекс: не выполнять параллельно (иначе устаревший вызов
-        // перезаписывает результат свежего и сбрасывает authUserId)
-        if (get()._bootBusy) {
-          await new Promise((res) => {
-            const i = setInterval(() => {
-              if (!get()._bootBusy) {
-                clearInterval(i)
-                res()
-              }
-            }, 60)
-          })
-        }
-        set({ _bootBusy: true })
-        try {
-          // сессию берём свежую внутри мьютекса (а не из аргумента —
-          // он мог устареть, пока ждали освобождения)
-          const session = await getCloudSession()
-          if (!session) {
-            set({ authUserId: null, cloudReady: false, needOnboarding: false, companyId: null })
-            return
-          }
-          let membership = await getMembership()
-          if (!membership) {
-            // вдруг пользователь приглашён в компанию → привязать
-            const invitedCompany = await acceptInvitation()
-            if (invitedCompany) membership = await getMembership()
-          }
-          if (!membership) {
-            // пользователь без компании → онбординг (создать свою)
-            set({ authUserId: null, needOnboarding: true, cloudReady: false })
-            return
-          }
-          const companyId = membership.company_id
-          // cloudLoadMerged: сначала досылает локальную очередь outbox, потом
-          // читает сервер; недоставленное накладывает поверх (см. cloud.js)
-          let data = await cloudLoadMerged()
-          if (!data) {
-            const seed = remapSeedForCompany(makeSeed(), companyId)
-            await cloudSeed(seed, companyId)
-            data = await cloudLoadMerged()
-          }
-          // Заказы из облака до модели резервирования приходят без stockConsumed
-          // (в т.ч. пока не применён reservation_migration.sql) — выводим флаг из
-          // статуса, иначе отгруженный заказ спишется повторно, а отмена не
-          // вернёт остаток. Остаток здесь НЕ трогаем: разовый возврат для старых
-          // открытых заказов делает серверная миграция (см. supabase/*.sql).
-          if (data.orders) {
-            data.orders = data.orders.map((o) =>
-              o.stockConsumed != null
-                ? o
-                : { ...o, stockConsumed: stockConsumedFromStatus(o.status) },
-            )
-          }
-          // PIN не приходит из облака (LOCAL_ONLY_FIELDS в cloud.js) — тянем
-          // локальный по id сотрудника, иначе после перезагрузки все PIN
-          // обнулятся, а на другом устройстве сотрудник просто задаст свой.
-          const localPin = new Map(
-            (get().employees || []).map((e) => [e.id, e.pin || '']),
-          )
-          let employees = (data.employees || []).map((e) => ({
-            ...e,
-            pin: localPin.get(e.id) ?? '',
-          }))
-          data.employees = employees
-          let me = employees.find((e) => e.authUid === session.user.id)
-          if (!me) {
-            me = {
-              id: uid('e'),
-              name: membership.name || session.user.email?.split('@')[0] || 'Сотрудник',
-              role: membership.role || 'admin',
-              authUid: session.user.id,
-              active: true,
-              pin: '',
-            }
-            employees = [...employees, me]
-            data.employees = employees
-            // заливаем сразу: autosync стартует позже и пропустил бы нового сотрудника,
-            // из-за чего при каждом входе создавался бы дубликат с новым id.
-            // Не валим bootstrap, если RLS отклонит (тогда просто синхронизируется позже).
-            try {
-              await cloudUpsert('employees', me, companyId)
-            } catch (e) {
-              console.warn('Не удалось сохранить карточку сотрудника:', e?.message || e)
-            }
-          }
-          // Настройки: серверные значения поверх локальных, но локальные
-          // ключи, которых нет в облаке (aiKey и пр.), сохраняем.
-          if (data.settings) data.settings = { ...get().settings, ...data.settings }
-          // Применение серверных данных не должно эхом уехать обратно в outbox
-          pauseSync()
-          try {
-            set({
-              ...data,
-              companyId,
-              companyName: membership.companies?.name || 'Компания',
-              authUserId: me.id,
-              cloudReady: true,
-              needOnboarding: false,
-              cloudError: null,
-            })
-          } finally {
-            resumeSync(useStore)
-          }
-          attachSync(useStore)
-        } catch (e) {
-          set({ cloudError: e?.message || e?.code || String(e) })
-        } finally {
-          set({ _bootBusy: false })
-        }
-      },
-      createCompany: async (name, userName) => {
-        set({ _creating: true }) // блокируем фоновые bootstrap до завершения
-        try {
-          const r = await createCompanyCloud(name, userName)
-          if (r.ok) await get().bootstrapCloud(undefined, { fromOnboarding: true })
-          return r
-        } finally {
-          set({ _creating: false })
-        }
-      },
-      // вход/регистрация: bootstrap зовём явно один раз (onAuthChange его не триггерит)
-      signIn: async (email, password) => {
-        const r = await cloudSignIn(email, password)
-        if (r.ok) await get().bootstrapCloud()
-        return r
-      },
-      signUp: async (email, password, name) => {
-        const r = await cloudSignUp(email, password, name)
-        if (r.ok && !r.needConfirm) await get().bootstrapCloud()
-        return r
-      },
-      cloudLogout: async () => {
-        await cloudSignOut()
-        set({ authUserId: null, cloudReady: false, needOnboarding: false, companyId: null, companyName: null })
-      },
-      // Завершить сброс пароля: задать новый и войти в приложение
-      completePasswordReset: async (newPassword) => {
-        const r = await changePassword(newPassword)
-        if (r.ok) {
-          set({ recoveryMode: false })
-          await get().bootstrapCloud()
-        }
-        return r
-      },
+      // ── Облако (Supabase, мультитенант) — см. slices/cloudSlice.js ──
+      ...createCloudSlice(set, get),
 
       // ── Аудит / лог действий ─────────────────────────────────
       logAction: (title, opts = {}) =>
@@ -910,54 +713,8 @@ export const useStore = create(
           ),
         })),
 
-      // ── Сотрудники / роли ────────────────────────────────────
-      // PIN хэшируется на клиенте (см. lib/crypto.js) и в облако не уходит
-      // (см. LOCAL_ONLY_FIELDS в lib/cloud.js) — только в локальный persist.
-      addEmployee: async (e) => {
-        const pinHash = e.pin ? await hashPin(e.pin) : ''
-        set((s) => ({
-          employees: [
-            ...s.employees,
-            { id: uid('e'), active: true, role: 'stock', ...e, pin: pinHash },
-          ],
-        }))
-      },
-      updateEmployee: async (id, patch) => {
-        const next = { ...patch }
-        if ('pin' in next) next.pin = next.pin ? await hashPin(next.pin) : ''
-        set((s) => ({
-          employees: s.employees.map((e) => (e.id === id ? { ...e, ...next } : e)),
-        }))
-      },
-      removeEmployee: (id) =>
-        set((s) => ({
-          employees: s.employees.filter((e) => e.id !== id),
-          authUserId: s.authUserId === id ? null : s.authUserId,
-        })),
-      // Авторизация по PIN. Сравнение через verifyPin, чтобы понимать и
-      // хэш (актуальный формат), и открытый PIN (демо-seed и старые карточки
-      // до миграции). При успехе с legacy-значением — лениво пересохраняем
-      // хэш, чтобы открытый PIN не остался в localStorage.
-      login: async (id, pin) => {
-        const e = get().employees.find((x) => x.id === id)
-        if (!e) return { ok: false, error: 'Сотрудник не найден' }
-        if (!e.active) return { ok: false, error: 'Учётная запись отключена' }
-        const v = await verifyPin(pin, e.pin)
-        if (!v.ok) return { ok: false, error: 'Неверный PIN' }
-        if (v.legacy) {
-          const h = await hashPin(pin)
-          set((s) => ({
-            employees: s.employees.map((x) => (x.id === id ? { ...x, pin: h } : x)),
-          }))
-        }
-        set({ authUserId: e.id })
-        get().logAction('Вход в систему', { section: 'Авторизация', type: 'login' })
-        return { ok: true }
-      },
-      logout: () => {
-        get().logAction('Выход из системы', { section: 'Авторизация', type: 'logout' })
-        set({ authUserId: null })
-      },
+      // ── Сотрудники / роли + PIN — см. slices/hrSlice.js ─────
+      ...createHrSlice(set, get),
 
       // ── Настройки / прочее ───────────────────────────────────
       updateSettings: (patch) =>
@@ -967,105 +724,16 @@ export const useStore = create(
     {
       name: 'sklad.db',
       version: 8,
-      // не сохраняем runtime-флаги облака (иначе после reload не переинициализируется)
-      partialize: (state) => {
-        const rest = { ...state }
-        for (const k of ['_authInited', '_bootBusy', '_creating', 'cloudReady', 'needOnboarding', 'recoveryMode', 'cloudError', 'syncPending', 'syncState', 'syncError'])
-          delete rest[k]
-        return rest
-      },
-      migrate: (state, version) => {
-        if (!state) return state
-        if (version < 2) {
-          // досыпаем поля авторизации/операций к ранее сохранённым данным
-          state.employees = makeSeed().employees
-          state.authUserId = null
-          state.movements = state.movements || []
-          delete state.currentUserId
-        }
-        if (version < 3) {
-          // аудит, смены, поля маркировки/веса
-          state.audit = state.audit || []
-          state.shifts = state.shifts?.length ? state.shifts : makeSeed().shifts
-          state.activeShiftId = state.activeShiftId || null
-          const seedById = Object.fromEntries(
-            makeSeed().products.map((p) => [p.id, p]),
-          )
-          state.products = (state.products || []).map((p) => ({
-            weighted: false,
-            marked: false,
-            codes: [],
-            plu: seedById[p.id]?.plu,
-            ...p,
-          }))
-        }
-        if (version < 4) {
-          // категории цен
-          const seed = makeSeed()
-          state.priceTypes = state.priceTypes?.length ? state.priceTypes : seed.priceTypes
-          const pts = state.priceTypes
-          const defId = pts.find((t) => t.default)?.id || pts[0]?.id
-          const seedPr = Object.fromEntries(seed.products.map((p) => [p.sku, p.prices]))
-          state.products = (state.products || []).map((p) => ({
-            ...p,
-            prices:
-              p.prices ||
-              seedPr[p.sku] ||
-              Object.fromEntries(pts.map((t) => [t.id, p.price || 0])),
-          }))
-          state.customers = (state.customers || []).map((c) => ({
-            ...c,
-            priceTypeId: c.priceTypeId || defId,
-          }))
-        }
-        if (version < 5) {
-          // несколько складов
-          const seed = makeSeed()
-          state.warehouses = state.warehouses?.length ? state.warehouses : seed.warehouses
-          state.activeWarehouseId = state.activeWarehouseId || seed.activeWarehouseId
-          // ячейкам и товарам — склад по умолчанию (основной)
-          const wh1 = state.warehouses[0]?.id || 'wh1'
-          if (!state.cells?.some((c) => c.warehouseId)) {
-            state.cells = (state.cells || []).map((c) => ({
-              ...c,
-              code: c.code || c.id,
-              warehouseId: wh1,
-            }))
-            // подмешиваем демо-ячейки второго склада
-            const extra = seed.cells.filter((c) => c.warehouseId !== wh1)
-            state.cells = [...state.cells, ...extra]
-          }
-          state.products = (state.products || []).map((p) => ({
-            ...p,
-            warehouseId: p.warehouseId || wh1,
-          }))
-        }
-        if (version < 6) {
-          // баланс/долг контрагентов
-          const seedC = Object.fromEntries(makeSeed().customers.map((c) => [c.id, c.balance]))
-          state.customers = (state.customers || []).map((c) => ({
-            ...c,
-            balance: c.balance ?? seedC[c.id] ?? 0,
-          }))
-        }
-        if (version < 7) {
-          // реестр документов
-          state.documents = state.documents || []
-        }
-        if (version < 8) {
-          // Резерв остатков. Раньше заказ списывал остаток при создании; теперь
-          // открытый заказ лишь резервирует, списание — при отгрузке. Открытым
-          // заказам возвращаем остаток и коды маркировки (их удержит резерв),
-          // отгруженным ставим stockConsumed=true. См. migrateReservationV8.
-          const migrated = migrateReservationV8(state)
-          state.orders = migrated.orders
-          state.products = migrated.products
-        }
-        return state
-      },
+      partialize: persistPartialize,
+      migrate: persistMigrate,
     },
   ),
 )
+
+// Связываем облачный slice с готовым useStore — attachSync/resumeSync
+// принимают ссылку на этот объект. До bindStore() cloud-actions не могут
+// узнать про useStore (при их описании его ещё не существовало).
+bindStore(useStore)
 
 // Удобные хуки-селекторы
 export const useProducts = () => useStore((s) => s.products)
