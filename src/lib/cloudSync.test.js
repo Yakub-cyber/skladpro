@@ -202,4 +202,79 @@ describe('applyPendingToData — чистая функция оверлея', ()
     expect(data.products.find((p) => p.id === 'p1').stock).toBe(100)
     expect(data.settings).toEqual({ company: 'Сервер', currency: '₽' })
   })
+
+  it('сравнение по updatedAt: свежий сервер побеждает устаревший локальный', () => {
+    const data = {
+      products: [{ id: 'p1', stock: 200, updatedAt: '2026-07-13T12:00:00Z' }],
+    }
+    applyPendingToData(data, [
+      up('p1', { stock: 5, updatedAt: '2026-07-13T10:00:00Z' }), // старее сервера
+    ])
+    expect(data.products[0].stock).toBe(200) // серверное сохранилось
+  })
+
+  it('сравнение по updatedAt: свежий локальный побеждает устаревший сервер', () => {
+    const data = {
+      products: [{ id: 'p1', stock: 200, updatedAt: '2026-07-13T10:00:00Z' }],
+    }
+    applyPendingToData(data, [
+      up('p1', { stock: 5, updatedAt: '2026-07-13T12:00:00Z' }), // новее сервера
+    ])
+    expect(data.products[0].stock).toBe(5) // локальное применилось
+  })
+
+  it('без updatedAt (миграция не применена) — сохраняется прежнее поведение', () => {
+    const data = { products: [{ id: 'p1', stock: 200 }] }
+    applyPendingToData(data, [up('p1', { stock: 5 })])
+    expect(data.products[0].stock).toBe(5) // локальное поверх — как раньше
+  })
+
+  it('delete всегда применяется, даже если серверная запись свежее', () => {
+    const data = {
+      products: [{ id: 'p1', updatedAt: '2026-07-13T12:00:00Z' }],
+    }
+    applyPendingToData(data, [{ op: 'delete', key: 'products', id: 'p1', companyId: 'c1' }])
+    expect(data.products).toHaveLength(0)
+  })
+})
+
+describe('attachSync штампует updatedAt при отправке', () => {
+  it('upsert в очередь получает updatedAt (ISO), settings — не получает', async () => {
+    const { attachSync } = await import('./cloud.js')
+    // мини-стор с subscribe API как у zustand
+    const listeners = new Set()
+    let state = {
+      companyId: 'c1',
+      products: [{ id: 'p1', name: 'A' }],
+      settings: { company: 'X' },
+    }
+    for (const k of [
+      'priceTypes','warehouses','cells','customers','suppliers',
+      'employees','orders','invoices','documents','movements','shifts','audit',
+    ]) state[k] = []
+    const store = {
+      getState: () => state,
+      setState: (patch) => {
+        state = { ...state, ...(typeof patch === 'function' ? patch(state) : patch) }
+      },
+      subscribe: (cb) => {
+        listeners.add(cb)
+        return () => listeners.delete(cb)
+      },
+    }
+    syncOutbox.reset()
+    h.impl = makeSupabase() // тихий фейк, чтобы очередь не отправилась мгновенно
+    attachSync(store)
+    // изменение
+    state = { ...state, products: [{ id: 'p1', name: 'A2' }] }
+    for (const cb of listeners) cb(state)
+    const items = syncOutbox.items()
+    const upsert = items.find((it) => it.op === 'upsert' && it.key === 'products')
+    expect(upsert).toBeTruthy()
+    expect(upsert.obj.updatedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/)
+    // settings, если и есть, — без updatedAt (там серверный триггер)
+    const s = items.find((it) => it.key === 'settings')
+    if (s) expect(s.obj.updatedAt).toBeUndefined()
+    syncOutbox.reset()
+  })
 })

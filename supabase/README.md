@@ -27,7 +27,8 @@
 | 5 | `settings_sync.sql`        | Облачные настройки компании (`settings` + RLS + `updated_at`-триггер) |
 | 6 | `saas_invites.sql`         | Приглашения сотрудников (`invitations`, `accept_invitation()`)       |
 | 7 | `add_assigned_to.sql`      | Колонка `orders.assigned_to` (курьер)                                |
-| 8 | `reservation_migration.sql`| Колонка `orders.stock_consumed` + разовый возврат остатка открытым заказам |
+| 8 | `updated_at.sql`           | Колонка `updated_at` на всех таблицах данных (для разрешения конфликтов синка) |
+| 9 | `reservation_migration.sql`| Колонка `orders.stock_consumed` + разовый возврат остатка открытым заказам |
 
 Дополнительные фиксы (уже включены в файлы выше, но оставлены на случай, если
 база создана давно и нужно точечно применить):

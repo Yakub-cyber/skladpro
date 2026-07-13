@@ -482,7 +482,28 @@ grant execute on function public.accept_invitation() to authenticated;
 alter table public.orders add column if not exists assigned_to text;
 
 -- ┌──────────────────────────────────────────────────────────────────────────┐
--- │ 8. reservation_migration.sql — модель резервирования остатков            │
+-- │ 8. updated_at на таблицах данных — для разрешения конфликтов синка       │
+-- └──────────────────────────────────────────────────────────────────────────┘
+
+do $$
+declare t text;
+begin
+  foreach t in array array[
+    'price_types','warehouses','cells','products','customers','suppliers',
+    'employees','orders','invoices','documents','movements','shifts','audit'
+  ]
+  loop
+    execute format(
+      'alter table public.%I add column if not exists updated_at timestamptz default now()',
+      t
+    );
+    execute format(
+      'create index if not exists idx_%I_updated on public.%I(updated_at)', t, t);
+  end loop;
+end $$;
+
+-- ┌──────────────────────────────────────────────────────────────────────────┐
+-- │ 9. reservation_migration.sql — модель резервирования остатков            │
 -- └──────────────────────────────────────────────────────────────────────────┘
 
 -- Колонка-флаг (без default, чтобы NULL отмечал «ещё не мигрирован»).

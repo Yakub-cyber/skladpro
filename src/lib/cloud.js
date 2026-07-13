@@ -307,6 +307,13 @@ export function attachSync(useStore) {
         obj: settingsForCloud(state.settings),
         companyId,
       })
+    // Штампуем updatedAt на всех upsert-ах (кроме settings, там серверный
+    // триггер). Нужно для merge-стратегии: устаревший локальный upsert не
+    // должен затирать более свежий серверный при следующем bootstrap.
+    const nowIso = new Date().toISOString()
+    for (const it of batch)
+      if (it.op === 'upsert' && it.key !== 'settings')
+        it.obj = { ...it.obj, updatedAt: nowIso }
     if (!batch.length) return
     // Снапшот двигаем только после того, как изменения надёжно захвачены
     // персистентной очередью; иначе следующий diff захватит их повторно
@@ -331,6 +338,23 @@ export async function cloudLoadMerged() {
   return data
 }
 
+// Локальное побеждает только если оно свежее серверного (сравнение по
+// updatedAt). Без updated_at (миграция не применена или у объекта нет метки)
+// — сохраняем прежнее поведение: локальное поверх серверного. Это не защита
+// от гонок on-write (два клиента одновременно шлют upsert — last-write-wins
+// по времени поступления на сервер), а страховка от того, что перезагрузка
+// вкладки с несинхронизированным устаревшим локальным затрёт свежие данные.
+const parseTs = (v) => {
+  const t = Date.parse(v || '')
+  return Number.isNaN(t) ? -Infinity : t
+}
+const localWins = (pendingObj, serverObj) => {
+  const p = pendingObj?.updatedAt
+  const s = serverObj?.updatedAt
+  if (!p || !s) return true // без меток — прежняя семантика
+  return parseTs(p) >= parseTs(s)
+}
+
 export function applyPendingToData(data, pending) {
   for (const it of pending) {
     if (it.key === 'settings') {
@@ -341,9 +365,11 @@ export function applyPendingToData(data, pending) {
     if (!Array.isArray(arr)) continue
     const i = arr.findIndex((r) => r.id === it.id)
     if (it.op === 'delete') {
+      // Удаление всегда применяем: реверта нет, а сервер удалит на следующем flush.
       if (i >= 0) arr.splice(i, 1)
-    } else if (i >= 0) arr[i] = it.obj
-    else arr.push(it.obj)
+    } else if (i >= 0) {
+      if (localWins(it.obj, arr[i])) arr[i] = it.obj
+    } else arr.push(it.obj)
   }
   return data
 }
