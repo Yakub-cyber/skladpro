@@ -44,6 +44,10 @@ function AuthGate({ children }) {
 }
 
 export default function App() {
+  // Подписка на settings.currency: при её смене корневой компонент
+  // ререндерится, а значит вся ветка страниц — и money() внутри format.js
+  // прочитает свежее значение из useStore.
+  useStore((s) => s.settings?.currency)
   return (
     <Routes>
       {/* Публичная страница трекинга — без авторизации (для клиента) */}

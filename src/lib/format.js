@@ -1,12 +1,21 @@
-// Форматирование под РФ-локаль. Валюта по умолчанию — рубль.
+// Форматирование под РФ-локаль. Валюта берётся из settings.currency.
+//
+// money() без аргумента currency читает активную валюту из useStore напрямую,
+// чтобы не протаскивать её в ~50 вызовов по всему UI. Компоненты уже
+// подписаны на useStore для других полей и ререндерятся при смене currency
+// в Настройках. Модульное состояние тут не подходит: Vite dev-режим
+// резолвит `./lib/format` и `/src/lib/format.js` как РАЗНЫЕ ESM-модули
+// (баг Vite dev), и модульная переменная-синглтон рассыпается.
+import { useStore } from '../store/useStore'
 
-export const money = (v, currency = '₽') => {
+export const money = (v, currency) => {
   const n = Number(v) || 0
+  const c = currency ?? useStore.getState().settings?.currency ?? '₽'
   return (
     new Intl.NumberFormat('ru-RU', {
       minimumFractionDigits: 0,
       maximumFractionDigits: 2,
-    }).format(n) + ' ' + currency
+    }).format(n) + ' ' + c
   )
 }
 
