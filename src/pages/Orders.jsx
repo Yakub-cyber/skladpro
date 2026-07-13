@@ -38,7 +38,7 @@ import {
   priceFor,
 } from '../lib/constants'
 import { buildPickRoute } from '../lib/ai'
-import { printInvoiceBill } from '../lib/print'
+import { printInvoiceBill, printInvoiceTORG12, printInvoiceUPD } from '../lib/print'
 import { cellById } from '../store/seed'
 
 const FILTERS = [
@@ -298,18 +298,11 @@ function OrderDetail({ order }) {
           <Button variant="soft" icon={copied ? Check : Link2} onClick={copyLink}>
             {copied ? 'Скопировано' : 'Ссылка клиенту'}
           </Button>
-          <Button
-            variant="soft"
-            icon={Printer}
-            onClick={() =>
-              printInvoiceBill(order, {
-                settings,
-                customer: customers.find((c) => c.id === order.customerId) || null,
-              })
-            }
-          >
-            Счёт
-          </Button>
+          <PrintMenu
+            order={order}
+            settings={settings}
+            customer={customers.find((c) => c.id === order.customerId) || null}
+          />
           {order.status !== 'cancelled' && order.status !== 'delivered' && (
             <Button
               variant="ghost"
@@ -455,6 +448,48 @@ function OrderDetail({ order }) {
           )}
         </div>
       </Card>
+    </div>
+  )
+}
+
+// Меню печатных форм: Счёт / ТОРГ-12 / УПД. Компактный выпадающий список
+// вместо трёх кнопок в ряд — не разъедает панель действий.
+function PrintMenu({ order, settings, customer }) {
+  const [open, setOpen] = useState(false)
+  const forms = [
+    { key: 'bill', label: 'Счёт на оплату', fn: printInvoiceBill },
+    { key: 'torg12', label: 'ТОРГ-12 · товарная накладная', fn: printInvoiceTORG12 },
+    { key: 'upd', label: 'УПД · передаточный документ', fn: printInvoiceUPD },
+  ]
+  const emit = (fn) => {
+    setOpen(false)
+    fn(order, { settings, customer })
+  }
+  return (
+    <div className="relative">
+      <Button variant="soft" icon={Printer} onClick={() => setOpen((v) => !v)}>
+        Печать
+      </Button>
+      {open && (
+        <>
+          <div
+            className="fixed inset-0 z-10"
+            onClick={() => setOpen(false)}
+            aria-hidden
+          />
+          <div className="absolute right-0 mt-1 z-20 rounded-xl bg-surface border border-line shadow-lg min-w-[240px] p-1.5">
+            {forms.map((f) => (
+              <button
+                key={f.key}
+                className="w-full text-left px-3 py-2 rounded-lg text-[13px] hover:bg-surface-2 transition"
+                onClick={() => emit(f.fn)}
+              >
+                {f.label}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
     </div>
   )
 }
