@@ -143,10 +143,13 @@ function PinLogin() {
 
   const me = employees.find((e) => e.id === sel)
 
-  // авто-проверка при вводе 4 цифр
+  // авто-проверка при вводе 4 цифр (login асинхронный: хэшируем PIN)
   useEffect(() => {
-    if (sel && pin.length === 4) {
-      const res = login(sel, pin)
+    if (!(sel && pin.length === 4)) return
+    let cancelled = false
+    ;(async () => {
+      const res = await login(sel, pin)
+      if (cancelled) return
       if (!res.ok) {
         setError(res.error)
         setShake(true)
@@ -156,6 +159,9 @@ function PinLogin() {
         }, 500)
       }
       // при успехе AuthGate сам отрисует приложение
+    })()
+    return () => {
+      cancelled = true
     }
   }, [pin, sel, login])
 

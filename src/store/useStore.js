@@ -6,6 +6,7 @@ import { nextStatus, statusInfo, docTypeInfo } from '../lib/constants'
 import { applyDocToState } from '../lib/posting'
 import { applyOrderStock, migrateReservationV8, stockConsumedFromStatus } from '../lib/orders'
 import { hasSupabase } from '../lib/supabase'
+import { hashPin, verifyPin } from '../lib/crypto'
 import {
   cloudLoadMerged,
   cloudSeed,
@@ -126,7 +127,17 @@ export const useStore = create(
                 : { ...o, stockConsumed: stockConsumedFromStatus(o.status) },
             )
           }
-          let employees = data.employees || []
+          // PIN не приходит из облака (LOCAL_ONLY_FIELDS в cloud.js) — тянем
+          // локальный по id сотрудника, иначе после перезагрузки все PIN
+          // обнулятся, а на другом устройстве сотрудник просто задаст свой.
+          const localPin = new Map(
+            (get().employees || []).map((e) => [e.id, e.pin || '']),
+          )
+          let employees = (data.employees || []).map((e) => ({
+            ...e,
+            pin: localPin.get(e.id) ?? '',
+          }))
+          data.employees = employees
           let me = employees.find((e) => e.authUid === session.user.id)
           if (!me) {
             me = {
@@ -860,25 +871,45 @@ export const useStore = create(
         })),
 
       // ── Сотрудники / роли ────────────────────────────────────
-      addEmployee: (e) =>
+      // PIN хэшируется на клиенте (см. lib/crypto.js) и в облако не уходит
+      // (см. LOCAL_ONLY_FIELDS в lib/cloud.js) — только в локальный persist.
+      addEmployee: async (e) => {
+        const pinHash = e.pin ? await hashPin(e.pin) : ''
         set((s) => ({
-          employees: [...s.employees, { id: uid('e'), active: true, role: 'stock', ...e }],
-        })),
-      updateEmployee: (id, patch) =>
+          employees: [
+            ...s.employees,
+            { id: uid('e'), active: true, role: 'stock', ...e, pin: pinHash },
+          ],
+        }))
+      },
+      updateEmployee: async (id, patch) => {
+        const next = { ...patch }
+        if ('pin' in next) next.pin = next.pin ? await hashPin(next.pin) : ''
         set((s) => ({
-          employees: s.employees.map((e) => (e.id === id ? { ...e, ...patch } : e)),
-        })),
+          employees: s.employees.map((e) => (e.id === id ? { ...e, ...next } : e)),
+        }))
+      },
       removeEmployee: (id) =>
         set((s) => ({
           employees: s.employees.filter((e) => e.id !== id),
           authUserId: s.authUserId === id ? null : s.authUserId,
         })),
-      // Авторизация по PIN (клиентская; под реальный бэкенд — заменить на API)
-      login: (id, pin) => {
+      // Авторизация по PIN. Сравнение через verifyPin, чтобы понимать и
+      // хэш (актуальный формат), и открытый PIN (демо-seed и старые карточки
+      // до миграции). При успехе с legacy-значением — лениво пересохраняем
+      // хэш, чтобы открытый PIN не остался в localStorage.
+      login: async (id, pin) => {
         const e = get().employees.find((x) => x.id === id)
         if (!e) return { ok: false, error: 'Сотрудник не найден' }
         if (!e.active) return { ok: false, error: 'Учётная запись отключена' }
-        if (String(e.pin) !== String(pin)) return { ok: false, error: 'Неверный PIN' }
+        const v = await verifyPin(pin, e.pin)
+        if (!v.ok) return { ok: false, error: 'Неверный PIN' }
+        if (v.legacy) {
+          const h = await hashPin(pin)
+          set((s) => ({
+            employees: s.employees.map((x) => (x.id === id ? { ...x, pin: h } : x)),
+          }))
+        }
         set({ authUserId: e.id })
         get().logAction('Вход в систему', { section: 'Авторизация', type: 'login' })
         return { ok: true }

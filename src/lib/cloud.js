@@ -33,10 +33,20 @@ const isMissingTable = (e) => {
   return /PGRST205|42P01|does not exist|find the table|schema cache/i.test(m)
 }
 
+// Поля, которые НЕ уходят в облако и не приходят обратно из него.
+// PIN сотрудника — секрет устройства (4 цифры, брутфорсится тривиально):
+// хранится только локально в захэшированном виде, между устройствами не
+// синкается. Второй пользователь на другом устройстве задаёт свой PIN сам.
+const LOCAL_ONLY_FIELDS = {
+  employees: new Set(['pin']),
+}
+
 function toRow(obj, cfg) {
+  const drop = LOCAL_ONLY_FIELDS[cfg.key]
   const out = {}
   for (const [k, v] of Object.entries(obj)) {
     if (v === undefined) continue
+    if (drop && drop.has(k)) continue
     const col = cfg.rename?.[k] || toSnake(k)
     out[col] = v
   }
@@ -46,10 +56,12 @@ function fromRow(row, cfg) {
   const rev = cfg.rename
     ? Object.fromEntries(Object.entries(cfg.rename).map(([a, b]) => [b, a]))
     : {}
+  const drop = LOCAL_ONLY_FIELDS[cfg.key]
   const out = {}
   for (const [k, v] of Object.entries(row)) {
     if (v === null) continue
     const key = rev[k] || toCamel(k)
+    if (drop && drop.has(key)) continue
     out[key] = v
   }
   return out
