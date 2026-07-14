@@ -26,6 +26,7 @@ import {
   Barcode,
   RefreshCw,
   ScanLine,
+  Camera,
 } from 'lucide-react'
 import { compressImage } from '../lib/image'
 import {
@@ -158,8 +159,68 @@ export default function Products() {
         </div>
       </div>
 
-      <Card className="overflow-hidden">
-        <div className="overflow-x-auto">
+      {/* Мобильные карточки — без внутреннего горизонтального скролла таблицы.
+          Крупное фото/иконка слева, компактная сводка справа. */}
+      <div className="lg:hidden space-y-2">
+        {shown.map((p) => {
+          const c = catInfo(p.category)
+          const Icon = CAT_ICON[c.icon] || Package
+          return (
+            <button
+              key={p.id}
+              onClick={() => setEdit(p)}
+              className="w-full card p-3 flex items-center gap-3 text-left hover:border-brand/40 transition"
+            >
+              {p.image ? (
+                <img
+                  src={p.image}
+                  alt=""
+                  className="h-14 w-14 rounded-xl object-cover shrink-0"
+                />
+              ) : (
+                <div
+                  className="h-14 w-14 rounded-xl grid place-items-center shrink-0"
+                  style={{
+                    background: `color-mix(in srgb, ${c.color} 16%, transparent)`,
+                    color: c.color,
+                  }}
+                >
+                  <Icon size={22} />
+                </div>
+              )}
+              <div className="min-w-0 flex-1">
+                <div className="font-medium text-[14px] leading-snug truncate flex items-center gap-1.5">
+                  {p.name}
+                  {p.weighted && <Scale size={12} className="text-info shrink-0" />}
+                  {p.marked && <ShieldCheck size={12} className="text-ok shrink-0" />}
+                </div>
+                <div className="text-[12px] text-muted truncate mt-0.5">
+                  {p.sku} · <span style={{ color: c.color }}>{p.category}</span> ·{' '}
+                  <MapPin size={11} className="inline -mt-0.5" /> {p.cell}
+                </div>
+                <div className="flex items-center justify-between mt-1.5">
+                  <span className="font-semibold text-[15px] tabular-nums">{money(p.price)}</span>
+                  <Badge tone={stockTone(p)}>
+                    {num(p.stock)} {p.unit}
+                  </Badge>
+                </div>
+                {reserved[p.id] > 0 && (
+                  <div className="text-[11px] text-muted mt-0.5 tabular-nums">
+                    резерв {num(reserved[p.id])} · дост. {num(p.stock - reserved[p.id])}
+                  </div>
+                )}
+              </div>
+            </button>
+          )
+        })}
+        {list.length === 0 && (
+          <Empty icon={Package} title="Ничего не найдено" text="Измените запрос или фильтр." />
+        )}
+      </div>
+
+      {/* Десктопная таблица */}
+      <Card className="overflow-hidden hidden lg:block">
+        <div>
           <table className="w-full text-sm">
             <thead>
               <tr className="text-muted text-[12px] text-left border-b border-line bg-surface-2/40">
@@ -249,20 +310,19 @@ export default function Products() {
             <Empty icon={Package} title="Ничего не найдено" text="Измените запрос или фильтр." />
           )}
         </div>
-        {visible < list.length && (
-          <div className="border-t border-line p-3 flex items-center justify-between gap-3">
-            <div className="text-[12px] text-muted">
-              Показано {shown.length} из {list.length}
-            </div>
-            <Button
-              variant="soft"
-              onClick={() => setVisible((v) => v + PAGE_SIZE)}
-            >
-              Показать ещё {Math.min(PAGE_SIZE, list.length - visible)}
-            </Button>
-          </div>
-        )}
       </Card>
+
+      {/* Пагинация — общая для мобильных карточек и десктопной таблицы. */}
+      {visible < list.length && (
+        <div className="mt-3 flex items-center justify-between gap-3">
+          <div className="text-[12px] text-muted">
+            Показано {shown.length} из {list.length}
+          </div>
+          <Button variant="soft" onClick={() => setVisible((v) => v + PAGE_SIZE)}>
+            Показать ещё {Math.min(PAGE_SIZE, list.length - visible)}
+          </Button>
+        </div>
+      )}
 
       {edit && (
         <ProductModal
@@ -278,41 +338,82 @@ export default function Products() {
 
 function ImageField({ value, onChange }) {
   const [busy, setBusy] = useState(false)
-  const onFile = async (e) => {
-    const file = e.target.files?.[0]
-    if (!file) return
+  const [drag, setDrag] = useState(false)
+  const handleFile = async (file) => {
+    if (!file || !file.type?.startsWith('image/')) return
     setBusy(true)
     try {
       const dataUrl = await compressImage(file)
       onChange(dataUrl)
     } catch {
-      // игнорируем
+      /* игнор — просто не заменим */
     }
     setBusy(false)
+  }
+  const onFile = async (e) => {
+    await handleFile(e.target.files?.[0])
     e.target.value = ''
   }
+  const onDrop = async (e) => {
+    e.preventDefault()
+    setDrag(false)
+    await handleFile(e.dataTransfer.files?.[0])
+  }
   return (
-    <div className="flex items-center gap-3">
-      <div className="h-20 w-20 rounded-xl bg-surface-2 border border-line overflow-hidden grid place-items-center shrink-0">
+    <div>
+      {/* Крупное превью на всю ширину — на мобиле удобнее видеть, что выбрал.
+          Ниже — две кнопки: снять с камеры (мобиль) и выбрать файл. */}
+      <div
+        onDragOver={(e) => {
+          e.preventDefault()
+          setDrag(true)
+        }}
+        onDragLeave={() => setDrag(false)}
+        onDrop={onDrop}
+        className={cx(
+          'relative aspect-square max-w-[240px] mx-auto sm:mx-0 rounded-xl border-2 border-dashed overflow-hidden grid place-items-center transition',
+          drag ? 'border-brand bg-brand-soft' : 'border-line bg-surface-2',
+        )}
+      >
         {value ? (
-          <img src={value} alt="" className="w-full h-full object-cover" />
+          <>
+            <img src={value} alt="" className="w-full h-full object-cover" />
+            <button
+              type="button"
+              onClick={() => onChange('')}
+              title="Убрать фото"
+              className="absolute top-1.5 right-1.5 h-8 w-8 rounded-full bg-black/60 text-white grid place-items-center hover:bg-bad"
+            >
+              <X size={16} />
+            </button>
+          </>
         ) : (
-          <ImagePlus size={24} className="text-muted" />
+          <div className="text-center text-muted px-3">
+            <ImagePlus size={32} className="mx-auto mb-1.5 opacity-60" />
+            <div className="text-[12px]">
+              {busy ? 'Обработка…' : 'Перетащите фото или выберите'}
+            </div>
+          </div>
         )}
       </div>
-      <div className="flex flex-col gap-1.5">
-        <label className="inline-flex items-center gap-2 h-9 px-3 rounded-lg bg-surface-2 hover:bg-surface-3 text-sm cursor-pointer w-fit">
-          <ImagePlus size={15} /> {busy ? 'Обработка…' : value ? 'Заменить фото' : 'Добавить фото'}
+
+      <div className="flex flex-wrap gap-2 mt-2">
+        <label className="flex-1 inline-flex items-center justify-center gap-2 h-10 px-3 rounded-lg bg-surface-2 hover:bg-surface-3 text-sm cursor-pointer">
+          <ImagePlus size={15} /> {value ? 'Заменить' : 'Загрузить'}
           <input type="file" accept="image/*" onChange={onFile} className="hidden" />
         </label>
-        {value && (
-          <button
-            onClick={() => onChange('')}
-            className="inline-flex items-center gap-1.5 text-[12px] text-muted hover:text-bad w-fit px-1"
-          >
-            <X size={13} /> Убрать
-          </button>
-        )}
+        {/* Мобильная кнопка «камера» — открывает системную камеру напрямую.
+            На десктопе тоже работает как обычный file picker с фильтром. */}
+        <label className="flex-1 inline-flex items-center justify-center gap-2 h-10 px-3 rounded-lg bg-surface-2 hover:bg-surface-3 text-sm cursor-pointer">
+          <Camera size={15} /> Снять
+          <input
+            type="file"
+            accept="image/*"
+            capture="environment"
+            onChange={onFile}
+            className="hidden"
+          />
+        </label>
       </div>
     </div>
   )

@@ -14,12 +14,14 @@ import {
 } from 'lucide-react'
 import {
   ResponsiveContainer,
-  AreaChart,
+  ComposedChart,
   Area,
+  Line,
   XAxis,
   YAxis,
   Tooltip,
   CartesianGrid,
+  Legend,
 } from 'recharts'
 import { Stat, Card, Section, StatusBadge, Badge, Progress, Button, cx } from '../components/ui'
 import { useStore } from '../store/useStore'
@@ -45,9 +47,29 @@ const PERIODS = [
   { key: 'year', label: 'Год' },
 ]
 
+// Метрики финансового графика. Выручка/себестоимость/прибыль — на левой
+// оси Y (одинаковый масштаб в рублях), средний чек — на правой (он на
+// пару порядков меньше суммарной выручки, слил бы с осью).
+const METRICS = [
+  { key: 'revenue', label: 'Выручка', color: 'var(--brand)', axis: 'left', fill: true },
+  { key: 'cost', label: 'Себестоимость', color: '#f97316', axis: 'left' },
+  { key: 'profit', label: 'Прибыль', color: '#10b981', axis: 'left' },
+  { key: 'avg', label: 'Средний чек', color: '#8b5cf6', axis: 'right' },
+]
+
 export default function Dashboard() {
   const { products, orders, customers } = useStore()
   const [period, setPeriod] = useState('month')
+  // Активные метрики графика (клик по чипу — тумблер). Default: все 4.
+  const [activeMetrics, setActiveMetrics] = useState(() => new Set(METRICS.map((x) => x.key)))
+  const toggleMetric = (key) =>
+    setActiveMetrics((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      // не даём выключить последнюю — иначе график пустой
+      return next.size ? next : new Set([key])
+    })
 
   const m = useMemo(() => {
     const active = orders.filter((o) =>
@@ -71,7 +93,14 @@ export default function Dashboard() {
     return { active, revenue, low, avg, top, maxQ }
   }, [products, orders])
 
-  const chart = useMemo(() => buildSeries(period, orders), [period, orders])
+  // Карта id→cost для оценки себестоимости продаж (COGS). Для точной
+  // FIFO-COGS нужно было бы фиксировать item.cost на отгрузке; пока
+  // прагматично — текущая средневзвешенная cost продукта.
+  const costMap = useMemo(
+    () => Object.fromEntries(products.map((p) => [p.id, Number(p.cost) || 0])),
+    [products],
+  )
+  const chart = useMemo(() => buildSeries(period, orders, costMap), [period, orders, costMap])
 
   const insights = useMemo(
     () => analyticsInsights({ products, orders }),
@@ -115,19 +144,20 @@ export default function Dashboard() {
       </div>
 
       <div className="grid lg:grid-cols-3 gap-5">
-        {/* График выручки */}
+        {/* Финансовый график: выручка/себестоимость/прибыль (левая ось) +
+            средний чек (правая ось). Метрики — тумблеры-чипы. */}
         <Section
           className="lg:col-span-2"
-          title="Выручка"
+          title="Финансы"
           subtitle={`${chart.periodLabel} · склад в закупке ${money(stockValue)}`}
           action={
-            <div className="flex gap-0.5 bg-surface-2 rounded-lg p-0.5">
+            <div className="flex gap-0.5 bg-surface-2 rounded-lg p-0.5 overflow-x-auto no-scrollbar">
               {PERIODS.map((p) => (
                 <button
                   key={p.key}
                   onClick={() => setPeriod(p.key)}
                   className={cx(
-                    'px-2.5 h-7 rounded-md text-[12px] font-medium transition',
+                    'px-2.5 h-7 rounded-md text-[12px] font-medium transition whitespace-nowrap',
                     period === p.key ? 'bg-brand text-brand-ink' : 'text-muted hover:text-ink',
                   )}
                 >
@@ -137,20 +167,41 @@ export default function Dashboard() {
             </div>
           }
         >
+          {/* Тумблеры метрик — цвет чипа = цвет линии. */}
+          <div className="flex flex-wrap gap-1.5 mb-3">
+            {METRICS.map((mm) => {
+              const active = activeMetrics.has(mm.key)
+              return (
+                <button
+                  key={mm.key}
+                  onClick={() => toggleMetric(mm.key)}
+                  className={cx(
+                    'inline-flex items-center gap-1.5 px-2.5 h-7 rounded-lg text-[12px] font-medium border transition',
+                    active
+                      ? 'bg-surface-2 border-line text-ink'
+                      : 'bg-transparent border-line text-muted hover:text-ink',
+                  )}
+                  style={active ? { boxShadow: `inset 0 -2px 0 ${mm.color}` } : undefined}
+                >
+                  <span
+                    className="inline-block h-2 w-2 rounded-full"
+                    style={{ background: mm.color, opacity: active ? 1 : 0.35 }}
+                  />
+                  {mm.label}
+                </button>
+              )
+            })}
+          </div>
           <div className="h-[260px] -ml-2">
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={chart.series} margin={{ top: 6, right: 8, bottom: 0, left: 0 }}>
+              <ComposedChart data={chart.series} margin={{ top: 6, right: 8, bottom: 0, left: 0 }}>
                 <defs>
                   <linearGradient id="rev" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="var(--brand)" stopOpacity={0.45} />
+                    <stop offset="0%" stopColor="var(--brand)" stopOpacity={0.35} />
                     <stop offset="100%" stopColor="var(--brand)" stopOpacity={0} />
                   </linearGradient>
                 </defs>
-                <CartesianGrid
-                  strokeDasharray="3 3"
-                  stroke="var(--border)"
-                  vertical={false}
-                />
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
                 <XAxis
                   dataKey="label"
                   tick={{ fill: 'var(--muted)', fontSize: 11 }}
@@ -160,21 +211,69 @@ export default function Dashboard() {
                   minTickGap={16}
                 />
                 <YAxis
+                  yAxisId="left"
                   tick={{ fill: 'var(--muted)', fontSize: 11 }}
                   axisLine={false}
                   tickLine={false}
                   width={48}
                   tickFormatter={(v) => (v >= 1000 ? `${Math.round(v / 1000)}к` : v)}
                 />
-                <Tooltip content={<ChartTip />} cursor={{ stroke: 'var(--brand)' }} />
-                <Area
-                  type="monotone"
-                  dataKey="v"
-                  stroke="var(--brand)"
-                  strokeWidth={2.5}
-                  fill="url(#rev)"
+                <YAxis
+                  yAxisId="right"
+                  orientation="right"
+                  tick={{ fill: 'var(--muted)', fontSize: 11 }}
+                  axisLine={false}
+                  tickLine={false}
+                  width={44}
+                  tickFormatter={(v) => (v >= 1000 ? `${Math.round(v / 1000)}к` : v)}
                 />
-              </AreaChart>
+                <Tooltip content={<ChartTip activeKeys={activeMetrics} />} cursor={{ stroke: 'var(--brand)', strokeOpacity: 0.35 }} />
+                {activeMetrics.has('revenue') && (
+                  <Area
+                    yAxisId="left"
+                    type="monotone"
+                    dataKey="revenue"
+                    name="Выручка"
+                    stroke="var(--brand)"
+                    strokeWidth={2.5}
+                    fill="url(#rev)"
+                  />
+                )}
+                {activeMetrics.has('cost') && (
+                  <Line
+                    yAxisId="left"
+                    type="monotone"
+                    dataKey="cost"
+                    name="Себестоимость"
+                    stroke="#f97316"
+                    strokeWidth={2}
+                    dot={false}
+                  />
+                )}
+                {activeMetrics.has('profit') && (
+                  <Line
+                    yAxisId="left"
+                    type="monotone"
+                    dataKey="profit"
+                    name="Прибыль"
+                    stroke="#10b981"
+                    strokeWidth={2}
+                    dot={false}
+                  />
+                )}
+                {activeMetrics.has('avg') && (
+                  <Line
+                    yAxisId="right"
+                    type="monotone"
+                    dataKey="avg"
+                    name="Средний чек"
+                    stroke="#8b5cf6"
+                    strokeWidth={2}
+                    strokeDasharray="4 3"
+                    dot={false}
+                  />
+                )}
+              </ComposedChart>
             </ResponsiveContainer>
           </div>
         </Section>
@@ -295,44 +394,92 @@ export default function Dashboard() {
   )
 }
 
-function ChartTip({ active, payload, label }) {
+function ChartTip({ active, payload, label, activeKeys }) {
   if (!active || !payload?.length) return null
+  // Показываем в тултипе только активные метрики; порядок = METRICS.
+  const map = Object.fromEntries(payload.map((x) => [x.dataKey, x]))
   return (
-    <div className="card px-3 py-2 text-sm shadow-lg">
-      <div className="text-muted text-[12px]">{label}</div>
-      <div className="font-semibold">{money(payload[0].value)}</div>
+    <div className="card px-3 py-2 text-sm shadow-lg min-w-[160px]">
+      <div className="text-muted text-[12px] mb-1">{label}</div>
+      <div className="space-y-1">
+        {METRICS.filter((mm) => !activeKeys || activeKeys.has(mm.key)).map((mm) => {
+          const p = map[mm.key]
+          if (!p) return null
+          return (
+            <div key={mm.key} className="flex items-center justify-between gap-3 text-[12px]">
+              <span className="flex items-center gap-1.5">
+                <span className="inline-block h-2 w-2 rounded-full" style={{ background: mm.color }} />
+                {mm.label}
+              </span>
+              <span className="font-semibold tabular-nums">{money(p.value)}</span>
+            </div>
+          )
+        })}
+      </div>
     </div>
   )
 }
 
-// Агрегация выручки по выбранному периоду
+// Прирост второй половины периода к первой (для KPI «Выручка за месяц»).
 function trendOf(series) {
   const h = Math.floor(series.length / 2)
-  const first = series.slice(0, h).reduce((a, d) => a + d.v, 0)
-  const second = series.slice(h).reduce((a, d) => a + d.v, 0)
+  const first = series.slice(0, h).reduce((a, d) => a + (d.revenue || 0), 0)
+  const second = series.slice(h).reduce((a, d) => a + (d.revenue || 0), 0)
   if (first < 1000) return null
   return Math.max(-95, Math.min(99, Math.round(((second - first) / first) * 100)))
 }
 
-function buildSeries(period, orders) {
+// Агрегация 4 метрик по бакетам периода.
+// bucket: { label, revenue, cost, profit, avg, count }
+function buildSeries(period, orders, costMap = {}) {
   const valid = orders.filter((o) => o.status !== 'cancelled')
-  const sumIn = (from, to) =>
-    valid.reduce((a, o) => {
+
+  // Себестоимость строки заказа = qty × current cost из costMap.
+  // Прагматично; для точной FIFO-COGS нужно фиксировать item.cost при отгрузке.
+  const orderCogs = (o) =>
+    (o.items || []).reduce(
+      (s, it) => s + (Number(it.qty) || 0) * (costMap[it.productId] || 0),
+      0,
+    )
+
+  const aggIn = (from, to) => {
+    let revenue = 0
+    let cost = 0
+    let count = 0
+    for (const o of valid) {
       const t = new Date(o.createdAt).getTime()
-      return t >= from && t < to ? a + o.total : a
-    }, 0)
+      if (t < from || t >= to) continue
+      revenue += Number(o.total) || 0
+      cost += orderCogs(o)
+      count += 1
+    }
+    return {
+      revenue: Math.round(revenue),
+      cost: Math.round(cost),
+      profit: Math.round(revenue - cost),
+      avg: count ? Math.round(revenue / count) : 0,
+      count,
+    }
+  }
+
   const now = new Date()
   const DAY = 86400000
   const ddmm = (d) => d.toLocaleDateString('ru-RU', { day: '2-digit', month: 'short' })
+
+  const wrap = (buckets, periodLabel) => ({
+    series: buckets,
+    trend: trendOf(buckets),
+    periodLabel,
+  })
 
   if (period === 'day') {
     const start = new Date(now)
     start.setHours(0, 0, 0, 0)
     const series = Array.from({ length: 24 }, (_, h) => {
       const from = start.getTime() + h * 3600000
-      return { label: `${String(h).padStart(2, '0')}:00`, v: Math.round(sumIn(from, from + 3600000)) }
+      return { label: `${String(h).padStart(2, '0')}:00`, ...aggIn(from, from + 3600000) }
     })
-    return { series, trend: trendOf(series), periodLabel: 'сегодня, по часам' }
+    return wrap(series, 'сегодня, по часам')
   }
   if (period === 'week' || period === 'month') {
     const n = period === 'week' ? 7 : 30
@@ -343,9 +490,9 @@ function buildSeries(period, orders) {
       const day = new Date(d0)
       day.setDate(day.getDate() - i)
       const from = day.getTime()
-      series.push({ label: ddmm(day), v: Math.round(sumIn(from, from + DAY)) })
+      series.push({ label: ddmm(day), ...aggIn(from, from + DAY) })
     }
-    return { series, trend: trendOf(series), periodLabel: `${n} дней` }
+    return wrap(series, `${n} дней`)
   }
   if (period === 'quarter') {
     const d0 = new Date(now)
@@ -353,9 +500,9 @@ function buildSeries(period, orders) {
     const series = []
     for (let i = 12; i >= 0; i--) {
       const from = d0.getTime() - i * 7 * DAY
-      series.push({ label: ddmm(new Date(from)), v: Math.round(sumIn(from, from + 7 * DAY)) })
+      series.push({ label: ddmm(new Date(from)), ...aggIn(from, from + 7 * DAY) })
     }
-    return { series, trend: trendOf(series), periodLabel: '13 недель' }
+    return wrap(series, '13 недель')
   }
   // year — 12 месяцев
   const series = []
@@ -364,8 +511,8 @@ function buildSeries(period, orders) {
     const mNext = new Date(now.getFullYear(), now.getMonth() - i + 1, 1)
     series.push({
       label: mStart.toLocaleDateString('ru-RU', { month: 'short' }),
-      v: Math.round(sumIn(mStart.getTime(), mNext.getTime())),
+      ...aggIn(mStart.getTime(), mNext.getTime()),
     })
   }
-  return { series, trend: trendOf(series), periodLabel: '12 месяцев' }
+  return wrap(series, '12 месяцев')
 }

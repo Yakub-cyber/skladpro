@@ -491,6 +491,38 @@ export const useStore = create(
         const nx = o && nextStatus(o.status)
         if (nx) get().setOrderStatus(id, nx)
       },
+      // Редактирование заказа до отгрузки. Разрешено только пока
+      // stockConsumed=false и статус не cancelled — иначе правка сломает
+      // проведённое списание/долг. Резерв на складе вычисляется на лету
+      // (reservedByProduct → открытые заказы), поэтому меняется автоматом
+      // при новых items. Долг «в долг» корректируем на дельту total.
+      updateOrder: (id, patch) => {
+        const o = get().orders.find((x) => x.id === id)
+        if (!o) return { ok: false, error: 'Заказ не найден' }
+        if (o.stockConsumed || o.status === 'cancelled') {
+          return { ok: false, error: 'Заказ уже отгружен или отменён — редактирование недоступно' }
+        }
+        set((s) => {
+          const next = { ...o, ...patch }
+          const oldDebt = o.onCredit ? o.total || 0 : 0
+          const newDebt = next.onCredit ? next.total || 0 : 0
+          const debtDelta = newDebt - oldDebt
+          let customers = s.customers
+          if (debtDelta !== 0 && next.customerId) {
+            customers = s.customers.map((c) =>
+              c.id === next.customerId
+                ? { ...c, balance: Math.max(0, (c.balance || 0) + debtDelta) }
+                : c,
+            )
+          }
+          return {
+            orders: s.orders.map((x) => (x.id === id ? next : x)),
+            customers,
+          }
+        })
+        get().logAction(`Заказ ${o.no} изменён`, { section: 'Заказы', type: 'update' })
+        return { ok: true }
+      },
       cancelOrder: (id, note) => {
         const o = get().orders.find((x) => x.id === id)
         if (!o || o.status === 'cancelled') return // идемпотентность: не откатываем дважды
