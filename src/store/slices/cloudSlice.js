@@ -58,8 +58,11 @@ export const createCloudSlice = (set, get) => ({
   initAuth: async () => {
     if (!hasSupabase || get()._authInited) return
     set({ _authInited: true })
-    // onAuthChange — только выход (вход/токены обрабатываем явными
-    // вызовами bootstrap, чтобы не было параллельных гонок)
+    // onAuthChange: обрабатываем оба события. SIGNED_OUT — чистим стор.
+    // SIGNED_IN приходит, когда пользователь перешёл по confirmation-ссылке
+    // из письма и Supabase поднял сессию в текущей вкладке. Раньше мы это
+    // событие игнорировали — приглашённый застревал на экране входа до
+    // ручного reload. Дедуп через authUserId + мьютекс bootstrap внутри.
     onAuthChange((event) => {
       if (event === 'SIGNED_OUT') {
         set({
@@ -69,6 +72,11 @@ export const createCloudSlice = (set, get) => ({
           companyName: null,
           cloudReady: false,
         })
+      } else if (event === 'SIGNED_IN' && !get().authUserId) {
+        // Только если ещё не залогинены в UI — иначе `bootstrapCloud`
+        // после ручного signIn/signUp уже был вызван явно, и повторный
+        // запуск создал бы гонку.
+        get().bootstrapCloud()
       }
     })
     // переход по ссылке сброса пароля → экран ввода нового (без bootstrap)

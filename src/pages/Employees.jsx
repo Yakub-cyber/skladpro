@@ -43,9 +43,15 @@ export default function Employees() {
           </h2>
           <p className="text-sm text-muted">{employees.length} сотрудников · доступ по ролям</p>
         </div>
-        <Button icon={Plus} onClick={() => setAdding(true)}>
-          Добавить
-        </Button>
+        {/* В облачном режиме локальное создание сотрудника через
+            AddEmployeeModal ведёт к карточке без authUid — она никогда
+            не сможет войти и после bootstrap приглашённого пользователя
+            появится дубликат. Прячем кнопку и предлагаем «Пригласить». */}
+        {!cloud && (
+          <Button icon={Plus} onClick={() => setAdding(true)}>
+            Добавить
+          </Button>
+        )}
       </div>
 
       {cloud && <TeamInvites companyId={companyId} />}

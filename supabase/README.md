@@ -25,7 +25,7 @@
 | 3 | `granular_rls.sql`         | Разделение read/write по ролям, `auth_role()`, `orders_courier_update`, `audit_insert_all`, `employees_self` |
 | 4 | `documents.sql`            | Реестр складских документов (`documents` + RLS)                      |
 | 5 | `settings_sync.sql`        | Облачные настройки компании (`settings` + RLS + `updated_at`-триггер) |
-| 6 | `saas_invites.sql`         | Приглашения сотрудников (`invitations`, `accept_invitation()`)       |
+| 6 | `saas_invites.sql`         | Приглашения сотрудников (`invitations`, `accept_invitation()`; создание/удаление разрешено только `admin` и `manager`) |
 | 7 | `add_assigned_to.sql`      | Колонка `orders.assigned_to` (курьер)                                |
 | 8 | `updated_at.sql`           | Колонка `updated_at` на всех таблицах данных (для разрешения конфликтов синка) |
 | 9 | `reservation_migration.sql`| Колонка `orders.stock_consumed` + разовый возврат остатка открытым заказам |

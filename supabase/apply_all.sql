@@ -445,12 +445,31 @@ create table if not exists public.invitations (
 create index if not exists idx_invitations_email on public.invitations(lower(email));
 
 alter table public.invitations enable row level security;
-drop policy if exists "inv_company" on public.invitations;
-create policy "inv_company" on public.invitations
-  for all to authenticated
-  using (company_id = public.auth_company_id())
-  with check (company_id = public.auth_company_id());
 
+-- Приглашения могут создавать/удалять только admin или manager
+-- (курьер обходил бы UI-гейт через прямой Supabase API). Читать — любой
+-- член компании.
+drop policy if exists "inv_company" on public.invitations;
+drop policy if exists "inv_read" on public.invitations;
+drop policy if exists "inv_write" on public.invitations;
+
+create policy "inv_read" on public.invitations
+  for select to authenticated
+  using (company_id = public.auth_company_id());
+
+create policy "inv_write" on public.invitations
+  for all to authenticated
+  using (
+    company_id = public.auth_company_id()
+    and public.auth_role() in ('admin', 'manager')
+  )
+  with check (
+    company_id = public.auth_company_id()
+    and public.auth_role() in ('admin', 'manager')
+  );
+
+-- accept_invitation: берём СВЕЖЕЕ приглашение (order by created_at desc),
+-- иначе при нескольких приглашениях один email выбор был бы недетерминирован.
 create or replace function public.accept_invitation()
 returns uuid
 language plpgsql
@@ -462,14 +481,19 @@ declare
   inv public.invitations%rowtype;
 begin
   select email into em from auth.users where id = auth.uid();
-  select * into inv from public.invitations where lower(email) = lower(em) limit 1;
+  select * into inv
+    from public.invitations
+    where lower(email) = lower(em)
+    order by created_at desc
+    limit 1;
   if inv.id is null then
     return null;
   end if;
   insert into public.memberships (user_id, company_id, role, name)
     values (auth.uid(), inv.company_id, inv.role, coalesce(inv.name, split_part(em, '@', 1)))
     on conflict (user_id, company_id) do nothing;
-  delete from public.invitations where company_id = inv.company_id and lower(email) = lower(em);
+  delete from public.invitations
+    where company_id = inv.company_id and lower(email) = lower(em);
   return inv.company_id;
 end;
 $$;

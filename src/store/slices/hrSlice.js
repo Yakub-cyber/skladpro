@@ -4,6 +4,7 @@
 // PIN (для демо-seed и старых карточек) в хэш при первом успехе.
 import { uid } from '../../lib/id'
 import { hashPin, verifyPin } from '../../lib/crypto'
+import { updateMemberRole } from '../../lib/cloud'
 
 export const createHrSlice = (set, get) => ({
   addEmployee: async (e) => {
@@ -19,6 +20,25 @@ export const createHrSlice = (set, get) => ({
   updateEmployee: async (id, patch) => {
     const next = { ...patch }
     if ('pin' in next) next.pin = next.pin ? await hashPin(next.pin) : ''
+
+    // Если меняется РОЛЬ сотрудника, привязанного к аккаунту Supabase
+    // (authUid есть), синхронно правим и `memberships.role`. Иначе RLS
+    // (`auth_role()` читает из memberships) не увидит новую роль, и
+    // пользователь получит расширенный UI, но запись в БД будет падать
+    // с permission denied. Ошибку сервера не блокируем — локальный стор
+    // всё равно обновляем, а рассинхрон решится при повторной попытке.
+    if ('role' in next) {
+      const emp = get().employees.find((e) => e.id === id)
+      const companyId = get().companyId
+      if (emp?.authUid && companyId) {
+        try {
+          await updateMemberRole(emp.authUid, companyId, next.role)
+        } catch (e) {
+          console.warn('Не удалось обновить роль в memberships:', e?.message || e)
+        }
+      }
+    }
+
     set((s) => ({
       employees: s.employees.map((e) => (e.id === id ? { ...e, ...next } : e)),
     }))
