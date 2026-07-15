@@ -188,57 +188,21 @@ export default function Storefront() {
         </div>
       </div>
 
-      {/* Сетка товаров */}
-      <div className="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
-        {list.map((p) => {
-          const c = catInfo(p.category)
-          const Icon = CAT_ICON[c.icon] || Package
-          const inCart = cart[p.id] || 0
-          const price = priceFor(p, defType)
-          return (
-            <Card key={p.id} className="p-4 flex flex-col">
-              {p.image ? (
-                <img src={p.image} alt={p.name} className="h-24 w-full rounded-xl object-cover mb-3" />
-              ) : (
-                <div className="h-24 rounded-xl grid place-items-center mb-3" style={{ background: `color-mix(in srgb, ${c.color} 12%, transparent)` }}>
-                  <Icon size={34} style={{ color: c.color }} />
-                </div>
-              )}
-              <div className="flex items-center gap-1.5 mb-0.5">
-                <span className="text-[11px]" style={{ color: c.color }}>{p.category}</span>
-                {p.weighted && <Scale size={12} className="text-info" />}
-                {p.marked && <ShieldCheck size={12} className="text-ok" />}
-              </div>
-              <div className="font-medium text-sm leading-snug flex-1">{p.name}</div>
-              <div className="flex items-center justify-between mt-2">
-                <div>
-                  <div className="font-semibold tabular-nums">
-                    {money(price)}
-                    {p.weighted && <span className="text-[11px] text-muted font-normal"> /кг</span>}
-                  </div>
-                  <div className="text-[11px] text-ok">В наличии: {num(availOf(p))} {p.unit}</div>
-                </div>
-                {inCart ? (
-                  <div className="flex items-center gap-1.5">
-                    <button onClick={() => setQty(p.id, inCart - 1)} className="h-8 w-8 rounded-lg bg-surface-2 grid place-items-center hover:bg-surface-3">
-                      <Minus size={15} />
-                    </button>
-                    <span className="w-6 text-center text-sm font-medium tabular-nums">{inCart}</span>
-                    <button
-                      onClick={() => setQty(p.id, inCart + 1)}
-                      disabled={inCart >= availOf(p)}
-                      className="h-8 w-8 rounded-lg bg-brand text-brand-ink grid place-items-center disabled:opacity-40 disabled:cursor-not-allowed"
-                    >
-                      <Plus size={15} />
-                    </button>
-                  </div>
-                ) : (
-                  <Button size="sm" icon={Plus} onClick={() => setQty(p.id, 1)}>В корзину</Button>
-                )}
-              </div>
-            </Card>
-          )
-        })}
+      {/* Сетка товаров. На мобиле — 2 колонки (было 1: карточки были слишком
+          длинные, страница уныло скроллилась). Превью — квадратное на всю
+          ширину карточки, чтобы фото товара было главной точкой внимания. */}
+      <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+        {list.map((p) => (
+          <StoreCard
+            key={p.id}
+            p={p}
+            price={priceFor(p, defType)}
+            inCart={cart[p.id] || 0}
+            avail={availOf(p)}
+            onInc={() => setQty(p.id, (cart[p.id] || 0) + 1)}
+            onDec={() => setQty(p.id, (cart[p.id] || 0) - 1)}
+          />
+        ))}
       </div>
       {list.length === 0 && <Empty icon={Search} title="Ничего не найдено" />}
 
@@ -263,6 +227,110 @@ export default function Storefront() {
         onCheckout={checkout}
       />
     </div>
+  )
+}
+
+// Карточка товара в витрине. Квадратное превью на всю ширину — если у
+// товара нет `image`, красивый placeholder с крупной иконкой категории
+// на фирменном градиенте (чтобы каталог не выглядел «пусто» на демо-
+// товарах и товарах без фото). onError-fallback: если url картинки битый,
+// показываем тот же placeholder, а не сломанную иконку браузера.
+function StoreCard({ p, price, inCart, avail, onInc, onDec }) {
+  const c = catInfo(p.category)
+  const Icon = CAT_ICON[c.icon] || Package
+  const [imgFail, setImgFail] = useState(false)
+  const showImage = p.image && !imgFail
+
+  const Placeholder = (
+    <div
+      className="absolute inset-0 grid place-items-center"
+      style={{
+        background: `linear-gradient(135deg,
+          color-mix(in srgb, ${c.color} 18%, transparent),
+          color-mix(in srgb, ${c.color} 4%, transparent))`,
+      }}
+    >
+      <Icon size={56} style={{ color: c.color, opacity: 0.55 }} />
+    </div>
+  )
+
+  return (
+    <Card className="p-2 sm:p-3 flex flex-col gap-2 overflow-hidden">
+      <div className="relative aspect-square rounded-xl overflow-hidden bg-surface-2">
+        {showImage ? (
+          <img
+            src={p.image}
+            alt={p.name}
+            loading="lazy"
+            onError={() => setImgFail(true)}
+            className="absolute inset-0 w-full h-full object-cover"
+          />
+        ) : (
+          Placeholder
+        )}
+        {/* Иконки-бейджи поверх фото — весовой / маркировка */}
+        {(p.weighted || p.marked) && (
+          <div className="absolute top-1.5 left-1.5 flex gap-1">
+            {p.weighted && (
+              <span className="h-6 w-6 rounded-lg bg-info text-white grid place-items-center" title="Весовой">
+                <Scale size={12} />
+              </span>
+            )}
+            {p.marked && (
+              <span className="h-6 w-6 rounded-lg bg-ok text-white grid place-items-center" title="Маркировка">
+                <ShieldCheck size={12} />
+              </span>
+            )}
+          </div>
+        )}
+      </div>
+
+      <div className="min-w-0">
+        <div className="text-[11px] uppercase tracking-wide" style={{ color: c.color }}>
+          {p.category}
+        </div>
+        <div className="font-medium text-[13px] leading-snug line-clamp-2 min-h-[2.4em]">
+          {p.name}
+        </div>
+      </div>
+
+      <div className="mt-auto flex items-end justify-between gap-1.5">
+        <div className="min-w-0">
+          <div className="font-semibold tabular-nums text-[15px]">
+            {money(price)}
+            {p.weighted && <span className="text-[10px] text-muted font-normal"> /кг</span>}
+          </div>
+          <div className="text-[10.5px] text-ok truncate">
+            В наличии: {num(avail)} {p.unit}
+          </div>
+        </div>
+        {inCart ? (
+          <div className="flex items-center gap-1 shrink-0">
+            <button
+              onClick={onDec}
+              className="h-8 w-8 rounded-lg bg-surface-2 grid place-items-center hover:bg-surface-3"
+            >
+              <Minus size={14} />
+            </button>
+            <span className="w-6 text-center text-sm font-medium tabular-nums">{inCart}</span>
+            <button
+              onClick={onInc}
+              disabled={inCart >= avail}
+              className="h-8 w-8 rounded-lg bg-brand text-brand-ink grid place-items-center disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <Plus size={14} />
+            </button>
+          </div>
+        ) : (
+          <button
+            onClick={onInc}
+            className="h-8 px-2.5 rounded-lg bg-brand text-brand-ink text-[12px] font-medium inline-flex items-center gap-1 shrink-0 hover:opacity-90"
+          >
+            <Plus size={14} /> <span className="hidden sm:inline">В корзину</span>
+          </button>
+        )}
+      </div>
+    </Card>
   )
 }
 
