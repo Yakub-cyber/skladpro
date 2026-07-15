@@ -177,7 +177,7 @@ describe('printInvoiceBill / TORG12 / UPD — сборка HTML', () => {
     expect(openedHtml).toContain('7,00') // qty итог
     // Итог с НДС === order.total (2640). Intl использует неразрывный
     // пробел как разделитель разрядов — нормализуем оба варианта.
-    const flat = openedHtml.replace(/[\s  ]+/g, ' ')
+    const flat = openedHtml.replace(/[\s\u00a0\u202f]+/g, ' ')
     expect(flat).toContain('2 640,00')
     // Сумма прописью
     expect(openedHtml).toContain('Две тысячи шестьсот сорок')
