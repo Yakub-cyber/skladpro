@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { makeSeed } from './seed'
 import { uid, docNo } from '../lib/id'
-import { nextStatus, statusInfo, docTypeInfo } from '../lib/constants'
+import { nextStatus, statusInfo, docTypeInfo, DEFAULT_WORK_ZONES } from '../lib/constants'
 import { applyDocToState } from '../lib/posting'
 import { applyOrderStock } from '../lib/orders'
 import { persistMigrate, persistPartialize } from './persistMigrate'
@@ -737,6 +737,22 @@ export const useStore = create(
         })),
       removeCell: (id) =>
         set((s) => ({ cells: s.cells.filter((c) => c.id !== id) })),
+      // Переместить рабочую зону (Приёмка/Выдача/Сборка) на карте склада.
+      // Хранится в warehouse.workZones (миграция v10). Если у склада ещё нет
+      // своих зон, копируем DEFAULT_WORK_ZONES и правим нужную.
+      setWorkZone: (warehouseId, zoneId, patch) =>
+        set((s) => ({
+          warehouses: s.warehouses.map((w) => {
+            if (w.id !== warehouseId) return w
+            const current = Array.isArray(w.workZones) && w.workZones.length
+              ? w.workZones
+              : DEFAULT_WORK_ZONES.map((z) => ({ ...z }))
+            return {
+              ...w,
+              workZones: current.map((z) => (z.id === zoneId ? { ...z, ...patch } : z)),
+            }
+          }),
+        })),
       // Переместить товар в другую ячейку/склад
       moveProduct: (productId, warehouseId, cellCode) =>
         set((s) => ({

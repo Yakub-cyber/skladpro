@@ -27,6 +27,7 @@ import {
   RefreshCw,
   ScanLine,
   Camera,
+  SlidersHorizontal,
 } from 'lucide-react'
 import { compressImage } from '../lib/image'
 import {
@@ -46,7 +47,15 @@ import { money, num } from '../lib/format'
 import { CATEGORIES, catInfo } from '../lib/constants'
 import { CELLS } from '../store/seed'
 import { printLabels, printPriceTags, barcodeSVG } from '../lib/labels'
-import { parsePriceTable, SAMPLE_TEMPLATE } from '../lib/importPrice'
+import {
+  parsePriceTable,
+  SAMPLE_TEMPLATE,
+  readImportFile,
+  parseTextToTable,
+  autoMap,
+  applyMapping,
+  IMPORT_FIELDS,
+} from '../lib/importPrice'
 import { downloadCsv } from '../lib/export'
 import { reservedByProduct } from '../lib/orders'
 import { generateEan13 } from '../lib/barcode'
@@ -56,6 +65,17 @@ const CAT_ICON = { Wrench, Hammer, Zap, Droplets, PaintBucket, Package }
 
 const stockTone = (p) =>
   p.stock <= p.minStock ? 'bad' : p.stock <= p.minStock * 1.5 ? 'warn' : 'ok'
+
+// Пустой набор фильтров — по нему сбрасываем панель к дефолту.
+const EMPTY_FILTERS = {
+  priceMin: '',
+  priceMax: '',
+  stockMin: '',
+  stockMax: '',
+  stockStatus: 'any', // any | low (ниже min) | out (0) | in
+  weighted: 'any',
+  marked: 'any',
+}
 
 export default function Products() {
   const products = useStore((s) => s.products)
@@ -67,9 +87,25 @@ export default function Products() {
   const [edit, setEdit] = useState(null) // product | 'new' | null
   const [showImport, setShowImport] = useState(false)
   const [showLabels, setShowLabels] = useState(false)
+  const [filters, setFilters] = useState(EMPTY_FILTERS)
+  const [filtersOpen, setFiltersOpen] = useState(false)
+
+  // Число активных фильтров — для бейджа рядом с кнопкой «Фильтр».
+  const activeFiltersCount = useMemo(() => {
+    let n = 0
+    if (filters.priceMin !== '') n++
+    if (filters.priceMax !== '') n++
+    if (filters.stockMin !== '') n++
+    if (filters.stockMax !== '') n++
+    if (filters.stockStatus !== 'any') n++
+    if (filters.weighted !== 'any') n++
+    if (filters.marked !== 'any') n++
+    return n
+  }, [filters])
 
   const list = useMemo(() => {
     const s = q.trim().toLowerCase()
+    const numOr = (v, fallback) => (v === '' || v == null ? fallback : Number(v))
     return products.filter((p) => {
       const okC = cat === 'all' || p.category === cat
       const okQ =
@@ -77,9 +113,28 @@ export default function Products() {
         p.name.toLowerCase().includes(s) ||
         p.sku.toLowerCase().includes(s) ||
         p.tags.some((t) => t.includes(s))
-      return okC && okQ
+      if (!okC || !okQ) return false
+      // Диапазон цены (розничной).
+      const price = Number(p.price) || 0
+      if (price < numOr(filters.priceMin, -Infinity)) return false
+      if (price > numOr(filters.priceMax, Infinity)) return false
+      // Диапазон остатка.
+      const stock = Number(p.stock) || 0
+      if (stock < numOr(filters.stockMin, -Infinity)) return false
+      if (stock > numOr(filters.stockMax, Infinity)) return false
+      // Статус остатка.
+      const min = Number(p.minStock) || 0
+      if (filters.stockStatus === 'low' && stock > min) return false
+      if (filters.stockStatus === 'out' && stock > 0) return false
+      if (filters.stockStatus === 'in' && stock <= 0) return false
+      // Признаки.
+      if (filters.weighted === 'yes' && !p.weighted) return false
+      if (filters.weighted === 'no' && p.weighted) return false
+      if (filters.marked === 'yes' && !p.marked) return false
+      if (filters.marked === 'no' && p.marked) return false
+      return true
     })
-  }, [products, q, cat])
+  }, [products, q, cat, filters])
 
   // Пагинация: на демо-30 SKU незаметно, на реальном оптовом каталоге
   // (тысячи позиций) полный рендер таблицы тормозит. Показываем окно
@@ -90,7 +145,7 @@ export default function Products() {
   const [visible, setVisible] = useState(PAGE_SIZE)
   useEffect(() => {
     setVisible(PAGE_SIZE)
-  }, [q, cat])
+  }, [q, cat, filters])
   const shown = list.slice(0, visible)
 
   const totalValue = products.reduce((a, p) => a + p.stock * p.cost, 0)
@@ -134,7 +189,7 @@ export default function Products() {
         </div>
       </div>
 
-      <div className="flex flex-col sm:flex-row gap-3 mb-4">
+      <div className="flex flex-col sm:flex-row gap-3 mb-3">
         <div className="relative flex-1">
           <Search
             size={16}
@@ -147,6 +202,26 @@ export default function Products() {
             className="pl-9"
           />
         </div>
+        {/* Кнопка фильтров: раскрывает панель с полями (цена, остаток,
+            статус), число активных фильтров — на бейдже. Клик по «Сброс»
+            внутри панели быстро возвращает к «нет фильтров». */}
+        <button
+          onClick={() => setFiltersOpen((v) => !v)}
+          className={cx(
+            'h-10 px-3 rounded-xl inline-flex items-center gap-2 text-sm font-medium border transition shrink-0',
+            filtersOpen || activeFiltersCount
+              ? 'bg-brand text-brand-ink border-brand'
+              : 'bg-surface-2 border-line text-muted hover:text-ink',
+          )}
+        >
+          <SlidersHorizontal size={16} />
+          <span className="hidden sm:inline">Фильтр</span>
+          {activeFiltersCount > 0 && (
+            <span className="h-5 min-w-5 px-1.5 rounded-full bg-white/25 text-[11px] font-semibold grid place-items-center">
+              {activeFiltersCount}
+            </span>
+          )}
+        </button>
         <div className="flex gap-1.5 overflow-x-auto no-scrollbar">
           <Chip active={cat === 'all'} onClick={() => setCat('all')}>
             Все
@@ -158,6 +233,17 @@ export default function Products() {
           ))}
         </div>
       </div>
+
+      {/* Раскрывающаяся панель фильтров */}
+      {filtersOpen && (
+        <FiltersPanel
+          filters={filters}
+          setFilters={setFilters}
+          onReset={() => setFilters(EMPTY_FILTERS)}
+          activeCount={activeFiltersCount}
+          onClose={() => setFiltersOpen(false)}
+        />
+      )}
 
       {/* Мобильные карточки — без внутреннего горизонтального скролла таблицы.
           Крупное фото/иконка слева, компактная сводка справа. */}
@@ -225,9 +311,13 @@ export default function Products() {
             <thead>
               <tr className="text-muted text-[12px] text-left border-b border-line bg-surface-2/40">
                 <th className="font-medium py-3 px-4">Товар</th>
-                <th className="font-medium py-3 px-3 hidden md:table-cell">Категория</th>
-                <th className="font-medium py-3 px-3">Ячейка</th>
+                <th className="font-medium py-3 px-3 hidden xl:table-cell">Категория</th>
+                <th className="font-medium py-3 px-3 hidden xl:table-cell">Ячейка</th>
+                <th className="font-medium py-3 px-3 text-right">Себест.</th>
                 <th className="font-medium py-3 px-3 text-right">Цена</th>
+                <th className="font-medium py-3 px-3 text-right">Мин.</th>
+                <th className="font-medium py-3 px-3 text-right">Резерв</th>
+                <th className="font-medium py-3 px-3 text-right">Доступно</th>
                 <th className="font-medium py-3 px-4 text-right">Остаток</th>
                 <th className="w-10"></th>
               </tr>
@@ -275,28 +365,39 @@ export default function Products() {
                         </div>
                       </div>
                     </td>
-                    <td className="py-2.5 px-3 hidden md:table-cell">
+                    <td className="py-2.5 px-3 hidden xl:table-cell">
                       <span className="text-[13px]" style={{ color: c.color }}>
                         {p.category}
                       </span>
                     </td>
-                    <td className="py-2.5 px-3">
+                    <td className="py-2.5 px-3 hidden xl:table-cell">
                       <Badge tone="muted">
                         <MapPin size={11} /> {p.cell}
                       </Badge>
                     </td>
+                    <td className="py-2.5 px-3 text-right tabular-nums text-muted">
+                      {money(p.cost)}
+                    </td>
                     <td className="py-2.5 px-3 text-right tabular-nums font-medium">
                       {money(p.price)}
+                    </td>
+                    <td className="py-2.5 px-3 text-right tabular-nums text-muted">
+                      {num(p.minStock || 0)}
+                    </td>
+                    <td className="py-2.5 px-3 text-right tabular-nums">
+                      {reserved[p.id] > 0 ? (
+                        <span className="text-warn">{num(reserved[p.id])}</span>
+                      ) : (
+                        <span className="text-muted">—</span>
+                      )}
+                    </td>
+                    <td className="py-2.5 px-3 text-right tabular-nums font-medium">
+                      {num(Math.max(0, p.stock - (reserved[p.id] || 0)))}
                     </td>
                     <td className="py-2.5 px-4 text-right">
                       <Badge tone={stockTone(p)}>
                         {num(p.stock)} {p.unit}
                       </Badge>
-                      {reserved[p.id] > 0 && (
-                        <div className="text-[11px] text-muted mt-0.5 tabular-nums">
-                          резерв {num(reserved[p.id])} · дост. {num(p.stock - reserved[p.id])}
-                        </div>
-                      )}
                     </td>
                     <td className="py-2.5 pr-3 text-muted">
                       <Pencil size={15} />
@@ -499,6 +600,134 @@ function CheckCard({ checked, onChange, title, hint }) {
         <span className="block text-[11px] text-muted">{hint}</span>
       </span>
     </button>
+  )
+}
+
+// Панель фильтров: раскрывающийся блок с полями цены/остатка/статуса.
+// Не модалка, а inline-панель под поисковой строкой — так пользователь
+// сразу видит эффект фильтров на таблице.
+function FiltersPanel({ filters, setFilters, onReset, activeCount, onClose }) {
+  const set = (k, v) => setFilters((s) => ({ ...s, [k]: v }))
+  return (
+    <div className="rounded-2xl border border-line bg-surface p-4 mb-4 animate-fadeUp">
+      <div className="flex items-center gap-2 mb-3">
+        <SlidersHorizontal size={16} className="text-brand" />
+        <h4 className="font-semibold text-sm">Фильтры</h4>
+        <span className="text-[12px] text-muted">
+          {activeCount ? `активных: ${activeCount}` : 'без фильтров'}
+        </span>
+        <div className="ml-auto flex gap-1">
+          {activeCount > 0 && (
+            <button
+              onClick={onReset}
+              className="text-[12px] px-2 h-8 rounded-lg text-muted hover:text-ink hover:bg-surface-2"
+            >
+              Сброс
+            </button>
+          )}
+          <button
+            onClick={onClose}
+            className="h-8 w-8 rounded-lg text-muted hover:text-ink hover:bg-surface-2 grid place-items-center"
+            title="Скрыть"
+          >
+            <X size={15} />
+          </button>
+        </div>
+      </div>
+      <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        <RangeField
+          label="Цена, ₽"
+          min={filters.priceMin}
+          max={filters.priceMax}
+          onMin={(v) => set('priceMin', v)}
+          onMax={(v) => set('priceMax', v)}
+        />
+        <RangeField
+          label="Остаток"
+          min={filters.stockMin}
+          max={filters.stockMax}
+          onMin={(v) => set('stockMin', v)}
+          onMax={(v) => set('stockMax', v)}
+        />
+        <SelectField
+          label="Статус остатка"
+          value={filters.stockStatus}
+          onChange={(v) => set('stockStatus', v)}
+          options={[
+            { value: 'any', label: 'Любой' },
+            { value: 'low', label: 'Ниже минимума' },
+            { value: 'out', label: 'Закончился' },
+            { value: 'in', label: 'В наличии' },
+          ]}
+        />
+        <div className="grid grid-cols-2 gap-2">
+          <SelectField
+            label="Весовой"
+            value={filters.weighted}
+            onChange={(v) => set('weighted', v)}
+            options={[
+              { value: 'any', label: 'Любой' },
+              { value: 'yes', label: 'Да' },
+              { value: 'no', label: 'Нет' },
+            ]}
+          />
+          <SelectField
+            label="Маркировка"
+            value={filters.marked}
+            onChange={(v) => set('marked', v)}
+            options={[
+              { value: 'any', label: 'Любой' },
+              { value: 'yes', label: 'Да' },
+              { value: 'no', label: 'Нет' },
+            ]}
+          />
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function RangeField({ label, min, max, onMin, onMax }) {
+  return (
+    <div>
+      <div className="text-[12px] text-muted mb-1.5">{label}</div>
+      <div className="flex items-center gap-1.5">
+        <input
+          type="number"
+          value={min}
+          onChange={(e) => onMin(e.target.value)}
+          placeholder="от"
+          className="w-full h-9 px-2 rounded-lg bg-surface-2 border border-line text-sm outline-none focus:border-brand"
+        />
+        <span className="text-muted text-xs">–</span>
+        <input
+          type="number"
+          value={max}
+          onChange={(e) => onMax(e.target.value)}
+          placeholder="до"
+          className="w-full h-9 px-2 rounded-lg bg-surface-2 border border-line text-sm outline-none focus:border-brand"
+        />
+      </div>
+    </div>
+  )
+}
+
+function SelectField({ label, value, onChange, options }) {
+  return (
+    <div>
+      <div className="text-[12px] text-muted mb-1.5">{label}</div>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-full h-9 px-2 rounded-lg bg-surface-2 border border-line text-sm outline-none focus:border-brand"
+      >
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+    </div>
   )
 }
 
@@ -729,59 +958,90 @@ function ProductModal({ product, onClose }) {
 }
 
 // ── Импорт прайса из Excel/CSV ─────────────────────────────────────────────
+// Импорт-мастер в стиле CloudShop: 3 шага (файл → мапинг колонок → превью).
+// Понимает .xlsx / .xls / .csv / .tsv + вставку таблицы из буфера. На каждом
+// шаге видна прогресс-плашка сверху. По совпадению SKU строка помечается
+// как «обновить», новая — как «добавить». Ошибки валидации (нет SKU / нет
+// названия) считаются и подсвечиваются красным.
 function ImportModal({ onClose }) {
   const { products, updateProduct, addProduct } = useStore()
-  const [text, setText] = useState('')
-  const [parsed, setParsed] = useState(null)
+  const [step, setStep] = useState(1) // 1 = файл, 2 = мапинг, 3 = превью
+  const [table, setTable] = useState(null) // { headers, rows }
+  const [mapping, setMapping] = useState({}) // { fieldKey: colIdx }
+  const [pastedText, setPastedText] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
   const [done, setDone] = useState(0)
 
-  const analyze = (t) => {
-    setText(t)
-    setParsed(t.trim() ? parsePriceTable(t, products) : null)
+  const acceptFile = async (file) => {
+    setErr('')
+    setBusy(true)
+    try {
+      const tbl = await readImportFile(file)
+      if (!tbl.headers.length) throw new Error('Файл пуст или не удалось прочитать таблицу')
+      setTable(tbl)
+      setMapping(autoMap(tbl.headers))
+      setStep(2)
+    } catch (e) {
+      setErr(e?.message || String(e))
+    } finally {
+      setBusy(false)
+    }
   }
 
-  const onFile = (e) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-    const reader = new FileReader()
-    reader.onload = () => analyze(String(reader.result))
-    reader.readAsText(file, 'utf-8')
+  const acceptText = () => {
+    setErr('')
+    const t = pastedText.trim()
+    if (!t) return setErr('Вставьте данные из Excel')
+    const tbl = parseTextToTable(t)
+    if (!tbl.headers.length) return setErr('Не удалось разобрать таблицу — проверьте формат')
+    setTable(tbl)
+    setMapping(autoMap(tbl.headers))
+    setStep(2)
   }
+
+  const rowsPreview = useMemo(() => {
+    if (!table) return []
+    return applyMapping(table, mapping, products)
+  }, [table, mapping, products])
+
+  const invalidRows = rowsPreview.filter((r) => !r.sku || !r.name)
+  const updCount = rowsPreview.filter((r) => r._action === 'update').length
+  const newCount = rowsPreview.filter((r) => r._action === 'new').length
 
   const apply = () => {
     let n = 0
-    for (const r of parsed.rows) {
-      const data = {
-        sku: r.sku,
-        name: r.name,
-        category: r.category || 'Расходники',
-        unit: r.unit || 'шт',
-        price: r.price || 0,
-        cost: r.cost || 0,
-        minStock: r.minStock || 0,
-        cell: r.cell || CELLS[0].id,
-      }
+    for (const r of rowsPreview) {
+      if (!r.sku || !r.name) continue
       if (r._action === 'update' && r._existing) {
         const patch = {}
-        // обновляем только переданные числовые/текстовые поля
-        ;['name', 'category', 'unit', 'price', 'cost', 'minStock', 'cell'].forEach((k) => {
+        ;['name', 'category', 'unit', 'price', 'cost', 'minStock', 'cell', 'barcode'].forEach((k) => {
           if (r[k] != null && r[k] !== '') patch[k] = r[k]
         })
         if (r.stock != null && r.stock !== '') patch.stock = r.stock
         updateProduct(r._existing.id, patch)
       } else {
-        addProduct({ ...data, stock: r.stock || 0 })
+        addProduct({
+          sku: r.sku,
+          name: r.name,
+          category: r.category || 'Расходники',
+          unit: r.unit || 'шт',
+          price: r.price || 0,
+          cost: r.cost || 0,
+          minStock: r.minStock || 0,
+          cell: r.cell || CELLS[0].id,
+          stock: r.stock || 0,
+          barcode: r.barcode || '',
+        })
       }
       n++
     }
     setDone(n)
-    setTimeout(onClose, 1200)
+    setTimeout(onClose, 1500)
   }
 
   const downloadTemplate = () => {
-    const blob = new Blob(['﻿' + SAMPLE_TEMPLATE.replace(/\t/g, ';')], {
-      type: 'text/csv',
-    })
+    const blob = new Blob(['﻿' + SAMPLE_TEMPLATE.replace(/\t/g, ';')], { type: 'text/csv' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
@@ -790,97 +1050,324 @@ function ImportModal({ onClose }) {
     URL.revokeObjectURL(url)
   }
 
-  const updCount = parsed?.rows.filter((r) => r._action === 'update').length || 0
-  const newCount = parsed?.rows.filter((r) => r._action === 'new').length || 0
-
   return (
     <Modal
       open
       onClose={onClose}
-      title="Импорт прайса"
+      title="Импорт товаров"
       wide
       footer={
         <>
           <Button variant="ghost" icon={Download} onClick={downloadTemplate} className="mr-auto">
-            Шаблон CSV
+            Шаблон
           </Button>
+          {step > 1 && !done && (
+            <Button variant="ghost" onClick={() => setStep(step - 1)}>
+              Назад
+            </Button>
+          )}
           <Button variant="ghost" onClick={onClose}>
             Отмена
           </Button>
-          <Button onClick={apply} disabled={!parsed?.rows.length} icon={Check}>
-            {done ? `Готово: ${done}` : `Применить${parsed?.rows.length ? ` (${parsed.rows.length})` : ''}`}
-          </Button>
+          {step === 2 && (
+            <Button onClick={() => setStep(3)} disabled={!rowsPreview.length}>
+              Далее
+            </Button>
+          )}
+          {step === 3 && (
+            <Button
+              onClick={apply}
+              disabled={!rowsPreview.length || done > 0 || invalidRows.length === rowsPreview.length}
+              icon={Check}
+            >
+              {done ? `Готово: ${done}` : `Импортировать (${rowsPreview.length - invalidRows.length})`}
+            </Button>
+          )}
         </>
       }
     >
-      <div className="space-y-4">
-        <div className="flex items-start gap-2 p-3 rounded-xl bg-info-soft text-info text-[13px]">
-          <TriangleAlert size={16} className="shrink-0 mt-0.5" />
-          <span>
-            Скопируйте строки из Excel и вставьте сюда, либо загрузите .csv. Колонки: артикул,
-            название, категория, ед, цена, закупка, остаток, минимум, ячейка. Совпадение по
-            артикулу — обновит товар, новый — добавит.
-          </span>
-        </div>
+      <ImportSteps step={step} />
+      {err && <div className="mb-3 text-[13px] text-bad">{err}</div>}
 
-        <div className="flex items-center gap-2">
-          <label className="inline-flex items-center gap-2 h-9 px-3 rounded-lg bg-surface-2 hover:bg-surface-3 text-sm cursor-pointer">
-            <FileUp size={15} /> Загрузить CSV
-            <input type="file" accept=".csv,.txt,.tsv" onChange={onFile} className="hidden" />
-          </label>
-          <span className="text-[12px] text-muted">или вставьте таблицу ниже</span>
-        </div>
-
-        <Textarea
-          value={text}
-          onChange={(e) => analyze(e.target.value)}
-          rows={5}
-          placeholder={'КР-0070\tГвозди 3×70\tКрепёж\tкг\t98\t64\t150\t40\tA1'}
-          className="font-mono text-[12px]"
+      {step === 1 && (
+        <ImportStepFile
+          onFile={acceptFile}
+          pastedText={pastedText}
+          setPastedText={setPastedText}
+          onPasteContinue={acceptText}
+          busy={busy}
         />
+      )}
+      {step === 2 && table && (
+        <ImportStepMapping
+          table={table}
+          mapping={mapping}
+          setMapping={setMapping}
+        />
+      )}
+      {step === 3 && table && (
+        <ImportStepPreview
+          rows={rowsPreview}
+          updCount={updCount}
+          newCount={newCount}
+          invalidRows={invalidRows}
+        />
+      )}
+    </Modal>
+  )
+}
 
-        {parsed && (
-          <div>
-            <div className="flex items-center gap-2 mb-2 text-sm">
-              <Badge tone="ok">Обновится: {updCount}</Badge>
-              <Badge tone="brand">Новых: {newCount}</Badge>
+function ImportSteps({ step }) {
+  const items = [
+    { n: 1, label: 'Файл' },
+    { n: 2, label: 'Колонки' },
+    { n: 3, label: 'Превью' },
+  ]
+  return (
+    <div className="flex items-center gap-2 mb-4">
+      {items.map((it, i) => (
+        <div key={it.n} className="flex items-center gap-2 flex-1">
+          <div
+            className={cx(
+              'h-7 w-7 rounded-full grid place-items-center text-[12px] font-semibold shrink-0',
+              step > it.n
+                ? 'bg-ok text-white'
+                : step === it.n
+                  ? 'bg-brand text-brand-ink'
+                  : 'bg-surface-2 text-muted',
+            )}
+          >
+            {step > it.n ? <Check size={13} /> : it.n}
+          </div>
+          <div className={cx('text-[13px] font-medium', step >= it.n ? 'text-ink' : 'text-muted')}>
+            {it.label}
+          </div>
+          {i < items.length - 1 && <div className="flex-1 h-0.5 bg-surface-2 rounded" />}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function ImportStepFile({ onFile, pastedText, setPastedText, onPasteContinue, busy }) {
+  const [drag, setDrag] = useState(false)
+  const onDrop = (e) => {
+    e.preventDefault()
+    setDrag(false)
+    const f = e.dataTransfer.files?.[0]
+    if (f) onFile(f)
+  }
+  return (
+    <div className="space-y-4">
+      <div className="flex items-start gap-2 p-3 rounded-xl bg-info-soft text-info text-[13px]">
+        <TriangleAlert size={16} className="shrink-0 mt-0.5" />
+        <span>
+          Поддерживаются Excel (.xlsx, .xls) и CSV/TSV. На следующем шаге вы укажете, какая
+          колонка соответствует какому полю товара — автомап сработает по русским
+          заголовкам, и вы сможете его подправить.
+        </span>
+      </div>
+
+      <div
+        onDragOver={(e) => {
+          e.preventDefault()
+          setDrag(true)
+        }}
+        onDragLeave={() => setDrag(false)}
+        onDrop={onDrop}
+        className={cx(
+          'rounded-2xl border-2 border-dashed p-8 text-center transition',
+          drag ? 'border-brand bg-brand-soft' : 'border-line bg-surface-2',
+        )}
+      >
+        <FileUp size={40} className="mx-auto mb-3 text-muted" />
+        <div className="font-semibold mb-1">Перетащите файл сюда</div>
+        <div className="text-[12px] text-muted mb-4">
+          Excel (.xlsx, .xls) или CSV / TSV
+        </div>
+        <label className="inline-flex items-center gap-2 h-10 px-4 rounded-xl bg-brand text-brand-ink text-sm font-medium cursor-pointer hover:opacity-90">
+          <FileUp size={16} /> {busy ? 'Читаем…' : 'Выбрать файл'}
+          <input
+            type="file"
+            accept=".xlsx,.xls,.xlsm,.csv,.tsv,.txt"
+            onChange={(e) => e.target.files?.[0] && onFile(e.target.files[0])}
+            className="hidden"
+          />
+        </label>
+      </div>
+
+      <div className="relative flex items-center gap-3 text-[12px] text-muted my-3">
+        <div className="flex-1 h-px bg-line" />
+        или вставьте из буфера
+        <div className="flex-1 h-px bg-line" />
+      </div>
+
+      <Textarea
+        value={pastedText}
+        onChange={(e) => setPastedText(e.target.value)}
+        rows={5}
+        placeholder="Скопируйте строки из Excel (Ctrl+C) и вставьте сюда"
+        className="font-mono text-[12px]"
+      />
+      <div className="flex justify-end">
+        <Button icon={Check} disabled={!pastedText.trim()} onClick={onPasteContinue}>
+          Продолжить
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+function ImportStepMapping({ table, mapping, setMapping }) {
+  const setField = (field, colIdx) => {
+    setMapping((m) => {
+      const n = { ...m }
+      if (colIdx === '' || colIdx == null) delete n[field]
+      else n[field] = Number(colIdx)
+      return n
+    })
+  }
+  return (
+    <div className="space-y-4">
+      <div className="text-[13px] text-muted">
+        Автомап уже сработал по заголовкам. Проверьте: каждой сущности слева должна соответствовать
+        нужная колонка справа. Обязательные — «Артикул» и «Название».
+      </div>
+
+      <div className="border border-line rounded-xl overflow-hidden">
+        {IMPORT_FIELDS.map((f) => (
+          <div
+            key={f.key}
+            className="flex items-center gap-3 px-3 py-2 border-b border-line last:border-b-0"
+          >
+            <div className="flex-1 min-w-0">
+              <div className="text-[13px] font-medium flex items-center gap-1.5">
+                {f.label}
+                {f.required && <span className="text-bad">*</span>}
+              </div>
+              <div className="text-[11px] text-muted">
+                {f.key}
+                {f.numeric && ' · число'}
+              </div>
             </div>
-            <div className="border border-line rounded-xl overflow-hidden max-h-64 overflow-y-auto">
-              <table className="w-full text-[13px]">
-                <thead className="bg-surface-2 sticky top-0">
-                  <tr className="text-muted text-left">
-                    <th className="py-2 px-3 font-medium">Артикул</th>
-                    <th className="py-2 px-3 font-medium">Название</th>
-                    <th className="py-2 px-3 font-medium text-right">Цена</th>
-                    <th className="py-2 px-3 font-medium text-right">Остаток</th>
-                    <th className="py-2 px-3 font-medium">Действие</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-line">
-                  {parsed.rows.slice(0, 100).map((r, i) => (
-                    <tr key={i}>
-                      <td className="py-1.5 px-3 tabular-nums">{r.sku || '—'}</td>
-                      <td className="py-1.5 px-3 truncate max-w-[200px]">{r.name || '—'}</td>
-                      <td className="py-1.5 px-3 text-right tabular-nums">
-                        {r.price ? money(r.price) : '—'}
-                      </td>
-                      <td className="py-1.5 px-3 text-right tabular-nums">
-                        {r.stock != null ? num(r.stock) : '—'}
-                      </td>
-                      <td className="py-1.5 px-3">
-                        <Badge tone={r._action === 'update' ? 'ok' : 'brand'}>
-                          {r._action === 'update' ? 'обновить' : 'новый'}
-                        </Badge>
-                      </td>
-                    </tr>
+            <select
+              value={mapping[f.key] ?? ''}
+              onChange={(e) => setField(f.key, e.target.value)}
+              className={cx(
+                'h-9 px-2 rounded-lg bg-surface-2 border text-[13px] outline-none focus:border-brand min-w-[180px]',
+                f.required && mapping[f.key] == null ? 'border-bad' : 'border-line',
+              )}
+            >
+              <option value="">— не импортировать —</option>
+              {table.headers.map((h, i) => (
+                <option key={i} value={i}>
+                  {String.fromCharCode(65 + i)}. {h || `(колонка ${i + 1})`}
+                </option>
+              ))}
+            </select>
+          </div>
+        ))}
+      </div>
+
+      <details className="rounded-xl bg-surface-2 border border-line p-3 text-[13px]">
+        <summary className="cursor-pointer font-medium text-muted">
+          Превью первых 5 строк вашего файла
+        </summary>
+        <div className="overflow-x-auto mt-2">
+          <table className="w-full text-[12px]">
+            <thead>
+              <tr className="text-muted">
+                {table.headers.map((h, i) => (
+                  <th key={i} className="py-1.5 px-2 font-medium text-left border-b border-line">
+                    {String.fromCharCode(65 + i)}. {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {table.rows.slice(0, 5).map((row, i) => (
+                <tr key={i} className="border-b border-line last:border-b-0">
+                  {row.map((v, j) => (
+                    <td key={j} className="py-1 px-2 truncate max-w-[160px]">
+                      {v}
+                    </td>
                   ))}
-                </tbody>
-              </table>
-            </div>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </details>
+    </div>
+  )
+}
+
+function ImportStepPreview({ rows, updCount, newCount, invalidRows }) {
+  return (
+    <div>
+      <div className="flex flex-wrap items-center gap-2 mb-3 text-sm">
+        <Badge tone="brand">Всего: {rows.length}</Badge>
+        <Badge tone="ok">Обновится: {updCount}</Badge>
+        <Badge tone="info">Новых: {newCount}</Badge>
+        {invalidRows.length > 0 && (
+          <Badge tone="bad">С ошибками (пропустится): {invalidRows.length}</Badge>
+        )}
+      </div>
+      <div className="border border-line rounded-xl overflow-hidden max-h-[46vh] overflow-y-auto">
+        <table className="w-full text-[13px]">
+          <thead className="bg-surface-2 sticky top-0">
+            <tr className="text-muted text-left">
+              <th className="py-2 px-3 font-medium">#</th>
+              <th className="py-2 px-3 font-medium">Артикул</th>
+              <th className="py-2 px-3 font-medium">Название</th>
+              <th className="py-2 px-3 font-medium">Категория</th>
+              <th className="py-2 px-3 font-medium text-right">Цена</th>
+              <th className="py-2 px-3 font-medium text-right">Себест.</th>
+              <th className="py-2 px-3 font-medium text-right">Остаток</th>
+              <th className="py-2 px-3 font-medium">Действие</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-line">
+            {rows.slice(0, 200).map((r, i) => {
+              const bad = !r.sku || !r.name
+              return (
+                <tr key={i} className={bad ? 'bg-bad-soft/30' : ''}>
+                  <td className="py-1.5 px-3 tabular-nums text-muted">{r._rowIdx}</td>
+                  <td className="py-1.5 px-3 tabular-nums">{r.sku || <span className="text-bad">—</span>}</td>
+                  <td className="py-1.5 px-3 truncate max-w-[200px]">
+                    {r.name || <span className="text-bad">нет названия</span>}
+                  </td>
+                  <td className="py-1.5 px-3 text-muted">{r.category || '—'}</td>
+                  <td className="py-1.5 px-3 text-right tabular-nums">
+                    {r.price ? money(r.price) : '—'}
+                  </td>
+                  <td className="py-1.5 px-3 text-right tabular-nums text-muted">
+                    {r.cost ? money(r.cost) : '—'}
+                  </td>
+                  <td className="py-1.5 px-3 text-right tabular-nums">
+                    {r.stock != null ? num(r.stock) : '—'}
+                  </td>
+                  <td className="py-1.5 px-3">
+                    {bad ? (
+                      <Badge tone="bad">пропустится</Badge>
+                    ) : (
+                      <Badge tone={r._action === 'update' ? 'ok' : 'info'}>
+                        {r._action === 'update' ? 'обновить' : 'новый'}
+                      </Badge>
+                    )}
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+        {rows.length > 200 && (
+          <div className="text-[12px] text-muted text-center py-2 border-t border-line">
+            показаны первые 200 строк, будут импортированы все
           </div>
         )}
       </div>
-    </Modal>
+    </div>
   )
 }
 

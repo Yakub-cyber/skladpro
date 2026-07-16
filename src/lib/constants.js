@@ -112,3 +112,14 @@ export const GRID_W = 15
 export const GRID_H = 9
 export const ENTRANCE = { x: 1, y: 8, label: 'Выдача / Сборка' }
 export const RECEIVING = { x: 1, y: 1, label: 'Приёмка' }
+
+// Рабочие зоны склада — сервисные точки на карте, которые в редакторе
+// можно перетащить в удобное место. Значения по умолчанию используются,
+// если у склада нет своего массива `workZones` (persist до v10). Каждая
+// зона рисуется как «служебный квадрат» с иконкой; в editable-режиме
+// её можно взять курсором и перенести на другое место.
+export const DEFAULT_WORK_ZONES = [
+  { id: 'receive', kind: 'receive', label: 'Приёмка', color: '#38bdf8', x: 1, y: 1 },
+  { id: 'shipping', kind: 'shipping', label: 'Выдача', color: '#f59e0b', x: 1, y: 8 },
+  { id: 'picking', kind: 'picking', label: 'Сборка', color: '#7c6cff', x: 2, y: 8 },
+]

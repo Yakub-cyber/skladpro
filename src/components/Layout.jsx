@@ -1,5 +1,5 @@
 import { useState, Suspense } from 'react'
-import { NavLink, Outlet, useLocation } from 'react-router-dom'
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import {
   LayoutDashboard,
   ClipboardList,
@@ -29,8 +29,9 @@ import {
   Cloud,
   CloudOff,
   CloudUpload,
+  ShoppingCart,
 } from 'lucide-react'
-import { cx, Badge, Avatar } from './ui'
+import { cx, Avatar } from './ui'
 import CommandPalette from './CommandPalette'
 import { useStore } from '../store/useStore'
 import { canAccess, roleInfo } from '../lib/constants'
@@ -46,13 +47,18 @@ function useCurrentUser() {
   return me || { name: 'Гость', role: 'admin' }
 }
 
+// «Документы» вынесены на 2-е место и помечены `highlight: true` —
+// это самый частый экран для оператора склада (закупка, продажа,
+// перемещение, инвентаризация — все под рукой), важнее «Заказов» и
+// «Товаров». Highlight-пункт рендерится с брендовой обводкой, чтобы
+// глаз находил его моментально.
 export const NAV = [
   { to: '/', label: 'Дашборд', icon: LayoutDashboard, end: true, perm: 'dashboard' },
+  { to: '/operations', label: 'Документы', icon: ClipboardCheck, perm: 'operations', highlight: true },
   { to: '/orders', label: 'Заказы', icon: ClipboardList, perm: 'orders' },
   { to: '/delivery', label: 'Доставка', icon: Navigation, perm: 'delivery' },
   { to: '/products', label: 'Товары', icon: Package, perm: 'products' },
   { to: '/warehouse', label: 'Карта склада', icon: WarehouseIcon, perm: 'warehouse' },
-  { to: '/operations', label: 'Документы', icon: ClipboardCheck, perm: 'operations' },
   { to: '/invoices', label: 'Накладные', icon: FileText, ai: true, perm: 'invoices' },
   { to: '/customers', label: 'Клиенты', icon: Users, perm: 'customers' },
   { to: '/suppliers', label: 'Поставщики', icon: Truck, perm: 'suppliers' },
@@ -123,16 +129,16 @@ function Sidebar({ open, onClose }) {
                 cx(
                   'flex items-center gap-3 h-10 px-3 rounded-xl text-sm font-medium transition-colors relative group',
                   isActive
-                    ? 'bg-brand-soft text-brand'
-                    : 'text-muted hover:text-ink hover:bg-surface-2',
+                    ? 'bg-brand text-brand-ink'
+                    : item.highlight
+                      ? 'text-ink bg-brand-soft/60 hover:bg-brand-soft border border-brand/25'
+                      : 'text-muted hover:text-ink hover:bg-surface-2',
                 )
               }
             >
-              <item.icon size={18} strokeWidth={2.1} />
+              <item.icon size={item.highlight ? 19 : 18} strokeWidth={item.highlight ? 2.3 : 2.1} />
               <span className="flex-1">{item.label}</span>
-              {item.ai && (
-                <Sparkles size={13} className="text-brand opacity-80" />
-              )}
+              {item.ai && <Sparkles size={13} className="text-brand opacity-80" />}
               {counts[item.to] > 0 && (
                 <span className="text-[11px] font-semibold px-1.5 h-5 min-w-5 grid place-items-center rounded-md bg-surface-3 text-ink">
                   {counts[item.to]}
@@ -193,6 +199,25 @@ function SyncBadge() {
   )
 }
 
+// Кнопка «Касса» в шапке — всегда под рукой независимо от текущей страницы.
+// На десктопе — полноценная кнопка с текстом; на мобиле — только иконка.
+// Скрываем, если у текущей роли нет прав на заказы (курьер и т.п.).
+function CashierButton() {
+  const me = useCurrentUser()
+  const nav = useNavigate()
+  if (!canAccess(me.role, 'orders')) return null
+  return (
+    <button
+      onClick={() => nav('/orders/new')}
+      title="Открыть кассу"
+      className="h-10 px-3 rounded-xl bg-brand text-brand-ink font-medium text-sm inline-flex items-center gap-2 shrink-0 hover:opacity-90 transition shadow-sm shadow-brand/25"
+    >
+      <ShoppingCart size={17} />
+      <span className="hidden sm:inline">Касса</span>
+    </button>
+  )
+}
+
 function Topbar({ onMenu, onSearch }) {
   const { pathname } = useLocation()
   const title =
@@ -208,28 +233,29 @@ function Topbar({ onMenu, onSearch }) {
   }
 
   return (
-    <header className="h-16 shrink-0 border-b border-line bg-bg/80 backdrop-blur sticky top-0 z-20 flex items-center gap-3 px-4 lg:px-6">
+    <header className="h-16 shrink-0 border-b border-line bg-bg/80 backdrop-blur sticky top-0 z-20 flex items-center gap-2 sm:gap-3 px-3 sm:px-4 lg:px-6">
       <button
         onClick={onMenu}
-        className="lg:hidden h-9 w-9 grid place-items-center rounded-lg hover:bg-surface-2"
+        className="lg:hidden h-9 w-9 grid place-items-center rounded-lg hover:bg-surface-2 shrink-0"
       >
         <Menu size={20} />
       </button>
-      <h1 className="font-semibold text-[17px] tracking-tight hidden sm:block">
+      <h1 className="font-semibold text-[17px] tracking-tight hidden md:block">
         {title}
       </h1>
 
       <button
         onClick={onSearch}
-        className="ml-auto group flex items-center gap-2 h-10 px-3 rounded-xl bg-surface-2 border border-line text-muted hover:border-brand/40 transition w-full max-w-xs"
+        className="ml-auto group flex items-center gap-2 h-10 px-3 rounded-xl bg-surface-2 border border-line text-muted hover:border-brand/40 transition w-full max-w-xs min-w-0"
       >
-        <Search size={16} />
-        <span className="text-sm">Поиск по складу…</span>
+        <Search size={16} className="shrink-0" />
+        <span className="text-sm truncate">Поиск по складу…</span>
         <kbd className="ml-auto hidden md:flex items-center gap-0.5 text-[11px] px-1.5 h-5 rounded bg-surface-3 border border-line">
           <Command size={11} /> K
         </kbd>
       </button>
 
+      <CashierButton />
       <SyncBadge />
       <button
         onClick={toggleTheme}

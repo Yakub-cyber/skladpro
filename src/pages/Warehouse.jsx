@@ -41,7 +41,9 @@ export default function Warehouse() {
     updateCell,
     removeCell,
     moveProduct,
+    setWorkZone,
   } = useStore()
+  const activeWh = warehouses.find((w) => w.id === activeWarehouseId)
   const [q, setQ] = useState('')
   const [pick, setPick] = useState([])
   const [activeCell, setActiveCell] = useState(null)
@@ -96,7 +98,7 @@ export default function Warehouse() {
           <h2 className="text-xl font-semibold tracking-tight">Карта склада</h2>
           <p className="text-sm text-muted">
             {edit
-              ? 'Режим редактирования: тащите ячейки, кликом по полу добавляйте новые, выбирайте для переноса товара.'
+              ? 'Режим редактирования: тащите ячейки и рабочие зоны (Приёмка / Выдача / Сборка), кликом по полу — добавляйте новые ячейки.'
               : 'Найдите товар — карта покажет ячейку. Соберите список и постройте маршрут.'}
           </p>
         </div>
@@ -148,6 +150,8 @@ export default function Warehouse() {
             route={route}
             editable={edit}
             selectedCell={activeCell}
+            workZones={activeWh?.workZones}
+            onZoneMove={(zoneId, x, y) => setWorkZone(activeWarehouseId, zoneId, { x, y })}
             onCellMove={(id, x, y) => updateCell(id, { x, y })}
             onCellAdd={onCellAdd}
             onCellClick={(id) => {

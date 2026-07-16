@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react'
-import { GRID_W, GRID_H, ENTRANCE, RECEIVING } from '../lib/constants'
+import { GRID_W, GRID_H, DEFAULT_WORK_ZONES } from '../lib/constants'
 
 const U = 60
 const W = GRID_W * U
@@ -29,11 +29,17 @@ export default function WarehouseMap({
   onCellMove,
   onCellAdd,
   selectedCell = null,
+  workZones = null, // массив зон Приёмка/Выдача/Сборка. null → defaults.
+  onZoneMove, // (zoneId, x, y) => void в editable-режиме
   className,
 }) {
   const hi = useMemo(() => new Set(highlight), [highlight])
   const svgRef = useRef(null)
-  const [drag, setDrag] = useState(null) // { id, x, y } во время перетаскивания
+  // drag: { kind: 'cell'|'zone', id, x, y }
+  const [drag, setDrag] = useState(null)
+  const zones = Array.isArray(workZones) && workZones.length ? workZones : DEFAULT_WORK_ZONES
+  // ENTRANCE (для маршрута) — там где стоит зона выдачи.
+  const shipping = zones.find((z) => z.kind === 'shipping') || DEFAULT_WORK_ZONES[1]
 
   // что лежит в ячейке (по коду)
   const byCell = useMemo(() => {
@@ -43,7 +49,7 @@ export default function WarehouseMap({
   }, [products])
 
   const routePts = route?.order?.length
-    ? [ENTRANCE, ...route.order, ENTRANCE].map((c) => ({ x: c.x * U, y: c.y * U }))
+    ? [shipping, ...route.order, shipping].map((c) => ({ x: c.x * U, y: c.y * U }))
     : null
 
   const toGrid = (clientX, clientY) => {
@@ -62,8 +68,12 @@ export default function WarehouseMap({
     if (!drag) return
     const x = clamp(Math.round(drag.x), 1, GRID_W - 1)
     const y = clamp(Math.round(drag.y), 1, GRID_H - 1)
-    if (!cells.some((c) => c.id !== drag.id && c.x === x && c.y === y)) {
-      onCellMove?.(drag.id, x, y)
+    if (drag.kind === 'zone') {
+      onZoneMove?.(drag.id, x, y)
+    } else if (drag.kind === 'cell') {
+      if (!cells.some((c) => c.id !== drag.id && c.x === x && c.y === y)) {
+        onCellMove?.(drag.id, x, y)
+      }
     }
     setDrag(null)
   }
@@ -100,8 +110,28 @@ export default function WarehouseMap({
         <rect width={W} height={H} fill="url(#floor)" rx="14" />
         <rect width={W} height={H} fill="none" stroke="var(--border)" strokeWidth="2" rx="14" />
 
-        <ServicePoint x={RECEIVING.x * U} y={RECEIVING.y * U} label={RECEIVING.label} color="#38bdf8" />
-        <ServicePoint x={ENTRANCE.x * U} y={ENTRANCE.y * U} label={ENTRANCE.label} color="var(--brand)" star />
+        {zones.map((z) => {
+          const isDragged = drag?.kind === 'zone' && drag.id === z.id
+          const zx = (isDragged ? drag.x : z.x) * U
+          const zy = (isDragged ? drag.y : z.y) * U
+          return (
+            <ServicePoint
+              key={z.id}
+              x={zx}
+              y={zy}
+              label={z.label}
+              color={z.color}
+              kind={z.kind}
+              draggable={editable}
+              onPointerDown={(e) => {
+                if (!editable) return
+                e.stopPropagation()
+                setDrag({ kind: 'zone', id: z.id, x: z.x, y: z.y })
+              }}
+              opacity={isDragged ? 0.85 : 1}
+            />
+          )
+        })}
 
         {routePts && (
           <>
@@ -127,7 +157,7 @@ export default function WarehouseMap({
         )}
 
         {cells.map((c) => {
-          const isDragged = drag?.id === c.id
+          const isDragged = drag?.kind === 'cell' && drag.id === c.id
           const cx = (isDragged ? drag.x : c.x) * U
           const cy = (isDragged ? drag.y : c.y) * U
           const items = byCell[c.code] || []
@@ -145,7 +175,7 @@ export default function WarehouseMap({
               onPointerDown={(e) => {
                 if (editable) {
                   e.stopPropagation()
-                  setDrag({ id: c.id, x: c.x, y: c.y })
+                  setDrag({ kind: 'cell', id: c.id, x: c.x, y: c.y })
                 }
               }}
               style={{ cursor: editable ? 'grab' : onCellClick ? 'pointer' : 'default' }}
@@ -185,15 +215,34 @@ export default function WarehouseMap({
   )
 }
 
-function ServicePoint({ x, y, label, color, star }) {
+function ServicePoint({ x, y, label, color, kind, draggable, onPointerDown, opacity = 1 }) {
+  // Разные иконки в зависимости от типа зоны — Приёмка (стрелка вниз),
+  // Выдача (звёздочка/выход), Сборка (галочка-корзина).
+  const icon = kind === 'shipping'
+    ? <path d={starPath(x, y - 2, 11, 5)} fill={color} />
+    : kind === 'picking'
+      ? <path d={`M ${x - 8} ${y + 1} l 3.5 3.5 l 8.5 -8.5`} stroke={color} strokeWidth="2.4" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+      : /* receive и др. */ <path d={`M ${x} ${y - 8} L ${x} ${y + 4} M ${x - 5} ${y - 1} L ${x} ${y + 4} L ${x + 5} ${y - 1}`} stroke={color} strokeWidth="2.4" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+
   return (
-    <g>
-      <rect x={x - S / 2} y={y - S / 2} width={S} height={S} rx="10" fill={`color-mix(in srgb, ${color} 18%, var(--surface))`} stroke={color} strokeWidth="2" strokeDasharray="5 4" />
-      {star ? (
-        <path d={starPath(x, y - 2, 11, 5)} fill={color} />
-      ) : (
-        <path d={`M ${x - 9} ${y - 6} h 18 v 12 h -18 z M ${x - 9} ${y - 2} h 18`} fill="none" stroke={color} strokeWidth="2" />
-      )}
+    <g
+      onPointerDown={onPointerDown}
+      style={{ cursor: draggable ? 'grab' : 'default' }}
+      opacity={opacity}
+    >
+      <title>{`${label}${draggable ? ' · перетащите' : ''}`}</title>
+      <rect
+        x={x - S / 2}
+        y={y - S / 2}
+        width={S}
+        height={S}
+        rx="10"
+        fill={`color-mix(in srgb, ${color} 18%, var(--surface))`}
+        stroke={color}
+        strokeWidth="2"
+        strokeDasharray={draggable ? undefined : '5 4'}
+      />
+      {icon}
       <text x={x} y={y + S / 2 + 12} textAnchor="middle" fontSize="10" fontWeight="600" fill={color}>
         {label}
       </text>
