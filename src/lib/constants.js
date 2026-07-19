@@ -107,6 +107,25 @@ export const PRICE_TYPE_SEED = [
 export const priceFor = (product, priceTypeId) =>
   product?.prices?.[priceTypeId] ?? product?.price ?? 0
 
+// ── Типы товарной позиции ────────────────────────────────────────────────
+// product — обычный товар (есть остаток, партии FIFO, ячейка, штрихкод).
+// service — услуга (нет остатка/партий/ячейки/штрихкода, только цена).
+// kit     — комплект: продаётся одной строкой, при проведении раскрывается
+//           в составляющие и списывает их со склада по FIFO. Собственных
+//           батчей у комплекта нет.
+export const PRODUCT_TYPES = [
+  { key: 'product', label: 'Товар', short: 'Товар' },
+  { key: 'service', label: 'Услуга', short: 'Услуга' },
+  { key: 'kit', label: 'Комплект', short: 'Комплект' },
+]
+
+export const productTypeInfo = (key) =>
+  PRODUCT_TYPES.find((t) => t.key === key) || PRODUCT_TYPES[0]
+
+export const isService = (p) => p?.type === 'service'
+export const isKit = (p) => p?.type === 'kit'
+export const isRealProduct = (p) => !p?.type || p.type === 'product'
+
 // Геометрия склада
 export const GRID_W = 15
 export const GRID_H = 9

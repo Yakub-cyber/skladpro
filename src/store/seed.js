@@ -92,6 +92,7 @@ const P = [
 
 const PRODUCTS = P.map((r, i) => ({
   id: `p${i + 1}`,
+  type: 'product',
   sku: r[0],
   name: r[1],
   category: r[2],
@@ -109,7 +110,70 @@ const PRODUCTS = P.map((r, i) => ({
   batches: r[6] > 0
     ? [{ id: `p${i + 1}_b0`, qty: r[6], cost: r[5], at: '1970-01-01T00:00:00Z' }]
     : [],
+  components: [],
 }))
+
+// Демо-услуги — нет остатка/партий/ячейки, только цена.
+const SERVICES = [
+  {
+    id: 'sv1',
+    type: 'service',
+    sku: 'УСЛ-001',
+    name: 'Доставка по городу',
+    category: 'Расходники',
+    unit: 'услуга',
+    price: 500,
+    cost: 0,
+    stock: 0,
+    minStock: 0,
+    tags: ['доставка', 'услуга'],
+    batches: [],
+    components: [],
+  },
+  {
+    id: 'sv2',
+    type: 'service',
+    sku: 'УСЛ-002',
+    name: 'Погрузка/разгрузка',
+    category: 'Расходники',
+    unit: 'услуга',
+    price: 300,
+    cost: 0,
+    stock: 0,
+    minStock: 0,
+    tags: ['грузчик', 'услуга'],
+    batches: [],
+    components: [],
+  },
+]
+
+// Демо-комплект — «Стартовый набор сантехника»: несколько популярных
+// SKU по 1 шт. Цена фиксированная (со скидкой 10% от суммы составляющих —
+// для наглядности «покупать пакетом выгоднее»).
+const KITS = [
+  {
+    id: 'kit1',
+    type: 'kit',
+    sku: 'КОМП-001',
+    name: 'Стартовый набор мастера',
+    category: 'Инструмент',
+    unit: 'набор',
+    // Молоток 500г + Шуруповёрт 18В (×2) + Рулетка 5м. Цена комплекта
+    // задана вручную со скидкой относительно суммы составляющих —
+    // демонстрирует «покупать пакетом выгоднее».
+    price: 4900,
+    cost: 0,
+    stock: 0,
+    minStock: 0,
+    tags: ['набор', 'инструмент', 'стартовый'],
+    batches: [],
+    components: [
+      { productId: 'p10', qty: 1 },
+      { productId: 'p11', qty: 2 },
+      { productId: 'p14', qty: 1 },
+    ],
+  },
+]
 
 // ── Клиенты ──────────────────────────────────────────────────────────────
 // [name, type, city, contact, phone, totalSpent, bonus, daysAgo]
@@ -164,6 +228,15 @@ export function makeSeed() {
         : [],
     }
   })
+
+  // Услуги и комплекты — добавляем в общий список товаров. У них нет
+  // партий, ячеек и штрихкодов; в кассе они выделены значком типа.
+  const svAndKits = [...SERVICES, ...KITS].map((p) => {
+    const prices = {}
+    for (const t of PRICE_TYPE_SEED) prices[t.id] = Math.round(p.price * t.factor)
+    return { ...p, prices, warehouseId: 'wh1' }
+  })
+  products.push(...svAndKits)
 
   const ptByType = {
     ООО: 'pt_opt_delivery',

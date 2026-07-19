@@ -36,6 +36,33 @@ export const POST_SIGN = {
   sale: -1,
 }
 
+// Развернуть позицию документа: если строка — комплект, возвращает
+// её составляющие как отдельные виртуальные items со ссылкой на родителя
+// (для UI/журнала). Услуги остаются как есть — движок их пропускает
+// (см. ветку по типу ниже).
+function expandItem(state, it) {
+  const p = state.products.find((x) => x.id === it.productId)
+  if (!p || p.type !== 'kit' || !Array.isArray(p.components) || !p.components.length) {
+    return [it]
+  }
+  return p.components
+    .map((c) => {
+      const inner = state.products.find((x) => x.id === c.productId)
+      if (!inner) return null
+      return {
+        ...it,
+        productId: inner.id,
+        name: inner.name,
+        unit: inner.unit,
+        qty: (Number(it.qty) || 0) * (Number(c.qty) || 0),
+        weighted: inner.weighted,
+        // фиксируем происхождение — из какого комплекта пришла строка
+        _fromKit: p.id,
+      }
+    })
+    .filter(Boolean)
+}
+
 // Применить документ к остаткам и журналу движений.
 // dir=1 — провести, -1 — откатить (отмена проводки).
 // Возвращает part state ({ products, movements }) для set().
@@ -48,6 +75,27 @@ export function applyDocToState(state, doc, dir, by) {
   }
   const reason =
     dir < 0 ? `Отмена · ${doc.no}` : doc.reason || docTypeInfo(doc.type).label
+
+  // Услуга — виртуальная позиция без склада: пропускаем движок остатков.
+  // Комплект — раскрываем в составляющие: движок работает с каждым
+  // компонентом по отдельности. Услуги при списании оставляют пустой
+  // след в products, но движение с delta=0 писать не будем (иначе журнал
+  // засорится записями «продано 1 услугу»).
+  const isService = (productId) => {
+    const p = state.products.find((x) => x.id === productId)
+    return p?.type === 'service'
+  }
+  // Раскрываем items ДО обработки — kit-строки становятся набором
+  // component-строк, а исходный item.productId (kit) не участвует в
+  // проводке остатков (у kit нет batches/stock).
+  const rawItems = doc.items || []
+  const items = []
+  for (const it of rawItems) {
+    if (isService(it.productId)) continue // услуги — не проводим
+    items.push(...expandItem(state, it))
+  }
+  // Замещаем doc.items локальной копией — все ветки ниже читают items.
+  doc = { ...doc, items }
 
   if (doc.type === 'transfer') {
     for (const it of doc.items) {

@@ -19,9 +19,12 @@ export default function InventoryTab() {
 
   const list = useMemo(() => {
     const s = q.toLowerCase()
-    return products.filter(
-      (p) => !s || p.name.toLowerCase().includes(s) || p.sku.toLowerCase().includes(s),
-    )
+    return products.filter((p) => {
+      // Услуги и комплекты не инвентаризируются — у них нет собственных
+      // партий/остатка. Комплект считается через составляющие.
+      if (p.type && p.type !== 'product') return false
+      return !s || p.name.toLowerCase().includes(s) || p.sku.toLowerCase().includes(s)
+    })
   }, [products, q])
 
   const [visible, setVisible] = useState(PAGE_SIZE)

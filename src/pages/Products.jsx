@@ -44,7 +44,7 @@ import {
 } from '../components/ui'
 import { useStore } from '../store/useStore'
 import { money, num } from '../lib/format'
-import { CATEGORIES, catInfo } from '../lib/constants'
+import { CATEGORIES, catInfo, PRODUCT_TYPES, isService, isKit, isRealProduct } from '../lib/constants'
 import { CELLS } from '../store/seed'
 import { printLabels, printPriceTags, barcodeSVG } from '../lib/labels'
 import {
@@ -84,6 +84,7 @@ export default function Products() {
   const [params] = useSearchParams()
   const [q, setQ] = useState(params.get('q') || '')
   const [cat, setCat] = useState('all')
+  const [typeFilter, setTypeFilter] = useState('all') // all | product | service | kit
   const [edit, setEdit] = useState(null) // product | 'new' | null
   const [showImport, setShowImport] = useState(false)
   const [showLabels, setShowLabels] = useState(false)
@@ -107,12 +108,16 @@ export default function Products() {
     const s = q.trim().toLowerCase()
     const numOr = (v, fallback) => (v === '' || v == null ? fallback : Number(v))
     return products.filter((p) => {
+      // Фильтр по типу позиции (Товар / Услуга / Комплект).
+      // Дефолтное значение p.type — 'product', учитываем legacy без type.
+      const t = p.type || 'product'
+      if (typeFilter !== 'all' && t !== typeFilter) return false
       const okC = cat === 'all' || p.category === cat
       const okQ =
         !s ||
         p.name.toLowerCase().includes(s) ||
         p.sku.toLowerCase().includes(s) ||
-        p.tags.some((t) => t.includes(s))
+        p.tags.some((tag) => tag.includes(s))
       if (!okC || !okQ) return false
       // Диапазон цены (розничной).
       const price = Number(p.price) || 0
@@ -134,7 +139,7 @@ export default function Products() {
       if (filters.marked === 'no' && p.marked) return false
       return true
     })
-  }, [products, q, cat, filters])
+  }, [products, q, cat, filters, typeFilter])
 
   // Пагинация: на демо-30 SKU незаметно, на реальном оптовом каталоге
   // (тысячи позиций) полный рендер таблицы тормозит. Показываем окно
@@ -145,7 +150,7 @@ export default function Products() {
   const [visible, setVisible] = useState(PAGE_SIZE)
   useEffect(() => {
     setVisible(PAGE_SIZE)
-  }, [q, cat, filters])
+  }, [q, cat, filters, typeFilter])
   const shown = list.slice(0, visible)
 
   const totalValue = products.reduce((a, p) => a + p.stock * p.cost, 0)
@@ -234,6 +239,31 @@ export default function Products() {
         </div>
       </div>
 
+      {/* Чипы фильтра по типу позиции (Товар / Услуга / Комплект).
+          Считаем количество каждого — цифра рядом с чипом. */}
+      <div className="flex gap-1.5 overflow-x-auto no-scrollbar mb-4 -mx-1 px-1">
+        <TypeChip
+          active={typeFilter === 'all'}
+          onClick={() => setTypeFilter('all')}
+          count={products.length}
+        >
+          Все
+        </TypeChip>
+        {PRODUCT_TYPES.map((t) => {
+          const n = products.filter((p) => (p.type || 'product') === t.key).length
+          return (
+            <TypeChip
+              key={t.key}
+              active={typeFilter === t.key}
+              onClick={() => setTypeFilter(t.key)}
+              count={n}
+            >
+              {t.short}
+            </TypeChip>
+          )
+        })}
+      </div>
+
       {/* Раскрывающаяся панель фильтров */}
       {filtersOpen && (
         <FiltersPanel
@@ -277,20 +307,39 @@ export default function Products() {
               <div className="min-w-0 flex-1">
                 <div className="font-medium text-[14px] leading-snug truncate flex items-center gap-1.5">
                   {p.name}
+                  {isService(p) && (
+                    <Badge tone="info" className="shrink-0 text-[10px]">услуга</Badge>
+                  )}
+                  {isKit(p) && (
+                    <Badge tone="brand" className="shrink-0 text-[10px]">комплект</Badge>
+                  )}
                   {p.weighted && <Scale size={12} className="text-info shrink-0" />}
                   {p.marked && <ShieldCheck size={12} className="text-ok shrink-0" />}
                 </div>
                 <div className="text-[12px] text-muted truncate mt-0.5">
-                  {p.sku} · <span style={{ color: c.color }}>{p.category}</span> ·{' '}
-                  <MapPin size={11} className="inline -mt-0.5" /> {p.cell}
+                  {p.sku}
+                  {' · '}
+                  <span style={{ color: c.color }}>{p.category}</span>
+                  {!isService(p) && !isKit(p) && (
+                    <>
+                      {' · '}
+                      <MapPin size={11} className="inline -mt-0.5" /> {p.cell}
+                    </>
+                  )}
                 </div>
                 <div className="flex items-center justify-between mt-1.5">
                   <span className="font-semibold text-[15px] tabular-nums">{money(p.price)}</span>
-                  <Badge tone={stockTone(p)}>
-                    {num(p.stock)} {p.unit}
-                  </Badge>
+                  {isRealProduct(p) ? (
+                    <Badge tone={stockTone(p)}>
+                      {num(p.stock)} {p.unit}
+                    </Badge>
+                  ) : (
+                    <span className="text-[11px] text-muted">
+                      {isKit(p) ? `состав: ${p.components?.length || 0}` : 'без остатка'}
+                    </span>
+                  )}
                 </div>
-                {reserved[p.id] > 0 && (
+                {isRealProduct(p) && reserved[p.id] > 0 && (
                   <div className="text-[11px] text-muted mt-0.5 tabular-nums">
                     резерв {num(reserved[p.id])} · дост. {num(p.stock - reserved[p.id])}
                   </div>
@@ -731,6 +780,32 @@ function SelectField({ label, value, onChange, options }) {
   )
 }
 
+// Крупный чип с числом — для фильтра по типу позиции (Товар/Услуга/Комплект).
+// Отличается от обычного Chip брендовой обводкой и цифрой справа.
+function TypeChip({ active, onClick, children, count }) {
+  return (
+    <button
+      onClick={onClick}
+      className={cx(
+        'inline-flex items-center gap-1.5 px-3 h-9 rounded-xl text-[13px] font-medium whitespace-nowrap transition border',
+        active
+          ? 'bg-brand text-brand-ink border-brand'
+          : 'bg-surface border-line text-muted hover:text-ink',
+      )}
+    >
+      <span>{children}</span>
+      <span
+        className={cx(
+          'text-[11px] px-1.5 h-5 min-w-5 grid place-items-center rounded-md tabular-nums',
+          active ? 'bg-white/25' : 'bg-surface-2 text-ink',
+        )}
+      >
+        {count}
+      </span>
+    </button>
+  )
+}
+
 function Chip({ active, onClick, children }) {
   return (
     <button
@@ -746,10 +821,11 @@ function Chip({ active, onClick, children }) {
 }
 
 function ProductModal({ product, onClose }) {
-  const { addProduct, updateProduct, adjustStock, removeProduct, priceTypes } = useStore()
+  const { addProduct, updateProduct, adjustStock, removeProduct, priceTypes, products: allProducts } = useStore()
   const isNew = !product
   const [f, setF] = useState(
     product || {
+      type: 'product',
       name: '',
       sku: '',
       category: 'Крепёж',
@@ -761,8 +837,12 @@ function ProductModal({ product, onClose }) {
       cell: CELLS[0].id,
       tags: [],
       prices: {},
+      components: [],
     },
   )
+  const type = f.type || 'product'
+  const isServiceForm = type === 'service'
+  const isKitForm = type === 'kit'
   const [receive, setReceive] = useState('')
   const set = (k, v) => setF((s) => ({ ...s, [k]: v }))
   const defType = priceTypes.find((t) => t.default)?.id || priceTypes[0]?.id
@@ -822,8 +902,31 @@ function ProductModal({ product, onClose }) {
       }
     >
       <div className="space-y-4">
+        {/* Тип позиции: Товар / Услуга / Комплект. Меняет форму: скрывает
+            штрихкод/остаток/ячейку для услуги, показывает состав для kit. */}
+        <div>
+          <span className="block text-[13px] font-medium text-muted mb-2">Тип позиции</span>
+          <div className="grid grid-cols-3 gap-2">
+            {PRODUCT_TYPES.map((t) => (
+              <button
+                key={t.key}
+                type="button"
+                onClick={() => set('type', t.key)}
+                className={cx(
+                  'h-10 rounded-xl text-[13px] font-medium border transition',
+                  type === t.key
+                    ? 'bg-brand text-brand-ink border-brand'
+                    : 'bg-surface-2 border-line text-muted hover:text-ink',
+                )}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
         <ImageField value={f.image} onChange={(v) => set('image', v)} />
-        {!isNew && (
+        {!isNew && !isServiceForm && !isKitForm && (
           <div className="flex items-center gap-2 p-3 rounded-xl bg-surface-2">
             <PackagePlus size={18} className="text-brand" />
             <span className="text-sm text-muted flex-1">Оприходовать поступление</span>
@@ -856,12 +959,18 @@ function ProductModal({ product, onClose }) {
           </Field>
         </div>
 
-        <BarcodeField value={f.barcode} onChange={(v) => set('barcode', v)} />
+        {/* Штрихкод — только для товаров (у услуги/комплекта его нет). */}
+        {!isServiceForm && !isKitForm && (
+          <BarcodeField value={f.barcode} onChange={(v) => set('barcode', v)} />
+        )}
         <div className="grid grid-cols-2 gap-3">
           <Field label="Ед. изм.">
             <Input value={f.unit} onChange={(e) => set('unit', e.target.value)} />
           </Field>
-          <Field label="Закупка, ₽">
+          {/* Себестоимость: у услуги обычно 0/оценка, у комплекта — сумма
+              cost составляющих (посчитается при проведении FIFO). Оставляем
+              поле для ручного ориентира. */}
+          <Field label={isServiceForm ? 'Себестоимость, ₽' : 'Закупка, ₽'}>
             <Input
               type="number"
               value={f.cost}
@@ -869,6 +978,24 @@ function ProductModal({ product, onClose }) {
             />
           </Field>
         </div>
+
+        {/* Редактор состава — только для комплекта. */}
+        {isKitForm && (
+          <KitComponentsEditor
+            components={f.components || []}
+            onChange={(components) => set('components', components)}
+            allProducts={allProducts}
+            currentId={product?.id}
+            onFillPriceFromComponents={(sum) => {
+              set('price', sum)
+              // синхронизируем и категорийные цены — базой
+              const nextPrices = {}
+              for (const t of priceTypes) nextPrices[t.id] = Math.round(sum * (t.factor || 1))
+              set('prices', nextPrices)
+            }}
+            priceTypes={priceTypes}
+          />
+        )}
 
         <div>
           <span className="block text-[13px] font-medium text-muted mb-2">
@@ -900,60 +1027,193 @@ function ProductModal({ product, onClose }) {
             ))}
           </div>
         </div>
-        <div className="grid grid-cols-3 gap-3">
-          <Field label="Остаток">
-            <Input
-              type="number"
-              value={f.stock}
-              onChange={(e) => set('stock', +e.target.value)}
-              disabled={!isNew}
-            />
-          </Field>
-          <Field label="Минимум">
-            <Input
-              type="number"
-              value={f.minStock}
-              onChange={(e) => set('minStock', +e.target.value)}
-            />
-          </Field>
-          <Field label="Ячейка">
-            <Select value={f.cell} onChange={(e) => set('cell', e.target.value)}>
-              {CELLS.map((c) => (
-                <option key={c.id}>{c.id}</option>
-              ))}
-            </Select>
-          </Field>
-        </div>
-
-        <div className="pt-1 space-y-2">
-          <span className="block text-[13px] font-medium text-muted">Тип товара</span>
-          <div className="grid sm:grid-cols-2 gap-2">
-            <CheckCard
-              checked={!!f.weighted}
-              onChange={(v) => set('weighted', v)}
-              title="Весовой"
-              hint="Продаётся на вес (кг), весовой штрихкод"
-            />
-            <CheckCard
-              checked={!!f.marked}
-              onChange={(v) => set('marked', v)}
-              title="Маркировка «Честный знак»"
-              hint="Учёт кодов маркировки (КМ)"
-            />
-          </div>
-          {f.weighted && (
-            <Field label="PLU (код для весов)" hint="2–5 цифр, печатается на весах магазина">
+        {/* Остаток / минимум / ячейка — только для товара.
+            У услуги и комплекта нет складского остатка (комплект берётся
+            из составляющих на лету). */}
+        {!isServiceForm && !isKitForm && (
+          <div className="grid grid-cols-3 gap-3">
+            <Field label="Остаток">
               <Input
-                value={f.plu || ''}
-                onChange={(e) => set('plu', e.target.value.replace(/\D/g, '').slice(0, 5))}
-                placeholder="21"
-                inputMode="numeric"
+                type="number"
+                value={f.stock}
+                onChange={(e) => set('stock', +e.target.value)}
+                disabled={!isNew}
               />
             </Field>
-          )}
-        </div>
+            <Field label="Минимум">
+              <Input
+                type="number"
+                value={f.minStock}
+                onChange={(e) => set('minStock', +e.target.value)}
+              />
+            </Field>
+            <Field label="Ячейка">
+              <Select value={f.cell} onChange={(e) => set('cell', e.target.value)}>
+                {CELLS.map((c) => (
+                  <option key={c.id}>{c.id}</option>
+                ))}
+              </Select>
+            </Field>
+          </div>
+        )}
+
+        {/* Признаки «весовой / маркировка» — только для физического товара. */}
+        {!isServiceForm && !isKitForm && (
+          <div className="pt-1 space-y-2">
+            <span className="block text-[13px] font-medium text-muted">Признаки</span>
+            <div className="grid sm:grid-cols-2 gap-2">
+              <CheckCard
+                checked={!!f.weighted}
+                onChange={(v) => set('weighted', v)}
+                title="Весовой"
+                hint="Продаётся на вес (кг), весовой штрихкод"
+              />
+              <CheckCard
+                checked={!!f.marked}
+                onChange={(v) => set('marked', v)}
+                title="Маркировка «Честный знак»"
+                hint="Учёт кодов маркировки (КМ)"
+              />
+            </div>
+            {f.weighted && (
+              <Field label="PLU (код для весов)" hint="2–5 цифр, печатается на весах магазина">
+                <Input
+                  value={f.plu || ''}
+                  onChange={(e) => set('plu', e.target.value.replace(/\D/g, '').slice(0, 5))}
+                  placeholder="21"
+                  inputMode="numeric"
+                />
+              </Field>
+            )}
+          </div>
+        )}
       </div>
     </Modal>
+  )
+}
+
+// Редактор состава комплекта — список товаров с qty. Кнопка «сумма
+// составляющих» подставляет цену как сумму розничных цен × qty (для
+// ориентира; ручная цена комплекта задаётся отдельно).
+function KitComponentsEditor({ components, onChange, allProducts, currentId, onFillPriceFromComponents, priceTypes }) {
+  const [q, setQ] = useState('')
+  // Из списка товаров исключаем услуги/комплекты (нельзя комплект в комплект)
+  // и сам этот товар при редактировании.
+  const candidates = allProducts
+    .filter((p) => p.id !== currentId && (p.type || 'product') === 'product')
+    .filter((p) => {
+      const s = q.trim().toLowerCase()
+      return !s || p.name.toLowerCase().includes(s) || p.sku.toLowerCase().includes(s)
+    })
+    .slice(0, 6)
+
+  const componentTotal = components.reduce((s, c) => {
+    const p = allProducts.find((x) => x.id === c.productId)
+    return s + (Number(p?.price) || 0) * (Number(c.qty) || 0)
+  }, 0)
+
+  const add = (p) => {
+    if (components.find((c) => c.productId === p.id)) return
+    onChange([...components, { productId: p.id, qty: 1 }])
+    setQ('')
+  }
+  const setQty = (id, qty) =>
+    onChange(
+      qty <= 0
+        ? components.filter((c) => c.productId !== id)
+        : components.map((c) => (c.productId === id ? { ...c, qty } : c)),
+    )
+
+  return (
+    <div className="rounded-xl border border-brand/30 bg-brand-soft/40 p-3 space-y-2">
+      <div className="flex items-center gap-2">
+        <span className="text-[13px] font-medium">Состав комплекта</span>
+        <span className="ml-auto text-[12px] text-muted">
+          Сумма розничных цен: <b className="text-ink tabular-nums">{money(componentTotal)}</b>
+        </span>
+        <button
+          type="button"
+          onClick={() => onFillPriceFromComponents(componentTotal)}
+          className="text-[12px] px-2 h-7 rounded-lg bg-surface hover:bg-surface-2 border border-line whitespace-nowrap"
+          title="Установить цену комплекта = сумма составляющих"
+        >
+          Взять как цену
+        </button>
+      </div>
+
+      {components.length > 0 ? (
+        <div className="space-y-1.5">
+          {components.map((c) => {
+            const p = allProducts.find((x) => x.id === c.productId)
+            if (!p) {
+              return (
+                <div key={c.productId} className="p-2 rounded-lg bg-surface border border-line text-[12px] text-bad">
+                  Товар не найден: {c.productId}{' '}
+                  <button onClick={() => setQty(c.productId, 0)} className="ml-1 underline">
+                    удалить
+                  </button>
+                </div>
+              )
+            }
+            return (
+              <div key={c.productId} className="flex items-center gap-2 p-2 rounded-lg bg-surface">
+                <div className="min-w-0 flex-1">
+                  <div className="text-[13px] font-medium truncate">{p.name}</div>
+                  <div className="text-[11px] text-muted">
+                    {p.sku} · {money(p.price)}/{p.unit}
+                  </div>
+                </div>
+                <input
+                  type="number"
+                  min="0.01"
+                  step="0.5"
+                  value={c.qty}
+                  onChange={(e) => setQty(c.productId, +e.target.value)}
+                  className="w-16 h-8 px-1 rounded-lg bg-surface-2 border border-line text-sm text-center"
+                />
+                <span className="text-[12px] text-muted w-10">{p.unit}</span>
+                <button
+                  onClick={() => setQty(c.productId, 0)}
+                  className="text-muted hover:text-bad"
+                  title="Убрать"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            )
+          })}
+        </div>
+      ) : (
+        <div className="text-[12px] text-muted italic">Добавьте товары в состав снизу.</div>
+      )}
+
+      {/* Добавление товара в состав */}
+      <div className="relative">
+        <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted pointer-events-none" />
+        <input
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Найти товар для добавления в комплект…"
+          className="w-full h-9 pl-8 pr-3 rounded-lg bg-surface border border-line text-[13px] outline-none focus:border-brand"
+        />
+        {q && candidates.length > 0 && (
+          <div className="absolute left-0 right-0 top-full mt-1 z-10 card p-1 max-h-56 overflow-y-auto">
+            {candidates.map((p) => (
+              <button
+                key={p.id}
+                onClick={() => add(p)}
+                className="w-full flex items-center justify-between gap-2 px-2 h-9 rounded-md hover:bg-surface-2 text-left text-[13px]"
+              >
+                <span className="truncate">{p.name}</span>
+                <span className="text-muted text-[11px] shrink-0">
+                  {p.sku} · {money(p.price)}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
   )
 }
 

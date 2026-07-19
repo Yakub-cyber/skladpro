@@ -120,6 +120,18 @@ export function persistMigrate(state, version) {
     })
   }
 
+  if (version < 10) {
+    // Типы товарной позиции: product/service/kit. Все существующие товары
+    // становятся type='product', components — пустой массив на случай, если
+    // потом станут комплектом. Услуги/комплекты добавляются пользователем
+    // вручную из карточки.
+    state.products = (state.products || []).map((p) => ({
+      ...p,
+      type: p.type || 'product',
+      components: p.components || [],
+    }))
+  }
+
   return state
 }
 

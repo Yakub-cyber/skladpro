@@ -86,7 +86,11 @@ export const useStore = create(
         get().logAction('Закрыта смена', { section: 'Касса', type: 'shift' })
       },
 
-      // ── Товары ───────────────────────────────────────────────
+      // ── Товары / услуги / комплекты ─────────────────────────────
+      // type: 'product' | 'service' | 'kit' (default 'product'). Услуга и
+      // комплект пропускают ленту складских полей (stock/batches/cell);
+      // seed по умолчанию оставляем безопасный — движок posting.js это
+      // корректно обрабатывает.
       addProduct: (p) => {
         const pts = get().priceTypes || []
         const prices =
@@ -95,19 +99,23 @@ export const useStore = create(
           products: [
             {
               id: uid('p'),
+              type: 'product',
               stock: 0,
               minStock: 0,
               tags: [],
               weighted: false,
               marked: false,
               codes: [],
+              components: [],
               prices,
               ...p,
             },
             ...s.products,
           ],
         }))
-        get().logAction(`Добавлен товар «${p.name || 'без названия'}»`, {
+        const label =
+          p.type === 'service' ? 'услуга' : p.type === 'kit' ? 'комплект' : 'товар'
+        get().logAction(`Добавлен ${label} «${p.name || 'без названия'}»`, {
           section: 'Товары',
           type: 'create',
         })
@@ -771,7 +779,7 @@ export const useStore = create(
     }),
     {
       name: 'sklad.db',
-      version: 9,
+      version: 10,
       partialize: persistPartialize,
       merge: persistMerge,
       migrate: persistMigrate,
