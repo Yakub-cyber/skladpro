@@ -270,17 +270,20 @@ export default function Settings() {
 }
 
 function PasswordSection({ companyName }) {
+  const [oldPass, setOldPass] = useState('')
   const [pass, setPass] = useState('')
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState(null)
 
   const submit = async () => {
-    if (pass.length < 6) return setMsg({ ok: false, m: 'Минимум 6 символов' })
+    if (!oldPass) return setMsg({ ok: false, m: 'Введите текущий пароль' })
+    if (pass.length < 8) return setMsg({ ok: false, m: 'Минимум 8 символов' })
     setBusy(true)
-    const r = await changePassword(pass)
+    // Новый бэкенд требует старый пароль для смены (защита от «зашёл на девайс — сменил»).
+    const r = await changePassword(pass, oldPass)
     setBusy(false)
-    setMsg(r.ok ? { ok: true, m: 'Пароль изменён' } : { ok: false, m: r.error })
-    if (r.ok) setPass('')
+    setMsg(r.ok ? { ok: true, m: 'Пароль изменён — придётся войти заново на всех устройствах' } : { ok: false, m: r.error })
+    if (r.ok) { setPass(''); setOldPass('') }
   }
 
   return (
@@ -293,10 +296,13 @@ function PasswordSection({ companyName }) {
       subtitle={companyName ? `Облачный аккаунт · компания «${companyName}»` : 'Смена пароля от аккаунта'}
     >
       <div className="flex flex-wrap items-end gap-3">
-        <Field label="Новый пароль" hint="Минимум 6 символов" className="flex-1 min-w-[200px]">
-          <Input type="password" value={pass} onChange={(e) => setPass(e.target.value)} placeholder="••••••••" />
+        <Field label="Текущий пароль" className="flex-1 min-w-[180px]">
+          <Input type="password" value={oldPass} onChange={(e) => setOldPass(e.target.value)} placeholder="••••••••" autoComplete="current-password" />
         </Field>
-        <Button onClick={submit} disabled={busy || !pass}>
+        <Field label="Новый пароль" hint="Минимум 8 символов" className="flex-1 min-w-[180px]">
+          <Input type="password" value={pass} onChange={(e) => setPass(e.target.value)} placeholder="••••••••" autoComplete="new-password" />
+        </Field>
+        <Button onClick={submit} disabled={busy || !pass || !oldPass}>
           {busy ? 'Сохраняем…' : 'Сменить пароль'}
         </Button>
       </div>

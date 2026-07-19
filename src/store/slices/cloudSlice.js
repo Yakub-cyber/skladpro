@@ -25,8 +25,18 @@ import {
   createCompanyCloud,
   acceptInvitation,
   checkRecovery,
-  changePassword,
+  applyPasswordReset,
+  subscribeToEvents,
 } from '../../lib/cloud'
+
+// Дебаунсим pull после SSE-события: за 500мс может прилететь пачка событий
+// (например, продажа + PIN-верификация), делать pull после каждого дорого.
+let sseDebounce = null
+let sseUnsub = null
+function scheduleRealtimeSync(fn) {
+  if (sseDebounce) clearTimeout(sseDebounce)
+  sseDebounce = setTimeout(() => { sseDebounce = null; fn() }, 500)
+}
 
 let storeRef = null
 
@@ -49,6 +59,7 @@ export const cloudInitialState = {
   _authInited: false,
   needOnboarding: false,
   recoveryMode: false,
+  resetToken: null,
   companyId: null,
   companyName: null,
 }
@@ -79,9 +90,11 @@ export const createCloudSlice = (set, get) => ({
         get().bootstrapCloud()
       }
     })
-    // переход по ссылке сброса пароля → экран ввода нового (без bootstrap)
-    if (await checkRecovery()) {
-      set({ recoveryMode: true })
+    // Переход по magic-link сброса пароля → экран нового пароля (без bootstrap).
+    // Новая версия checkRecovery возвращает токен из URL или null.
+    const resetToken = await checkRecovery()
+    if (resetToken) {
+      set({ recoveryMode: true, resetToken })
       return
     }
     // восстановление сессии при загрузке
@@ -198,6 +211,33 @@ export const createCloudSlice = (set, get) => ({
         if (storeRef) resumeSync(storeRef)
       }
       if (storeRef) attachSync(storeRef)
+
+      // Realtime SSE: подписываемся на события компании и при их получении
+      // делаем быстрый pull, чтобы UI мгновенно увидел продажу/платёж с другого
+      // устройства. Одна подписка на сессию — снимаем при выходе (в cloudLogout).
+      if (sseUnsub) { try { sseUnsub() } catch {} }
+      sseUnsub = subscribeToEvents((ev) => {
+        // Игнорируем чужие компании (сервер уже фильтрует, но подстраховка).
+        if (ev?.companyId && ev.companyId !== companyId) return
+        scheduleRealtimeSync(async () => {
+          try {
+            const fresh = await cloudLoadMerged()
+            if (!fresh) return
+            pauseSync()
+            try {
+              // Мержим только «серверные» коллекции: заказы, движения, документы, аудит.
+              // Локальный settings.aiKey и т.п. оставляем.
+              const patch = {}
+              for (const k of ['orders', 'movements', 'audit', 'documents', 'customers', 'products', 'invoices', 'shifts']) {
+                if (Array.isArray(fresh[k])) patch[k] = fresh[k]
+              }
+              set(patch)
+            } finally {
+              if (storeRef) resumeSync(storeRef)
+            }
+          } catch { /* сеть/отказ бэкенда — следующий event или ручной pull попозже */ }
+        })
+      })
     } catch (e) {
       set({ cloudError: e?.message || e?.code || String(e) })
     } finally {
@@ -230,6 +270,8 @@ export const createCloudSlice = (set, get) => ({
   },
 
   cloudLogout: async () => {
+    if (sseUnsub) { try { sseUnsub() } catch {} sseUnsub = null }
+    if (sseDebounce) { clearTimeout(sseDebounce); sseDebounce = null }
     await cloudSignOut()
     set({
       authUserId: null,
@@ -240,12 +282,22 @@ export const createCloudSlice = (set, get) => ({
     })
   },
 
-  // Завершить сброс пароля: задать новый и войти в приложение
+  // Завершить сброс пароля: применить magic-link токен, затем показать логин.
+  // Сессии после reset нет (сервер гасит все refresh-семьи), пользователь
+  // должен ввести новый пароль на экране входа.
   completePasswordReset: async (newPassword) => {
-    const r = await changePassword(newPassword)
+    const token = get().resetToken
+    if (!token) return { ok: false, error: 'Токен сброса не найден' }
+    const r = await applyPasswordReset(token, newPassword)
     if (r.ok) {
-      set({ recoveryMode: false })
-      await get().bootstrapCloud()
+      // Очистим URL от токена, чтобы обновление страницы не «зациклилось».
+      try {
+        if (typeof window !== 'undefined') {
+          const clean = window.location.pathname + window.location.search
+          window.history.replaceState({}, '', clean + '#/')
+        }
+      } catch {}
+      set({ recoveryMode: false, resetToken: null })
     }
     return r
   },

@@ -1,37 +1,25 @@
-import { createClient } from '@supabase/supabase-js'
+// ──────────────────────────────────────────────────────────────────────────
+//  Shim после ухода с Supabase на собственный API-бэкенд (skladpro-backend).
+//  Прямых обращений к supabase-js больше нет — весь транспорт в lib/api.js.
+//  Оставлен, чтобы не менять множество импортов старого имени hasSupabase.
+// ──────────────────────────────────────────────────────────────────────────
+import { hasApi } from './api'
 
-// Захватываем recovery-токены из URL СРАЗУ при загрузке модуля — до того, как
-// HashRouter перепишет hash (ссылка из письма сброса приходит как
-// #access_token=...&type=recovery). Сохраняем и чистим URL.
-export let recoveryTokens = null
-if (typeof window !== 'undefined') {
-  const raw = window.location.hash.replace(/^#\/?/, '')
-  if (raw.includes('access_token') && raw.includes('type=recovery')) {
-    const p = new URLSearchParams(raw)
-    recoveryTokens = {
-      access_token: p.get('access_token'),
-      refresh_token: p.get('refresh_token'),
-    }
-    window.history.replaceState(null, '', window.location.pathname + window.location.search + '#/')
-  }
-}
+export const hasSupabase = hasApi
 
-// Подключение к Supabase. Ключи — из переменных окружения (.env / CI secrets).
-// VITE_SUPABASE_KEY — публичный (publishable) ключ: безопасен в браузере,
-// доступ к данным ограничивается политиками RLS на стороне базы.
-const url = import.meta.env.VITE_SUPABASE_URL
-const key = import.meta.env.VITE_SUPABASE_KEY
+// recoveryTokens больше не собираются из URL: восстановление пароля
+// перенесено в наш бэкенд (POST /v1/auth/password/* — будущий эндпоинт).
+// Оставляем экспорт с null для обратной совместимости.
+export const recoveryTokens = null
 
-export const supabase =
-  url && key
-    ? createClient(url, key, {
-        auth: {
-          persistSession: true,
-          autoRefreshToken: true,
-          detectSessionInUrl: false,
-          storage: window.localStorage,
-          storageKey: 'skladpro-auth',
-        },
-      })
-    : null
-export const hasSupabase = !!supabase
+export const supabase = new Proxy(
+	{},
+	{
+		get(_target, prop) {
+			throw new Error(
+				`[supabase-shim] прямой доступ к supabase.${String(prop)} больше не поддерживается — ` +
+					'используйте lib/api.js (apiFetch, apiSale, apiSyncPull/Push и т.п.)',
+			)
+		},
+	},
+)

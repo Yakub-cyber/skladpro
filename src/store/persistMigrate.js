@@ -125,11 +125,13 @@ export function persistMigrate(state, version) {
 
 // Runtime-флаги, которые НЕ сохраняются в persist. Иначе после reload
 // приложение подумает, что оно уже инициализировано, и не пойдёт в
-// bootstrapCloud/initAuth заново.
+// bootstrapCloud/initAuth заново. 'cloud' обязан выводиться только из env
+// (hasApi): застрявшее в снапшоте значение иначе переживает смену конфига.
 export const RUNTIME_FLAGS = [
   '_authInited',
   '_bootBusy',
   '_creating',
+  'cloud',
   'cloudReady',
   'needOnboarding',
   'recoveryMode',
@@ -143,4 +145,13 @@ export function persistPartialize(state) {
   const rest = { ...state }
   for (const k of RUNTIME_FLAGS) delete rest[k]
   return rest
+}
+
+// Merge при регидрации: старые снапшоты могли успеть сохранить runtime-флаги
+// (до добавления ключа в RUNTIME_FLAGS) — вычищаем их и на чтении, иначе они
+// перекроют начальное состояние до первой перезаписи снапшота.
+export function persistMerge(persisted, current) {
+  const clean = { ...persisted }
+  for (const k of RUNTIME_FLAGS) delete clean[k]
+  return { ...current, ...clean }
 }

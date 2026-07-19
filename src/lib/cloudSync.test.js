@@ -1,280 +1,298 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
-// ── Мок Supabase-клиента ────────────────────────────────────────────────────
+// ── Мок API-клиента ────────────────────────────────────────────────────────
 // h.impl подменяется в каждом тесте; log копит вызовы в порядке исполнения.
 const h = vi.hoisted(() => ({ impl: null }))
 
-vi.mock('./supabase', () => ({
-  recoveryTokens: null,
-  hasSupabase: true,
-  supabase: { from: (table) => h.impl.from(table) },
+vi.mock('./api', () => ({
+	hasApi: true,
+	getSession: () => null,
+	getCompanyId: () => 'c1',
+	onAuthChange: () => () => {},
+	apiSignIn: () => Promise.resolve({ ok: true }),
+	apiSignUp: () => Promise.resolve({ ok: true }),
+	apiSignOut: () => Promise.resolve(),
+	apiListMemberships: () => Promise.resolve({ ok: true, body: { memberships: [] } }),
+	apiCreateCompany: () => Promise.resolve({ ok: true, body: {} }),
+	apiPinVerify: () => Promise.resolve({ ok: false, error: { code: 'PIN_INVALID' } }),
+	apiSale: () => Promise.resolve({ ok: true, body: {} }),
+	apiDocument: () => Promise.resolve({ ok: true, body: {} }),
+	apiReturn: () => Promise.resolve({ ok: true, body: {} }),
+	apiFetch: (...args) => h.impl.apiFetch(...args),
+	apiSyncPull: (...args) => h.impl.apiSyncPull(...args),
+	apiSyncPush: (...args) => h.impl.apiSyncPush(...args),
+	apiPutSettings: (...args) => h.impl.apiPutSettings(...args),
 }))
 
 import { cloudLoadMerged, applyPendingToData, syncOutbox } from './cloud'
 
-// Фабрика мока: rows — данные select по таблицам, upsert/del — поведение записи
-function makeSupabase({ rows = {}, upsert, del, settingsRow = null } = {}) {
-  const log = []
-  return {
-    log,
-    from: (table) => ({
-      select: () => ({
-        // await supabase.from(t).select('*') — толкаемся как thenable
-        then: (resolve) => {
-          log.push(['select', table])
-          resolve({ data: rows[table] || [], error: null })
-        },
-        // .select('data').maybeSingle() — ветка настроек
-        maybeSingle: () => {
-          log.push(['select', table])
-          return Promise.resolve({ data: settingsRow, error: null })
-        },
-      }),
-      upsert: (payload) => {
-        log.push(['upsert', table, payload])
-        return Promise.resolve(upsert ? upsert(table, payload) : { error: null })
-      },
-      delete: () => ({
-        in: (_col, ids) => {
-          log.push(['delete', table, ids])
-          return Promise.resolve(del ? del(table, ids) : { error: null })
-        },
-      }),
-    }),
-  }
+// Фабрика мока:
+// pullRows — {table: [row,...]} — что вернёт /v1/sync/pull для этой таблицы
+// pushResults(ops) — функция, возвращающая массив per-op результатов
+// pullError / pushError / settingsError — заставляют вернуть {ok:false}
+// settingsData — что вернёт GET /v1/settings
+function makeApi({ pullRows = {}, pushResults, pullError, pushError, settingsData = null, settingsError } = {}) {
+	const log = []
+	return {
+		log,
+		apiSyncPull: async ({ since, table, limit } = {}) => {
+			log.push(['pull', { since, table, limit }])
+			if (pullError) return { ok: false, status: 500, error: { code: 'HTTP_500', message: pullError } }
+			// Отдаём всё за одну страницу.
+			const tables = {}
+			for (const [t, rows] of Object.entries(pullRows)) {
+				tables[t] = { rows, hasMore: false, cursor: rows.length ? String(rows.length) : null }
+			}
+			// Для таблиц без данных вернём пустую страницу — cloudLoadAll итерирует по табам сервера
+			return { ok: true, status: 200, body: { serverTime: new Date().toISOString(), tables } }
+		},
+		apiSyncPush: async (ops) => {
+			log.push(['push', ops])
+			if (pushError) return { ok: false, status: 500, error: { code: 'HTTP_500', message: pushError } }
+			const results = pushResults ? pushResults(ops) : ops.map(() => ({ ok: true }))
+			return { ok: true, status: 200, body: { results } }
+		},
+		apiPutSettings: async (data) => {
+			log.push(['settings', data])
+			if (settingsError) return { ok: false, status: settingsError, error: { message: 'settings err' } }
+			return { ok: true, status: 200, body: { ok: true } }
+		},
+		apiFetch: async (method, path) => {
+			log.push(['apiFetch', method, path])
+			if (path === '/v1/settings') {
+				if (settingsError) return { ok: false, status: settingsError, error: { message: 'settings err' } }
+				return { ok: true, status: 200, body: { data: settingsData } }
+			}
+			return { ok: false, status: 404, error: { code: 'NOT_FOUND' } }
+		},
+	}
 }
 
 const up = (id, obj = {}, key = 'products') => ({
-  op: 'upsert',
-  key,
-  id,
-  obj: { id, ...obj },
-  companyId: 'c1',
+	op: 'upsert',
+	key,
+	id,
+	obj: { id, ...obj },
+	companyId: 'c1',
 })
 
 beforeEach(() => syncOutbox.reset())
-afterEach(() => syncOutbox.reset()) // снять бэкофф-таймеры после неудачных отправок
+afterEach(() => syncOutbox.reset())
 
 describe('cloudLoadMerged — порядок bootstrap', () => {
-  it('сначала досылает очередь (upsert), потом читает сервер (select)', async () => {
-    const fake = makeSupabase({ rows: { products: [{ id: 'p1', name: 'Серверный' }] } })
-    h.impl = fake
-    syncOutbox.enqueue([up('p1', { name: 'Локальный', stock: 5 })])
+	it('сначала досылает очередь (push), потом читает сервер (pull)', async () => {
+		h.impl = makeApi({ pullRows: { products: [{ id: 'p1', name: 'Серверный' }] } })
+		syncOutbox.enqueue([up('p1', { name: 'Локальный', stock: 5 })])
 
-    const data = await cloudLoadMerged()
+		const data = await cloudLoadMerged()
 
-    const firstSelect = fake.log.findIndex(([op]) => op === 'select')
-    const firstUpsert = fake.log.findIndex(([op]) => op === 'upsert')
-    expect(firstUpsert).toBeGreaterThanOrEqual(0)
-    expect(firstUpsert).toBeLessThan(firstSelect) // очередь ушла ДО чтения
-    expect(syncOutbox.status().pending).toBe(0)
-    // сервер уже принял локальную правку; что вернул select — то и в сторе
-    expect(data.products).toHaveLength(1)
-  })
+		const firstPull = h.impl.log.findIndex(([op]) => op === 'pull')
+		const firstPush = h.impl.log.findIndex(([op]) => op === 'push')
+		expect(firstPush).toBeGreaterThanOrEqual(0)
+		expect(firstPush).toBeLessThan(firstPull) // очередь ушла ДО чтения
+		expect(syncOutbox.status().pending).toBe(0)
+		expect(data.products).toHaveLength(1)
+	})
 
-  it('офлайн: сервер прочитан, но неотправленное наложено поверх', async () => {
-    h.impl = makeSupabase({
-      rows: {
-        products: [
-          { id: 'p1', name: 'Серверный', stock: 99 },
-          { id: 'p3', name: 'Удалён локально' },
-        ],
-      },
-      upsert: () => ({ error: { message: 'fetch failed' } }), // сеть лежит
-      del: () => ({ error: { message: 'fetch failed' } }),
-    })
-    syncOutbox.enqueue([
-      up('p1', { name: 'Локальный', stock: 5 }),
-      up('p2', { name: 'Новый локальный' }),
-      { op: 'delete', key: 'products', id: 'p3', companyId: 'c1' },
-    ])
+	it('офлайн: сервер прочитан, но неотправленное наложено поверх', async () => {
+		h.impl = makeApi({
+			pullRows: {
+				products: [
+					{ id: 'p1', name: 'Серверный', stock: 99 },
+					{ id: 'p3', name: 'Удалён локально' },
+				],
+			},
+			pushError: 'fetch failed',
+		})
+		syncOutbox.enqueue([
+			up('p1', { name: 'Локальный', stock: 5 }),
+			up('p2', { name: 'Новый локальный' }),
+			{ op: 'delete', key: 'products', id: 'p3', companyId: 'c1' },
+		])
 
-    const data = await cloudLoadMerged()
+		const data = await cloudLoadMerged()
 
-    expect(syncOutbox.status().pending).toBe(3) // очередь цела, доставит позже
-    expect(syncOutbox.status().state).toBe('error')
-    const byId = Object.fromEntries(data.products.map((p) => [p.id, p]))
-    expect(byId.p1.name).toBe('Локальный') // локальная правка победила
-    expect(byId.p2).toBeTruthy() // локально созданное не потерялось
-    expect(byId.p3).toBeUndefined() // локальное удаление применено
-  })
+		expect(syncOutbox.status().pending).toBe(3) // очередь цела, доставит позже
+		expect(syncOutbox.status().state).toBe('error')
+		const byId = Object.fromEntries(data.products.map((p) => [p.id, p]))
+		expect(byId.p1.name).toBe('Локальный')
+		expect(byId.p2).toBeTruthy()
+		expect(byId.p3).toBeUndefined()
+	})
 
-  it('подтягивает настройки компании из таблицы settings', async () => {
-    h.impl = makeSupabase({
-      rows: { products: [{ id: 'p1' }] },
-      settingsRow: { data: { company: 'ООО Облако', currency: '₽' } },
-    })
-    const data = await cloudLoadMerged()
-    expect(data.settings).toEqual({ company: 'ООО Облако', currency: '₽' })
-  })
+	it('подтягивает настройки компании (GET /v1/settings)', async () => {
+		h.impl = makeApi({
+			pullRows: { products: [{ id: 'p1' }] },
+			settingsData: { company: 'ООО Облако', currency: '₽' },
+		})
+		const data = await cloudLoadMerged()
+		expect(data.settings).toEqual({ company: 'ООО Облако', currency: '₽' })
+	})
 })
 
 describe('sendBatch (через outbox) — классификация ошибок', () => {
-  it('неисправимая ошибка (RLS 42501): элемент выброшен, без ретраев', async () => {
-    h.impl = makeSupabase({ upsert: () => ({ error: { code: '42501', message: 'RLS' } }) })
-    syncOutbox.enqueue([up('p1')])
-    await syncOutbox.flushNow()
-    expect(syncOutbox.status()).toMatchObject({ pending: 0, state: 'ok' })
-  })
+	it('терминальная ошибка per-op (STALE/TABLE_FORBIDDEN) → элемент выброшен, без ретраев', async () => {
+		h.impl = makeApi({ pushResults: () => [{ ok: false, code: 'STALE', error: 'server newer' }] })
+		syncOutbox.enqueue([up('p1')])
+		await syncOutbox.flushNow()
+		expect(syncOutbox.status()).toMatchObject({ pending: 0, state: 'ok' })
+	})
 
-  it('транзиентная ошибка: элемент остаётся и статус error', async () => {
-    h.impl = makeSupabase({ upsert: () => ({ error: { message: 'timeout' } }) })
-    syncOutbox.enqueue([up('p1')])
-    await syncOutbox.flushNow()
-    expect(syncOutbox.status()).toMatchObject({ pending: 1, state: 'error' })
-  })
+	it('транспортная ошибка (сеть/5xx) → элемент остаётся и статус error', async () => {
+		h.impl = makeApi({ pushError: 'timeout' })
+		syncOutbox.enqueue([up('p1')])
+		await syncOutbox.flushNow()
+		expect(syncOutbox.status()).toMatchObject({ pending: 1, state: 'error' })
+	})
 
-  it('настройки уезжают строкой {company_id, data} в таблицу settings', async () => {
-    const fake = makeSupabase()
-    h.impl = fake
-    syncOutbox.enqueue([
-      { op: 'upsert', key: 'settings', id: 'c1', obj: { company: 'X' }, companyId: 'c1' },
-    ])
-    await syncOutbox.flushNow()
-    const call = fake.log.find(([op, table]) => op === 'upsert' && table === 'settings')
-    expect(call[2]).toEqual({ company_id: 'c1', data: { company: 'X' } })
-  })
+	it('настройки уезжают через apiPutSettings(data) — без company_id (сервер знает по токену)', async () => {
+		h.impl = makeApi()
+		syncOutbox.enqueue([
+			{ op: 'upsert', key: 'settings', id: 'c1', obj: { company: 'X' }, companyId: 'c1' },
+		])
+		await syncOutbox.flushNow()
+		const call = h.impl.log.find(([op]) => op === 'settings')
+		expect(call).toBeTruthy()
+		expect(call[1]).toEqual({ company: 'X' }) // ровно data, без обёртки
+	})
 
-  it('удаления батчатся в delete...in по таблице', async () => {
-    const fake = makeSupabase()
-    h.impl = fake
-    syncOutbox.enqueue([
-      { op: 'delete', key: 'products', id: 'p1', companyId: 'c1' },
-      { op: 'delete', key: 'products', id: 'p2', companyId: 'c1' },
-    ])
-    await syncOutbox.flushNow()
-    const call = fake.log.find(([op]) => op === 'delete')
-    expect(call[1]).toBe('products')
-    expect(call[2]).toEqual(['p1', 'p2'])
-  })
+	it('удаления уезжают отдельными op-ами в один push-батч', async () => {
+		h.impl = makeApi()
+		syncOutbox.enqueue([
+			{ op: 'delete', key: 'products', id: 'p1', companyId: 'c1' },
+			{ op: 'delete', key: 'products', id: 'p2', companyId: 'c1' },
+		])
+		await syncOutbox.flushNow()
+		const call = h.impl.log.find(([op]) => op === 'push')
+		expect(call).toBeTruthy()
+		const ops = call[1]
+		expect(ops).toHaveLength(2)
+		expect(ops.every((o) => o.op === 'delete' && o.table === 'products')).toBe(true)
+		expect(ops.map((o) => o.row.id).sort()).toEqual(['p1', 'p2'])
+	})
+
+	it('таблицы вне push-whitelist (movements/audit/documents) → сразу dropped, не отправляются', async () => {
+		h.impl = makeApi()
+		syncOutbox.enqueue([
+			{ op: 'upsert', key: 'movements', id: 'm1', obj: { id: 'm1' }, companyId: 'c1' },
+			{ op: 'upsert', key: 'audit', id: 'a1', obj: { id: 'a1' }, companyId: 'c1' },
+		])
+		await syncOutbox.flushNow()
+		expect(syncOutbox.status()).toMatchObject({ pending: 0, state: 'ok' })
+		// Ничего не улетело push'ем — оба элемента объявлены terminal-dropped.
+		const pushCalls = h.impl.log.filter(([op]) => op === 'push')
+		expect(pushCalls).toHaveLength(0)
+	})
 })
 
 describe('PIN сотрудника не уходит в облако и не приходит обратно', () => {
-  it('upsert employees: поле pin вырезано из payload', async () => {
-    const fake = makeSupabase()
-    h.impl = fake
-    syncOutbox.enqueue([
-      {
-        op: 'upsert',
-        key: 'employees',
-        id: 'e1',
-        obj: { id: 'e1', name: 'Аюб', role: 'admin', pin: '1111', active: true },
-        companyId: 'c1',
-      },
-    ])
-    await syncOutbox.flushNow()
-    const call = fake.log.find(([op, table]) => op === 'upsert' && table === 'employees')
-    expect(call).toBeTruthy()
-    const payload = call[2]
-    const row = Array.isArray(payload) ? payload[0] : payload
-    expect(row.pin).toBeUndefined()
-    expect(row.name).toBe('Аюб') // остальное на месте
-    expect(row.company_id).toBe('c1')
-  })
+	it('upsert employees: поле pin вырезано из payload', async () => {
+		h.impl = makeApi()
+		syncOutbox.enqueue([
+			{
+				op: 'upsert',
+				key: 'employees',
+				id: 'e1',
+				obj: { id: 'e1', name: 'Аюб', role: 'admin', pin: '1111', active: true },
+				companyId: 'c1',
+			},
+		])
+		await syncOutbox.flushNow()
+		const call = h.impl.log.find(([op]) => op === 'push')
+		const row = call[1][0].row
+		expect(row.pin).toBeUndefined()
+		expect(row.name).toBe('Аюб')
+		expect(row.id).toBe('e1')
+	})
 
-  it('cloudLoadMerged: серверный pin (если вдруг остался в БД) не попадает в стор', async () => {
-    h.impl = makeSupabase({
-      rows: {
-        employees: [{ id: 'e1', name: 'Аюб', role: 'admin', pin: 'server-secret' }],
-      },
-    })
-    const data = await cloudLoadMerged()
-    expect(data.employees).toHaveLength(1)
-    expect(data.employees[0].pin).toBeUndefined()
-    expect(data.employees[0].name).toBe('Аюб')
-  })
+	it('cloudLoadMerged: серверный pin_hash (если бы протёк) не попадает в стор', async () => {
+		h.impl = makeApi({
+			pullRows: {
+				employees: [{ id: 'e1', name: 'Аюб', role: 'admin', pin: 'server-secret', pin_hash: 'bcrypt' }],
+			},
+		})
+		const data = await cloudLoadMerged()
+		expect(data.employees).toHaveLength(1)
+		expect(data.employees[0].pin).toBeUndefined()
+		expect(data.employees[0].pinHash).toBeUndefined()
+		expect(data.employees[0].name).toBe('Аюб')
+	})
 })
 
 describe('applyPendingToData — чистая функция оверлея', () => {
-  it('upsert заменяет по id или добавляет; delete убирает; settings мержится', () => {
-    const data = {
-      products: [{ id: 'p1', stock: 1 }, { id: 'p2', stock: 2 }],
-      settings: { company: 'Сервер', currency: '$' },
-    }
-    applyPendingToData(data, [
-      up('p1', { stock: 100 }),
-      up('p9', { stock: 9 }),
-      { op: 'delete', key: 'products', id: 'p2', companyId: 'c1' },
-      { op: 'upsert', key: 'settings', id: 'c1', obj: { currency: '₽' }, companyId: 'c1' },
-      { op: 'upsert', key: 'нет_такой', id: 'x', obj: {}, companyId: 'c1' }, // не падает
-    ])
-    expect(data.products.map((p) => p.id).sort()).toEqual(['p1', 'p9'])
-    expect(data.products.find((p) => p.id === 'p1').stock).toBe(100)
-    expect(data.settings).toEqual({ company: 'Сервер', currency: '₽' })
-  })
+	it('upsert заменяет по id или добавляет; delete убирает; settings мержится', () => {
+		const data = {
+			products: [{ id: 'p1', stock: 1 }, { id: 'p2', stock: 2 }],
+			settings: { company: 'Сервер', currency: '$' },
+		}
+		applyPendingToData(data, [
+			up('p1', { stock: 100 }),
+			up('p9', { stock: 9 }),
+			{ op: 'delete', key: 'products', id: 'p2', companyId: 'c1' },
+			{ op: 'upsert', key: 'settings', id: 'c1', obj: { currency: '₽' }, companyId: 'c1' },
+			{ op: 'upsert', key: 'нет_такой', id: 'x', obj: {}, companyId: 'c1' }, // не падает
+		])
+		expect(data.products.map((p) => p.id).sort()).toEqual(['p1', 'p9'])
+		expect(data.products.find((p) => p.id === 'p1').stock).toBe(100)
+		expect(data.settings).toEqual({ company: 'Сервер', currency: '₽' })
+	})
 
-  it('сравнение по updatedAt: свежий сервер побеждает устаревший локальный', () => {
-    const data = {
-      products: [{ id: 'p1', stock: 200, updatedAt: '2026-07-13T12:00:00Z' }],
-    }
-    applyPendingToData(data, [
-      up('p1', { stock: 5, updatedAt: '2026-07-13T10:00:00Z' }), // старее сервера
-    ])
-    expect(data.products[0].stock).toBe(200) // серверное сохранилось
-  })
+	it('сравнение по updatedAt: свежий сервер побеждает устаревший локальный', () => {
+		const data = { products: [{ id: 'p1', stock: 200, updatedAt: '2026-07-13T12:00:00Z' }] }
+		applyPendingToData(data, [up('p1', { stock: 5, updatedAt: '2026-07-13T10:00:00Z' })])
+		expect(data.products[0].stock).toBe(200)
+	})
 
-  it('сравнение по updatedAt: свежий локальный побеждает устаревший сервер', () => {
-    const data = {
-      products: [{ id: 'p1', stock: 200, updatedAt: '2026-07-13T10:00:00Z' }],
-    }
-    applyPendingToData(data, [
-      up('p1', { stock: 5, updatedAt: '2026-07-13T12:00:00Z' }), // новее сервера
-    ])
-    expect(data.products[0].stock).toBe(5) // локальное применилось
-  })
+	it('сравнение по updatedAt: свежий локальный побеждает устаревший сервер', () => {
+		const data = { products: [{ id: 'p1', stock: 200, updatedAt: '2026-07-13T10:00:00Z' }] }
+		applyPendingToData(data, [up('p1', { stock: 5, updatedAt: '2026-07-13T12:00:00Z' })])
+		expect(data.products[0].stock).toBe(5)
+	})
 
-  it('без updatedAt (миграция не применена) — сохраняется прежнее поведение', () => {
-    const data = { products: [{ id: 'p1', stock: 200 }] }
-    applyPendingToData(data, [up('p1', { stock: 5 })])
-    expect(data.products[0].stock).toBe(5) // локальное поверх — как раньше
-  })
+	it('без updatedAt (миграция не применена) — сохраняется прежнее поведение', () => {
+		const data = { products: [{ id: 'p1', stock: 200 }] }
+		applyPendingToData(data, [up('p1', { stock: 5 })])
+		expect(data.products[0].stock).toBe(5)
+	})
 
-  it('delete всегда применяется, даже если серверная запись свежее', () => {
-    const data = {
-      products: [{ id: 'p1', updatedAt: '2026-07-13T12:00:00Z' }],
-    }
-    applyPendingToData(data, [{ op: 'delete', key: 'products', id: 'p1', companyId: 'c1' }])
-    expect(data.products).toHaveLength(0)
-  })
+	it('delete всегда применяется, даже если серверная запись свежее', () => {
+		const data = { products: [{ id: 'p1', updatedAt: '2026-07-13T12:00:00Z' }] }
+		applyPendingToData(data, [{ op: 'delete', key: 'products', id: 'p1', companyId: 'c1' }])
+		expect(data.products).toHaveLength(0)
+	})
 })
 
 describe('attachSync штампует updatedAt при отправке', () => {
-  it('upsert в очередь получает updatedAt (ISO), settings — не получает', async () => {
-    const { attachSync } = await import('./cloud.js')
-    // мини-стор с subscribe API как у zustand
-    const listeners = new Set()
-    let state = {
-      companyId: 'c1',
-      products: [{ id: 'p1', name: 'A' }],
-      settings: { company: 'X' },
-    }
-    for (const k of [
-      'priceTypes','warehouses','cells','customers','suppliers',
-      'employees','orders','invoices','documents','movements','shifts','audit',
-    ]) state[k] = []
-    const store = {
-      getState: () => state,
-      setState: (patch) => {
-        state = { ...state, ...(typeof patch === 'function' ? patch(state) : patch) }
-      },
-      subscribe: (cb) => {
-        listeners.add(cb)
-        return () => listeners.delete(cb)
-      },
-    }
-    syncOutbox.reset()
-    h.impl = makeSupabase() // тихий фейк, чтобы очередь не отправилась мгновенно
-    attachSync(store)
-    // изменение
-    state = { ...state, products: [{ id: 'p1', name: 'A2' }] }
-    for (const cb of listeners) cb(state)
-    const items = syncOutbox.items()
-    const upsert = items.find((it) => it.op === 'upsert' && it.key === 'products')
-    expect(upsert).toBeTruthy()
-    expect(upsert.obj.updatedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/)
-    // settings, если и есть, — без updatedAt (там серверный триггер)
-    const s = items.find((it) => it.key === 'settings')
-    if (s) expect(s.obj.updatedAt).toBeUndefined()
-    syncOutbox.reset()
-  })
+	it('upsert в очередь получает updatedAt (ISO), settings — не получает', async () => {
+		const { attachSync } = await import('./cloud.js')
+		const listeners = new Set()
+		let state = {
+			companyId: 'c1',
+			products: [{ id: 'p1', name: 'A' }],
+			settings: { company: 'X' },
+		}
+		for (const k of [
+			'priceTypes','warehouses','cells','customers','suppliers',
+			'employees','orders','invoices','documents','movements','shifts','audit',
+		]) state[k] = []
+		const store = {
+			getState: () => state,
+			setState: (patch) => {
+				state = { ...state, ...(typeof patch === 'function' ? patch(state) : patch) }
+			},
+			subscribe: (cb) => { listeners.add(cb); return () => listeners.delete(cb) },
+		}
+		syncOutbox.reset()
+		h.impl = makeApi() // тихий фейк
+		attachSync(store)
+		state = { ...state, products: [{ id: 'p1', name: 'A2' }] }
+		for (const cb of listeners) cb(state)
+		const items = syncOutbox.items()
+		const upsert = items.find((it) => it.op === 'upsert' && it.key === 'products')
+		expect(upsert).toBeTruthy()
+		expect(upsert.obj.updatedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/)
+		const s = items.find((it) => it.key === 'settings')
+		if (s) expect(s.obj.updatedAt).toBeUndefined()
+		syncOutbox.reset()
+	})
 })

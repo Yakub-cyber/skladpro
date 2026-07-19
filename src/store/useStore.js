@@ -5,7 +5,7 @@ import { uid, docNo } from '../lib/id'
 import { nextStatus, statusInfo, docTypeInfo, DEFAULT_WORK_ZONES } from '../lib/constants'
 import { applyDocToState } from '../lib/posting'
 import { applyOrderStock } from '../lib/orders'
-import { persistMigrate, persistPartialize } from './persistMigrate'
+import { persistMigrate, persistPartialize, persistMerge } from './persistMigrate'
 import { createHrSlice } from './slices/hrSlice'
 import { createCloudSlice, cloudInitialState, bindStore } from './slices/cloudSlice'
 
@@ -773,6 +773,7 @@ export const useStore = create(
       name: 'sklad.db',
       version: 9,
       partialize: persistPartialize,
+      merge: persistMerge,
       migrate: persistMigrate,
     },
   ),

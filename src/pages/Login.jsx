@@ -5,13 +5,17 @@ import { useStore } from '../store/useStore'
 import { roleInfo } from '../lib/constants'
 import { requestPasswordReset } from '../lib/cloud'
 import Landing from './Landing'
+import Connect from './Connect'
 
 export default function Login() {
   const cloud = useStore((s) => s.cloud)
   const [showAuth, setShowAuth] = useState(false)
+  const [showConnect, setShowConnect] = useState(false)
   if (!cloud) return <PinLogin />
-  if (!showAuth) return <Landing onStart={() => setShowAuth(true)} />
-  return <CloudLogin onBack={() => setShowAuth(false)} />
+  if (showAuth) return <CloudLogin onBack={() => setShowAuth(false)} />
+  if (showConnect)
+    return <Connect onStart={() => setShowAuth(true)} onBack={() => setShowConnect(false)} />
+  return <Landing onStart={() => setShowAuth(true)} onConnect={() => setShowConnect(true)} />
 }
 
 // Онбординг: вошёл, но компании ещё нет → создаём (тенант)
@@ -83,7 +87,7 @@ export function ResetPassword() {
 
   const submit = async (e) => {
     e?.preventDefault?.()
-    if (pass.length < 6) return setErr('Пароль минимум 6 символов')
+    if (pass.length < 8) return setErr('Пароль минимум 8 символов')
     if (pass !== pass2) return setErr('Пароли не совпадают')
     setBusy(true)
     setErr('')
@@ -110,7 +114,7 @@ export function ResetPassword() {
 
         <form onSubmit={submit} className="card p-5 animate-fadeUp">
           <div className="space-y-3">
-            <Field label="Новый пароль" hint="Минимум 6 символов">
+            <Field label="Новый пароль" hint="Минимум 8 символов">
               <div className="relative">
                 <KeyRound size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
                 <Input type="password" value={pass} onChange={(e) => setPass(e.target.value)} placeholder="••••••••" className="pl-9" autoComplete="new-password" autoFocus />
@@ -345,7 +349,7 @@ function CloudLogin({ onBack }) {
             Склад<span className="text-brand">Про</span>
           </div>
           <div className="text-[12px] text-muted mt-1 flex items-center gap-1.5">
-            <Cloud size={13} /> Облачный режим · Supabase
+            <Cloud size={13} /> Облачный режим
           </div>
         </div>
 
@@ -386,7 +390,7 @@ function CloudLogin({ onBack }) {
               </div>
             </Field>
             {mode !== 'forgot' && (
-              <Field label="Пароль" hint={mode === 'signup' ? 'Минимум 6 символов' : undefined}>
+              <Field label="Пароль" hint={mode === 'signup' ? 'Минимум 8 символов' : undefined}>
                 <div className="relative">
                   <KeyRound size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
                   <Input type="password" value={pass} onChange={(e) => setPass(e.target.value)} placeholder="••••••••" className="pl-9" autoComplete={mode === 'signin' ? 'current-password' : 'new-password'} />
