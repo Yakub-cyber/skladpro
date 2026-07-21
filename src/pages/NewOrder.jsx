@@ -19,6 +19,7 @@ import {
   Camera,
   X,
   UserPlus,
+  User,
 } from 'lucide-react'
 import { Card, Button, Badge, Field, Select, Input, Modal, Empty, cx } from '../components/ui'
 import { useStore } from '../store/useStore'
@@ -238,9 +239,66 @@ function ProductTile({ p, availOf, priceTypeId, row, onAdd, onSetQty, round3 }) 
 // Компактный «Клиент»: селект + кнопка «+», раскрывающая мини-форму
 // прямо здесь, без ухода в раздел «Клиенты». Заполнил имя+телефон →
 // клиент добавлен и уже выбран.
+// Search-комбобокс клиента — вместо <Select> с 500+ опций (неюзабельно
+// на клавиатуре и мыши). Ввод → фильтр по имени/телефону/ИНН. Стрелки
+// вверх/вниз — навигация, Enter — выбор, Esc — сброс. Кнопка «+» рядом
+// раскрывает мини-форму «новый клиент» (осталась как была).
 function CustomerPicker({ customers, customerId, onPick, onAdd }) {
   const [adding, setAdding] = useState(false)
   const [f, setF] = useState({ name: '', phone: '', city: '' })
+  const [q, setQ] = useState('')
+  const [open, setOpen] = useState(false)
+  const [active, setActive] = useState(0)
+  const inputRef = useRef(null)
+
+  // Свежесть отображаемого label когда customerId меняется извне.
+  const selected = customers.find((c) => c.id === customerId)
+  const showLabel = selected?.name || 'Розничный'
+
+  const norm = (s) => (s || '').toLowerCase()
+  const matches = useMemo(() => {
+    const s = norm(q).trim()
+    if (!s) return customers.slice(0, 8) // без запроса — топ последних
+    return customers
+      .filter((c) => {
+        return (
+          norm(c.name).includes(s) ||
+          norm(c.phone).includes(s) ||
+          norm(c.inn).includes(s) ||
+          norm(c.contact).includes(s)
+        )
+      })
+      .slice(0, 12)
+  }, [customers, q])
+
+  const pick = (id) => {
+    onPick(id)
+    setQ('')
+    setOpen(false)
+    inputRef.current?.blur()
+  }
+
+  const onKey = (e) => {
+    if (!open) return
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      setActive((i) => Math.min(matches.length, i + 1))
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      setActive((i) => Math.max(0, i - 1))
+    } else if (e.key === 'Enter') {
+      e.preventDefault()
+      // 0 = «Розничный» (первый пункт), дальше matches[i-1]
+      if (active === 0) pick('')
+      else if (matches[active - 1]) pick(matches[active - 1].id)
+    } else if (e.key === 'Escape') {
+      e.preventDefault()
+      setOpen(false)
+      setQ('')
+      inputRef.current?.blur()
+    }
+  }
+
   const save = () => {
     const name = f.name.trim()
     if (!name) return
@@ -252,12 +310,76 @@ function CustomerPicker({ customers, customerId, onPick, onAdd }) {
   return (
     <div>
       <div className="flex gap-1.5">
-        <Select value={customerId} onChange={(e) => onPick(e.target.value)} className="flex-1">
-          <option value="">Розничный</option>
-          {customers.map((c) => (
-            <option key={c.id} value={c.id}>{c.name}</option>
-          ))}
-        </Select>
+        <div className="relative flex-1 min-w-0">
+          <input
+            ref={inputRef}
+            type="text"
+            value={open ? q : showLabel}
+            onChange={(e) => {
+              setQ(e.target.value)
+              setActive(0)
+              setOpen(true)
+            }}
+            onFocus={() => {
+              setOpen(true)
+              setQ('')
+              setActive(0)
+            }}
+            onBlur={() => setTimeout(() => setOpen(false), 150)}
+            onKeyDown={onKey}
+            placeholder="Поиск: имя / телефон / ИНН…"
+            className={cx(
+              'w-full h-10 px-3 rounded-xl bg-surface-2 border border-line outline-none focus:border-brand text-sm truncate',
+              !open && !selected && 'text-muted',
+            )}
+          />
+          {open && (
+            <div className="absolute z-30 left-0 right-0 top-full mt-1 rounded-xl bg-surface border border-line shadow-xl max-h-[280px] overflow-y-auto py-1">
+              {/* Первый пункт — «Розничный» (сброс выбора) */}
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => pick('')}
+                className={cx(
+                  'w-full flex items-center gap-2 px-3 h-10 text-left text-[13px] transition',
+                  active === 0 ? 'bg-brand-soft text-brand' : 'hover:bg-surface-2',
+                )}
+              >
+                <User size={14} className="text-muted" />
+                Розничный покупатель
+              </button>
+              {matches.length === 0 && q && (
+                <div className="px-3 py-2 text-[12px] text-muted italic">
+                  Не найдено. Нажмите «+», чтобы добавить нового.
+                </div>
+              )}
+              {matches.map((c, i) => (
+                <button
+                  key={c.id}
+                  type="button"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => pick(c.id)}
+                  className={cx(
+                    'w-full flex items-center gap-2 px-3 h-11 text-left text-[13px] transition',
+                    active === i + 1 ? 'bg-brand-soft text-brand' : 'hover:bg-surface-2',
+                  )}
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="font-medium truncate">{c.name}</div>
+                    <div className="text-[11px] text-muted truncate">
+                      {[c.type, c.city, c.phone].filter(Boolean).join(' · ')}
+                    </div>
+                  </div>
+                  {c.balance > 0 && (
+                    <span className="text-[11px] px-1.5 py-0.5 rounded bg-warn-soft text-warn tabular-nums whitespace-nowrap">
+                      долг {money(c.balance)}
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
         <button
           type="button"
           onClick={() => setAdding((v) => !v)}
@@ -318,6 +440,7 @@ function CartBody({
   priceTypes,
   onChangeType,
   onSetQty,
+  onSetPrice,
   onSubmit,
   round3,
   compact = false,
@@ -347,40 +470,72 @@ function CartBody({
           <Empty icon={ShoppingCart} title="Чек пуст" text="Добавьте товары из каталога." />
         ) : (
           <div className="space-y-2">
-            {rows.map((r) => (
-              <div key={r.productId} className="p-2.5 rounded-xl bg-surface-2">
-                <div className="flex items-start justify-between gap-2">
-                  <span className="text-[13px] font-medium leading-snug">{r.name}</span>
-                  <button onClick={() => onSetQty(r.productId, 0)} className="text-muted hover:text-bad shrink-0">
-                    <Trash2 size={15} />
-                  </button>
+            {rows.map((r) => {
+              const base = Number(r.basePrice ?? r.price) || 0
+              const price = Number(r.price) || 0
+              const discounted = base > 0 && price < base
+              return (
+                <div key={r.productId} className="p-2.5 rounded-xl bg-surface-2">
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="text-[13px] font-medium leading-snug">{r.name}</span>
+                    <button onClick={() => onSetQty(r.productId, 0)} className="text-muted hover:text-bad shrink-0">
+                      <Trash2 size={15} />
+                    </button>
+                  </div>
+                  {/* Строка 1: qty */}
+                  <div className="flex items-center gap-2 mt-2">
+                    <button
+                      onClick={() => onSetQty(r.productId, round3(r.qty - (r.weighted ? 0.1 : 1)))}
+                      className="h-7 w-7 rounded-lg bg-surface grid place-items-center hover:bg-surface-3"
+                    >
+                      <Minus size={14} />
+                    </button>
+                    <input
+                      type="number"
+                      value={r.qty}
+                      min={r.weighted ? '0.001' : '1'}
+                      step={r.weighted ? '0.1' : '1'}
+                      onChange={(e) => onSetQty(r.productId, Math.max(0, +e.target.value))}
+                      className="w-14 h-7 px-1 rounded-lg bg-surface border border-line text-sm text-center"
+                    />
+                    <button
+                      onClick={() => onSetQty(r.productId, round3(r.qty + (r.weighted ? 0.1 : 1)))}
+                      className="h-7 w-7 rounded-lg bg-surface grid place-items-center hover:bg-surface-3"
+                    >
+                      <Plus size={14} />
+                    </button>
+                    <span className="text-[11px] text-muted">{r.unit}</span>
+                    <span className="ml-auto text-sm font-medium tabular-nums">
+                      {money(r.qty * price)}
+                    </span>
+                  </div>
+                  {/* Строка 2: цена (редактируемая) + база зачёркнутой если снижена */}
+                  {onSetPrice && (
+                    <div className="flex items-center gap-2 mt-1.5">
+                      <span className="text-[11px] text-muted">Цена</span>
+                      <input
+                        type="number"
+                        value={r.price}
+                        min="0"
+                        step="0.01"
+                        onChange={(e) => onSetPrice(r.productId, e.target.value)}
+                        className={cx(
+                          'w-24 h-7 px-2 rounded-lg bg-surface border text-sm text-right tabular-nums',
+                          discounted ? 'border-ok text-ok font-medium' : 'border-line',
+                        )}
+                        title="Персональная цена по этой позиции"
+                      />
+                      <span className="text-[11px] text-muted">₽/{r.unit}</span>
+                      {discounted && (
+                        <span className="ml-auto text-[11px] text-muted line-through tabular-nums">
+                          {money(base)}
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </div>
-                <div className="flex items-center gap-2 mt-2">
-                  <button
-                    onClick={() => onSetQty(r.productId, round3(r.qty - (r.weighted ? 0.1 : 1)))}
-                    className="h-7 w-7 rounded-lg bg-surface grid place-items-center hover:bg-surface-3"
-                  >
-                    <Minus size={14} />
-                  </button>
-                  <input
-                    type="number"
-                    value={r.qty}
-                    min={r.weighted ? '0.001' : '1'}
-                    step={r.weighted ? '0.1' : '1'}
-                    onChange={(e) => onSetQty(r.productId, Math.max(0, +e.target.value))}
-                    className="w-14 h-7 px-1 rounded-lg bg-surface border border-line text-sm text-center"
-                  />
-                  <button
-                    onClick={() => onSetQty(r.productId, round3(r.qty + (r.weighted ? 0.1 : 1)))}
-                    className="h-7 w-7 rounded-lg bg-surface grid place-items-center hover:bg-surface-3"
-                  >
-                    <Plus size={14} />
-                  </button>
-                  <span className="text-[11px] text-muted">{r.unit}</span>
-                  <span className="ml-auto text-sm font-medium tabular-nums">{money(r.qty * r.price)}</span>
-                </div>
-              </div>
-            ))}
+              )
+            })}
           </div>
         )}
       </div>
@@ -483,6 +638,7 @@ export default function NewOrder() {
               name: p.name,
               qty,
               price: priceFor(p, priceTypeId),
+              basePrice: priceFor(p, priceTypeId), // база — для показа скидки в строке
               unit: p.unit,
               cell: p.cell,
               weighted: p.weighted,
@@ -496,6 +652,15 @@ export default function NewOrder() {
         ? r.filter((x) => x.productId !== id)
         : r.map((x) => (x.productId === id ? { ...x, qty } : x)),
     )
+  // Персональная цена для строки — оптовику критично: клиент N торгуется,
+  // цена меняется прямо в чеке. Сохраняем базовую (basePrice) — по ней
+  // считаем скидку и показываем «зачёркнутую» когда цена ниже.
+  const setPrice = (id, price) =>
+    setRows((r) =>
+      r.map((x) =>
+        x.productId === id ? { ...x, price: Math.max(0, Number(price) || 0) } : x,
+      ),
+    )
 
   const selectCustomer = (id) => {
     setCustomerId(id)
@@ -508,7 +673,9 @@ export default function NewOrder() {
     setRows((rr) =>
       rr.map((x) => {
         const p = products.find((pp) => pp.id === x.productId)
-        return p ? { ...x, price: priceFor(p, ptId) } : x
+        if (!p) return x
+        const newBase = priceFor(p, ptId)
+        return { ...x, price: newBase, basePrice: newBase }
       }),
     )
   }
@@ -604,6 +771,7 @@ export default function NewOrder() {
     priceTypes,
     onChangeType: changeType,
     onSetQty: setQty,
+    onSetPrice: setPrice,
     onSubmit: openPay,
     round3,
   }

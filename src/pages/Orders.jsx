@@ -223,6 +223,7 @@ export default function Orders() {
 }
 
 function OrderDetail({ order }) {
+  const nav = useNavigate()
   const advance = useStore((s) => s.advanceOrder)
   const cancel = useStore((s) => s.cancelOrder)
   const assignCourier = useStore((s) => s.assignCourier)
@@ -232,7 +233,6 @@ function OrderDetail({ order }) {
   const customers = useStore((s) => s.customers)
   const [showRoute, setShowRoute] = useState(false)
   const [copied, setCopied] = useState(false)
-  const [editing, setEditing] = useState(false)
   // Редактировать можно только пока заказ не отгружен и не отменён —
   // движок стора вернёт ok:false в других статусах, но UI не показываем.
   const canEdit = !order.stockConsumed && order.status !== 'cancelled'
@@ -350,7 +350,7 @@ function OrderDetail({ order }) {
             customer={customers.find((c) => c.id === order.customerId) || null}
           />
           {canEdit && (
-            <Button variant="soft" icon={Pencil} onClick={() => setEditing(true)}>
+            <Button variant="soft" icon={Pencil} onClick={() => nav(`/orders/${order.id}/edit`)}>
               Изменить
             </Button>
           )}
@@ -367,7 +367,9 @@ function OrderDetail({ order }) {
         </div>
       </Card>
 
-      <EditOrderModal open={editing} order={order} onClose={() => setEditing(false)} />
+      {/* Правка заказа переехала на отдельную страницу /orders/:id/edit —
+          для оптовика с 100+ позициями там плотная таблица с Tab-навигацией,
+          Ctrl+S и «/» на поиск. */}
 
       {/* Маршрут сборки */}
       {showRoute && (
@@ -505,227 +507,6 @@ function OrderDetail({ order }) {
   )
 }
 
-// Модалка редактирования заказа до отгрузки. Меняем количество и цены
-// позиций, удаляем строки, добавляем новые через простой поиск. Сохранение
-// идёт через updateOrder — стор пересчитывает долг клиента при онCredit,
-// резерв на складе обновляется автоматически (он вычисляется на лету).
-function EditOrderModal({ open, order, onClose }) {
-  const updateOrder = useStore((s) => s.updateOrder)
-  const products = useStore((s) => s.products)
-  const [rows, setRows] = useState([])
-  const [discount, setDiscount] = useState(0)
-  const [onCredit, setOnCredit] = useState(false)
-  const [q, setQ] = useState('')
-  const [err, setErr] = useState('')
-
-  // Синхронизируемся с исходным заказом при открытии — свежая копия items.
-  useEffect(() => {
-    if (open) {
-      setRows((order.items || []).map((it) => ({ ...it })))
-      setDiscount(Number(order.discount) || 0)
-      setOnCredit(!!order.onCredit)
-      setQ('')
-      setErr('')
-    }
-  }, [open, order])
-
-  const round3 = (n) => Math.round(n * 1000) / 1000
-  const setQty = (id, qty) =>
-    setRows((r) =>
-      qty <= 0
-        ? r.filter((x) => x.productId !== id)
-        : r.map((x) => (x.productId === id ? { ...x, qty } : x)),
-    )
-  const setPrice = (id, price) =>
-    setRows((r) => r.map((x) => (x.productId === id ? { ...x, price: Math.max(0, price) } : x)))
-  const addProduct = (p) => {
-    setRows((r) =>
-      r.find((x) => x.productId === p.id)
-        ? r.map((x) => (x.productId === p.id ? { ...x, qty: round3(x.qty + 1) } : x))
-        : [
-            ...r,
-            {
-              productId: p.id,
-              name: p.name,
-              qty: 1,
-              price: Number(p.price) || 0,
-              unit: p.unit,
-              cell: p.cell,
-              weighted: p.weighted,
-            },
-          ],
-    )
-    setQ('')
-  }
-
-  const subtotal = rows.reduce((a, r) => a + (Number(r.qty) || 0) * (Number(r.price) || 0), 0)
-  const total = Math.round(subtotal * (1 - (Number(discount) || 0) / 100))
-
-  const suggest = q
-    ? products
-        .filter((p) => p.name.toLowerCase().includes(q.toLowerCase()) || p.sku.toLowerCase().includes(q.toLowerCase()))
-        .slice(0, 6)
-    : []
-
-  const save = () => {
-    if (!rows.length) return setErr('В заказе не может быть 0 позиций — отмените заказ вместо редактирования')
-    const r = updateOrder(order.id, {
-      items: rows,
-      subtotal,
-      total,
-      discount: Number(discount) || 0,
-      onCredit,
-    })
-    if (r && r.ok === false) return setErr(r.error)
-    onClose()
-  }
-
-  return (
-    <Modal
-      open={open}
-      onClose={onClose}
-      wide
-      title={<span className="flex items-center gap-2">Изменить заказ <span className="tabular-nums">{order.no}</span></span>}
-      footer={
-        <>
-          <Button variant="ghost" onClick={onClose}>Отмена</Button>
-          <Button icon={Check} onClick={save} disabled={!rows.length}>Сохранить</Button>
-        </>
-      }
-    >
-      <div className="space-y-3">
-        {/* Позиции */}
-        {rows.length === 0 ? (
-          <Empty icon={Trash2} title="Все позиции удалены" text="Добавьте товар или отмените заказ." />
-        ) : (
-          <div className="space-y-2">
-            {rows.map((r) => (
-              <div key={r.productId} className="p-2.5 rounded-xl bg-surface-2">
-                <div className="flex items-start justify-between gap-2">
-                  <span className="text-[13px] font-medium leading-snug">{r.name}</span>
-                  <button
-                    onClick={() => setQty(r.productId, 0)}
-                    className="text-muted hover:text-bad shrink-0"
-                    title="Убрать"
-                  >
-                    <Trash2 size={15} />
-                  </button>
-                </div>
-                <div className="flex flex-wrap items-center gap-2 mt-2">
-                  <div className="flex items-center gap-1">
-                    <button
-                      onClick={() => setQty(r.productId, round3(r.qty - (r.weighted ? 0.1 : 1)))}
-                      className="h-7 w-7 rounded-lg bg-surface grid place-items-center hover:bg-surface-3"
-                    >
-                      <Minus size={13} />
-                    </button>
-                    <input
-                      type="number"
-                      value={r.qty}
-                      min={r.weighted ? '0.001' : '1'}
-                      step={r.weighted ? '0.1' : '1'}
-                      onChange={(e) => setQty(r.productId, Math.max(0, +e.target.value))}
-                      className="w-16 h-7 px-1 rounded-lg bg-surface border border-line text-sm text-center"
-                    />
-                    <button
-                      onClick={() => setQty(r.productId, round3(r.qty + (r.weighted ? 0.1 : 1)))}
-                      className="h-7 w-7 rounded-lg bg-surface grid place-items-center hover:bg-surface-3"
-                    >
-                      <Plus size={13} />
-                    </button>
-                    <span className="text-[11px] text-muted">{r.unit}</span>
-                  </div>
-                  <div className="flex items-center gap-1 ml-auto">
-                    <input
-                      type="number"
-                      value={r.price}
-                      min="0"
-                      onChange={(e) => setPrice(r.productId, +e.target.value)}
-                      className="w-20 h-7 px-1 rounded-lg bg-surface border border-line text-sm text-right"
-                      title="Цена за единицу"
-                    />
-                    <span className="text-[11px] text-muted">₽</span>
-                  </div>
-                  <span className="text-sm font-semibold tabular-nums w-24 text-right">
-                    {money((Number(r.qty) || 0) * (Number(r.price) || 0))}
-                  </span>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* Добавить товар — простой поиск */}
-        <div className="relative">
-          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted pointer-events-none" />
-          <input
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="Добавить товар в заказ…"
-            className="w-full h-10 pl-9 pr-3 rounded-xl bg-surface-2 border border-line outline-none focus:border-brand text-sm"
-          />
-          {suggest.length > 0 && (
-            <div className="absolute z-10 left-0 right-0 mt-1 card p-1 max-h-56 overflow-y-auto">
-              {suggest.map((p) => (
-                <button
-                  key={p.id}
-                  onClick={() => addProduct(p)}
-                  className="w-full flex items-center justify-between gap-2 px-2.5 h-10 rounded-lg hover:bg-surface-2 text-left text-sm"
-                >
-                  <span className="truncate">{p.name}</span>
-                  <span className="text-muted text-[12px] shrink-0">
-                    {p.sku} · {money(p.price)}
-                  </span>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Итог */}
-        <div className="border-t border-line pt-3 space-y-2">
-          <div className="flex items-center gap-3">
-            <label className="flex items-center gap-1.5 text-[13px] cursor-pointer">
-              <input
-                type="checkbox"
-                checked={onCredit}
-                onChange={(e) => setOnCredit(e.target.checked)}
-                className="accent-[var(--brand)] w-4 h-4"
-              />
-              В долг
-            </label>
-            <div className="flex items-center gap-1.5 ml-auto">
-              <span className="text-[12px] text-muted">Скидка</span>
-              <input
-                type="number"
-                min="0"
-                max="100"
-                value={discount}
-                onChange={(e) => setDiscount(e.target.value)}
-                className="w-14 h-8 px-2 rounded-lg bg-surface-2 border border-line text-sm text-center"
-              />
-              <span className="text-[12px] text-muted">%</span>
-            </div>
-          </div>
-          {Number(discount) > 0 && (
-            <div className="flex justify-between text-[12px] text-muted">
-              <span>Без скидки</span>
-              <span className="line-through tabular-nums">{money(subtotal)}</span>
-            </div>
-          )}
-          <div className="flex justify-between items-center">
-            <span className="text-muted text-sm">Итого {onCredit && <span className="text-bad">· в долг</span>}</span>
-            <span className="text-xl font-semibold tabular-nums">{money(total)}</span>
-          </div>
-        </div>
-        {err && <div className="text-[13px] text-bad">{err}</div>}
-      </div>
-    </Modal>
-  )
-}
-
-// Меню печатных форм: Счёт / ТОРГ-12 / УПД. Компактный выпадающий список
-// вместо трёх кнопок в ряд — не разъедает панель действий.
 function PrintMenu({ order, settings, customer }) {
   const [open, setOpen] = useState(false)
   const forms = [

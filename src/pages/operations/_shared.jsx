@@ -22,6 +22,8 @@ import {
   Zap,
   Droplets,
   PaintBucket,
+  LayoutGrid,
+  List as ListIcon,
 } from 'lucide-react'
 import { Empty, cx } from '../../components/ui'
 import { useStore } from '../../store/useStore'
@@ -310,6 +312,12 @@ export function ProductTile({ p, priceField, showStock, inCart, onAdd, onSetQty,
 // компонент для SaleTab, ReceiveTab и других форм документов, где нужен
 // быстрый выбор товара из каталога.
 // Проп priceField: 'price' для продажи, 'cost' для закупки.
+// Каталог с двумя режимами отображения — «Плитки» для сенсора / кассира
+// (крупные фото, добавление в 1 тап) и «Таблица» для оптовика с мышью
+// (5 колонок SKU/Название/Ост./Цена/[+], помещается ~30 строк на экран).
+// Выбор режима запоминается в localStorage ('sklad.catalogView') и
+// применяется во всех операциях, где используется этот компонент.
+const VIEW_KEY = 'sklad.catalogView'
 export function ProductPickerGrid({
   query,
   setQuery,
@@ -325,6 +333,20 @@ export function ProductPickerGrid({
   placeholder,
 }) {
   const products = useStore((s) => s.products)
+  const [view, setView] = useState(() => {
+    try {
+      return localStorage.getItem(VIEW_KEY) || 'tiles'
+    } catch {
+      return 'tiles'
+    }
+  })
+  const setViewPersist = (v) => {
+    setView(v)
+    try {
+      localStorage.setItem(VIEW_KEY, v)
+    } catch {}
+  }
+
   const list = useMemo(() => {
     const s = query.trim().toLowerCase()
     return products.filter((p) => {
@@ -347,28 +369,149 @@ export function ProductPickerGrid({
         msg={msg}
         placeholder={placeholder}
       />
-      <div className="flex gap-1.5 overflow-x-auto no-scrollbar -mx-1 px-1">
-        <Chip active={cat === 'all'} onClick={() => setCat('all')}>Все</Chip>
-        {CATEGORIES.map((c) => (
-          <Chip key={c.key} active={cat === c.key} onClick={() => setCat(c.key)}>
-            {c.key}
-          </Chip>
-        ))}
+      <div className="flex items-center gap-1.5">
+        <div className="flex gap-1.5 overflow-x-auto no-scrollbar flex-1 min-w-0">
+          <Chip active={cat === 'all'} onClick={() => setCat('all')}>Все</Chip>
+          {CATEGORIES.map((c) => (
+            <Chip key={c.key} active={cat === c.key} onClick={() => setCat(c.key)}>
+              {c.key}
+            </Chip>
+          ))}
+        </div>
+        {/* Тумблер режима — иконки, чтобы не съедать место. */}
+        <div className="flex gap-0.5 bg-surface-2 rounded-lg p-0.5 shrink-0">
+          <ViewChip active={view === 'tiles'} onClick={() => setViewPersist('tiles')} title="Плитки">
+            <LayoutGrid size={14} />
+          </ViewChip>
+          <ViewChip active={view === 'table'} onClick={() => setViewPersist('table')} title="Таблица">
+            <ListIcon size={14} />
+          </ViewChip>
+        </div>
       </div>
-      <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-2.5">
-        {list.map((p) => (
-          <ProductTile
-            key={p.id}
-            p={p}
-            priceField={priceField}
-            showStock={showStock}
-            inCart={rowsById[p.id]}
-            onAdd={onAdd}
-            onSetQty={onSetQty}
-          />
-        ))}
-      </div>
+
+      {view === 'tiles' ? (
+        <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-2.5">
+          {list.map((p) => (
+            <ProductTile
+              key={p.id}
+              p={p}
+              priceField={priceField}
+              showStock={showStock}
+              inCart={rowsById[p.id]}
+              onAdd={onAdd}
+              onSetQty={onSetQty}
+            />
+          ))}
+        </div>
+      ) : (
+        <CatalogTable
+          list={list}
+          rowsById={rowsById}
+          onAdd={onAdd}
+          onSetQty={onSetQty}
+          priceField={priceField}
+          showStock={showStock}
+        />
+      )}
       {list.length === 0 && <Empty icon={Search} title="Ничего не найдено" />}
+    </div>
+  )
+}
+
+function ViewChip({ active, onClick, children, title }) {
+  return (
+    <button
+      onClick={onClick}
+      title={title}
+      className={cx(
+        'h-7 w-8 rounded-md grid place-items-center transition',
+        active ? 'bg-brand text-brand-ink' : 'text-muted hover:text-ink',
+      )}
+    >
+      {children}
+    </button>
+  )
+}
+
+// Плотная таблица каталога — 5 колонок, минимум пикселей на строку.
+// Клик по строке добавляет 1 шт., поле qty редактируется inline, Enter
+// на поле qty — фокус на следующей строке (Tab-навигация). Это то, чего
+// ждёт оптовик от каталога в стиле МойСклад.
+function CatalogTable({ list, rowsById, onAdd, onSetQty, priceField, showStock }) {
+  return (
+    <div className="rounded-xl border border-line overflow-hidden">
+      <table className="w-full text-[13px]">
+        <thead className="bg-surface-2 sticky top-0 z-10">
+          <tr className="text-muted text-left">
+            <th className="py-2 px-3 font-medium w-24">SKU</th>
+            <th className="py-2 px-3 font-medium">Название</th>
+            {showStock && (
+              <th className="py-2 px-3 font-medium text-right w-24">Остаток</th>
+            )}
+            <th className="py-2 px-3 font-medium text-right w-28">
+              {priceField === 'cost' ? 'Закупка' : 'Цена'}
+            </th>
+            <th className="py-2 px-3 font-medium text-right w-32">В чек</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-line">
+          {list.map((p) => {
+            const inCart = rowsById[p.id]
+            const price = Number(p[priceField]) || 0
+            return (
+              <tr
+                key={p.id}
+                className={cx(
+                  'hover:bg-surface-2/60 transition',
+                  inCart && 'bg-brand-soft/30',
+                )}
+              >
+                <td className="py-1.5 px-3 tabular-nums text-muted">{p.sku}</td>
+                <td className="py-1.5 px-3">
+                  <div className="font-medium truncate max-w-[420px]">{p.name}</div>
+                </td>
+                {showStock && (
+                  <td className="py-1.5 px-3 text-right tabular-nums text-muted">
+                    {num(p.stock)} {p.unit}
+                  </td>
+                )}
+                <td className="py-1.5 px-3 text-right tabular-nums font-medium">
+                  {money(price)}
+                </td>
+                <td className="py-1.5 px-3 text-right">
+                  {inCart ? (
+                    <div className="inline-flex items-center gap-1">
+                      <input
+                        type="number"
+                        value={inCart.qty}
+                        min="0"
+                        step={p.weighted ? '0.1' : '1'}
+                        onChange={(e) => onSetQty(inCart.productId, Math.max(0, +e.target.value))}
+                        className="w-16 h-8 px-1 rounded-lg bg-surface border border-line text-sm text-center"
+                      />
+                      <button
+                        onClick={() => onSetQty(inCart.productId, 0)}
+                        className="text-muted hover:text-bad px-1"
+                        title="Убрать"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => onAdd(p)}
+                      className="h-8 w-8 rounded-lg bg-brand text-brand-ink font-semibold hover:opacity-90"
+                      title="Добавить"
+                    >
+                      +
+                    </button>
+                  )}
+                </td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
     </div>
   )
 }
