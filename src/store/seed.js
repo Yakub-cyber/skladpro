@@ -175,101 +175,6 @@ const KITS = [
   },
 ]
 
-// Демо-блюда с модификаторами — для показа общепитового сценария.
-// Кофе с 2 группами: «Размер» (обязательная одна опция, влияет на цену)
-// и «Добавки» (несколько на выбор, каждая с ценой).
-// Демо-ингредиенты для общепита — обычные товары, которые расходуются
-// по граммовке при пробитии блюд с техкартой (см. Капучино).
-const INGREDIENTS = [
-  {
-    id: 'ing_coffee',
-    type: 'product',
-    sku: 'ИНГ-К01',
-    name: 'Кофе-зёрна (арабика)',
-    category: 'Расходники',
-    unit: 'кг',
-    price: 3200,
-    cost: 2100,
-    stock: 5, // 5 кг на складе
-    minStock: 2,
-    tags: ['ингредиент', 'кофе'],
-    batches: [{ id: 'ing_coffee_b0', qty: 5, cost: 2100, at: '1970-01-01T00:00:00Z' }],
-    components: [],
-    modifierGroups: [],
-  },
-  {
-    id: 'ing_milk',
-    type: 'product',
-    sku: 'ИНГ-М01',
-    name: 'Молоко цельное',
-    category: 'Расходники',
-    unit: 'л',
-    price: 120,
-    cost: 78,
-    stock: 12, // 12 литров
-    minStock: 5,
-    tags: ['ингредиент', 'молоко'],
-    batches: [{ id: 'ing_milk_b0', qty: 12, cost: 78, at: '1970-01-01T00:00:00Z' }],
-    components: [],
-    modifierGroups: [],
-  },
-]
-
-const DISHES = [
-  {
-    id: 'dish1',
-    type: 'product',
-    sku: 'КАФ-101',
-    name: 'Капучино',
-    category: 'Расходники',
-    unit: 'чашка',
-    price: 190, // базовая цена (за средний размер)
-    // Себестоимость = сумма по техкарте: 0.02 кг кофе × 2100 + 0.15 л
-    // молока × 78 = 42 + 11.7 ≈ 53.7 (округляем до 54). В UI можно
-    // пересчитать кнопкой «Взять как себест.».
-    cost: 54,
-    // Блюдо само по себе не хранится на складе — расходуется через
-    // ингредиенты. Оставляем виртуальный запас 999, чтобы касса не
-    // ругалась «нет остатка», а списание идёт через components.
-    stock: 999,
-    minStock: 0,
-    tags: ['напиток', 'кофе'],
-    batches: [{ id: 'dish1_b0', qty: 999, cost: 54, at: '1970-01-01T00:00:00Z' }],
-    // Техкарта: 20 г кофе + 150 мл молока на одну порцию (средний размер).
-    // При пробитии Капучино движок posting.js спишет эти количества по
-    // FIFO с ингредиентов ing_coffee / ing_milk.
-    components: [
-      { productId: 'ing_coffee', qty: 0.02 },
-      { productId: 'ing_milk', qty: 0.15 },
-    ],
-    modifierGroups: [
-      {
-        id: 'mg_size',
-        name: 'Размер',
-        required: true,
-        multi: false,
-        options: [
-          { id: 'op_s', name: 'Маленький', price: -30 },
-          { id: 'op_m', name: 'Средний', price: 0, default: true },
-          { id: 'op_l', name: 'Большой', price: 40 },
-        ],
-      },
-      {
-        id: 'mg_extras',
-        name: 'Добавки',
-        required: false,
-        multi: true,
-        options: [
-          { id: 'op_syrup', name: 'Сироп (карамель/ваниль)', price: 30 },
-          { id: 'op_extra_shot', name: 'Двойной эспрессо', price: 50 },
-          { id: 'op_oat', name: 'Овсяное молоко', price: 40 },
-          { id: 'op_marshmallow', name: 'Маршмеллоу', price: 20 },
-        ],
-      },
-    ],
-  },
-]
-
 // ── Клиенты ──────────────────────────────────────────────────────────────
 // [name, type, city, contact, phone, totalSpent, bonus, daysAgo]
 const C = [
@@ -326,7 +231,7 @@ export function makeSeed() {
 
   // Услуги и комплекты — добавляем в общий список товаров. У них нет
   // партий, ячеек и штрихкодов; в кассе они выделены значком типа.
-  const svAndKits = [...SERVICES, ...INGREDIENTS, ...KITS, ...DISHES].map((p) => {
+  const svAndKits = [...SERVICES, ...KITS].map((p) => {
     const prices = {}
     for (const t of PRICE_TYPE_SEED) prices[t.id] = Math.round(p.price * t.factor)
     return { ...p, prices, warehouseId: 'wh1' }
@@ -486,18 +391,6 @@ export function makeSeed() {
     cells: ALL_CELLS.map((c) => ({ ...c })),
     warehouses: WAREHOUSES.map((w) => ({ ...w })),
     activeWarehouseId: 'wh1',
-    // Демо-зал для общепита. Столы разбросаны по сетке 12×8: сверху 3
-    // круглых на 2-4 гостя, снизу 3 квадратных на 6. Пользователь сам
-    // подстроит план в редакторе.
-    halls: [{ id: 'hall1', name: 'Основной зал', w: 12, h: 8 }],
-    tables: [
-      { id: 'tbl1', hallId: 'hall1', no: 1, x: 2, y: 2, seats: 2, shape: 'round' },
-      { id: 'tbl2', hallId: 'hall1', no: 2, x: 6, y: 2, seats: 4, shape: 'round' },
-      { id: 'tbl3', hallId: 'hall1', no: 3, x: 10, y: 2, seats: 2, shape: 'round' },
-      { id: 'tbl4', hallId: 'hall1', no: 4, x: 3, y: 6, seats: 6, shape: 'square' },
-      { id: 'tbl5', hallId: 'hall1', no: 5, x: 7, y: 6, seats: 4, shape: 'square' },
-      { id: 'tbl6', hallId: 'hall1', no: 6, x: 11, y: 6, seats: 2, shape: 'square' },
-    ],
     settings: {
       company: 'СкладПро',
       currency: '₽',

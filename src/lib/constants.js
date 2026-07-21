@@ -7,10 +7,6 @@ export const ORDER_STATUSES = [
   { key: 'shipped', label: 'В пути', color: 'brand', step: 4 },
   { key: 'delivered', label: 'Доставлен', color: 'ok', step: 5 },
   { key: 'cancelled', label: 'Отменён', color: 'bad', step: -1 },
-  // 'open' — заказ на столик в общепите. step: -1 значит «вне воронки
-  // доставки»: не проваливается в nextStatus() и не подтягивается в
-  // трекинг клиента.
-  { key: 'open', label: 'Обслуживается', color: 'ok', step: -1 },
 ]
 
 export const statusInfo = (key) =>

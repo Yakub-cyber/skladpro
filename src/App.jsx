@@ -12,8 +12,6 @@ const Dashboard = lazy(() => import('./pages/Dashboard'))
 const Orders = lazy(() => import('./pages/Orders'))
 const NewOrder = lazy(() => import('./pages/NewOrder'))
 const EditOrder = lazy(() => import('./pages/EditOrder'))
-const Halls = lazy(() => import('./pages/Halls'))
-const Kitchen = lazy(() => import('./pages/Kitchen'))
 const Delivery = lazy(() => import('./pages/Delivery'))
 const Products = lazy(() => import('./pages/Products'))
 const Warehouse = lazy(() => import('./pages/Warehouse'))
@@ -85,8 +83,6 @@ export default function App() {
         <Route path="orders" element={<Orders />} />
         <Route path="orders/new" element={<NewOrder />} />
         <Route path="orders/:id/edit" element={<EditOrder />} />
-        <Route path="halls" element={<Halls />} />
-        <Route path="kitchen" element={<Kitchen />} />
         <Route path="delivery" element={<Delivery />} />
         <Route path="products" element={<Products />} />
         <Route path="warehouse" element={<Warehouse />} />

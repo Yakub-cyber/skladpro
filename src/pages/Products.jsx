@@ -45,6 +45,7 @@ import {
 import { useStore } from '../store/useStore'
 import { money, num } from '../lib/format'
 import { CATEGORIES, catInfo, PRODUCT_TYPES, isService, isKit, isRealProduct } from '../lib/constants'
+import { computeKitStock } from '../lib/kit'
 import { CELLS } from '../store/seed'
 import { printLabels, printPriceTags, barcodeSVG } from '../lib/labels'
 import {
@@ -333,10 +334,14 @@ export default function Products() {
                     <Badge tone={stockTone(p)}>
                       {num(p.stock)} {p.unit}
                     </Badge>
+                  ) : isKit(p) ? (
+                    // Комплект: остаток = сколько наборов можно собрать из
+                    // текущих остатков компонентов. Считается на лету.
+                    <Badge tone="brand">
+                      {num(computeKitStock(p, products))} {p.unit}
+                    </Badge>
                   ) : (
-                    <span className="text-[11px] text-muted">
-                      {isKit(p) ? `состав: ${p.components?.length || 0}` : 'без остатка'}
-                    </span>
+                    <span className="text-[11px] text-muted">без остатка</span>
                   )}
                 </div>
                 {isRealProduct(p) && reserved[p.id] > 0 && (
@@ -444,9 +449,15 @@ export default function Products() {
                       {num(Math.max(0, p.stock - (reserved[p.id] || 0)))}
                     </td>
                     <td className="py-2.5 px-4 text-right">
-                      <Badge tone={stockTone(p)}>
-                        {num(p.stock)} {p.unit}
-                      </Badge>
+                      {isKit(p) ? (
+                        <Badge tone="brand">
+                          {num(computeKitStock(p, products))} {p.unit}
+                        </Badge>
+                      ) : (
+                        <Badge tone={stockTone(p)}>
+                          {num(p.stock)} {p.unit}
+                        </Badge>
+                      )}
                     </td>
                     <td className="py-2.5 pr-3 text-muted">
                       <Pencil size={15} />
@@ -979,16 +990,16 @@ function ProductModal({ product, onClose }) {
           </Field>
         </div>
 
-        {/* Редактор состава — доступен для комплектов и для обычных
-            товаров (техкарта блюда: молоко 0.15 л + кофе 0.02 кг). Услугам
-            состав не нужен. Один и тот же UI, но лейбл разный по типу. */}
-        {!isServiceForm && (
+        {/* Редактор состава комплекта — только для type='kit'. Обычный
+            товар и услуга состав не имеют. Комплект = «купить пакетом
+            выгоднее»: его цена и остаток вычисляются из компонентов
+            (см. lib/kit.js), а продажа списывает компоненты по FIFO. */}
+        {isKitForm && (
           <KitComponentsEditor
             components={f.components || []}
             onChange={(components) => set('components', components)}
             allProducts={allProducts}
             currentId={product?.id}
-            isKit={isKitForm}
             onFillPriceFromComponents={(sum) => {
               set('price', sum)
               // синхронизируем и категорийные цены — базой
@@ -996,21 +1007,7 @@ function ProductModal({ product, onClose }) {
               for (const t of priceTypes) nextPrices[t.id] = Math.round(sum * (t.factor || 1))
               set('prices', nextPrices)
             }}
-            onFillCostFromComponents={(costSum) => {
-              set('cost', costSum)
-            }}
             priceTypes={priceTypes}
-          />
-        )}
-
-        {/* Модификаторы блюда — только для обычных товаров и не для kit.
-            Если список пуст, товар работает как обычно; если хотя бы одна
-            группа задана, при клике на товар в кассе откроется модалка
-            выбора модификаторов. */}
-        {!isServiceForm && !isKitForm && (
-          <ModifierGroupsEditor
-            groups={f.modifierGroups || []}
-            onChange={(mg) => set('modifierGroups', mg)}
           />
         )}
 
@@ -1109,202 +1106,22 @@ function ProductModal({ product, onClose }) {
   )
 }
 
-// Редактор модификаторов блюда — группы опций с ценой (может быть
-// отрицательной для «маленького размера»). Group.required=true → нужно
-// выбрать одну опцию (radio); group.multi=true → любое число опций
-// (checkbox). Работает как в iiko/Poster: клик по товару в кассе с
-// непустыми modifierGroups открывает модалку выбора; каждый чекбокс
-// добавляет свою цену к позиции чека.
-function ModifierGroupsEditor({ groups, onChange }) {
-  const addGroup = () => {
-    const id = 'mg_' + Math.random().toString(36).slice(2, 8)
-    onChange([
-      ...groups,
-      { id, name: 'Новая группа', required: false, multi: false, options: [] },
-    ])
-  }
-  const setGroup = (gid, patch) =>
-    onChange(groups.map((g) => (g.id === gid ? { ...g, ...patch } : g)))
-  const removeGroup = (gid) => onChange(groups.filter((g) => g.id !== gid))
-
-  const addOption = (gid) => {
-    const id = 'op_' + Math.random().toString(36).slice(2, 8)
-    setGroup(gid, {
-      options: [
-        ...(groups.find((g) => g.id === gid)?.options || []),
-        { id, name: 'Опция', price: 0 },
-      ],
-    })
-  }
-  const setOption = (gid, oid, patch) => {
-    const g = groups.find((x) => x.id === gid)
-    if (!g) return
-    setGroup(gid, {
-      options: g.options.map((o) => (o.id === oid ? { ...o, ...patch } : o)),
-    })
-  }
-  const removeOption = (gid, oid) => {
-    const g = groups.find((x) => x.id === gid)
-    if (!g) return
-    setGroup(gid, { options: g.options.filter((o) => o.id !== oid) })
-  }
-
-  const setDefault = (gid, oid) => {
-    // Для не-multi групп ровно один default (radio-семантика).
-    const g = groups.find((x) => x.id === gid)
-    if (!g) return
-    if (g.multi) {
-      setOption(gid, oid, { default: !g.options.find((o) => o.id === oid)?.default })
-    } else {
-      setGroup(gid, {
-        options: g.options.map((o) => ({ ...o, default: o.id === oid })),
-      })
-    }
-  }
-
-  return (
-    <div className="rounded-xl border border-info/30 bg-info-soft/40 p-3 space-y-2">
-      <div className="flex items-center gap-2">
-        <span className="text-[13px] font-medium">Модификаторы блюда</span>
-        <span className="text-[11px] text-muted">
-          {groups.length ? `${groups.length} гр.` : 'нет — обычный товар'}
-        </span>
-        <button
-          type="button"
-          onClick={addGroup}
-          className="ml-auto text-[12px] px-2 h-7 rounded-lg bg-surface hover:bg-surface-2 border border-line whitespace-nowrap"
-        >
-          + Группа
-        </button>
-      </div>
-
-      {groups.length === 0 && (
-        <p className="text-[11px] text-muted italic">
-          Пример группы: «Размер» — Маленький (−30 ₽), Средний (0 ₽, по
-          умолчанию), Большой (+40 ₽). Одна группа = один вопрос гостю на
-          кассе.
-        </p>
-      )}
-
-      {groups.map((g) => (
-        <div key={g.id} className="rounded-lg bg-surface p-2.5 space-y-2 border border-line">
-          <div className="flex items-center gap-2">
-            <Input
-              value={g.name}
-              onChange={(e) => setGroup(g.id, { name: e.target.value })}
-              placeholder="Название группы"
-              className="flex-1 h-8 text-sm"
-            />
-            <label className="text-[11px] text-muted inline-flex items-center gap-1 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={!!g.required}
-                onChange={(e) => setGroup(g.id, { required: e.target.checked })}
-                className="accent-[var(--brand)] w-3.5 h-3.5"
-              />
-              обяз.
-            </label>
-            <label className="text-[11px] text-muted inline-flex items-center gap-1 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={!!g.multi}
-                onChange={(e) => setGroup(g.id, { multi: e.target.checked })}
-                className="accent-[var(--brand)] w-3.5 h-3.5"
-              />
-              несколько
-            </label>
-            <button
-              type="button"
-              onClick={() => removeGroup(g.id)}
-              title="Удалить группу"
-              className="h-7 w-7 rounded-lg text-muted hover:text-bad hover:bg-surface-2 grid place-items-center"
-            >
-              <X size={13} />
-            </button>
-          </div>
-
-          {g.options.length > 0 ? (
-            <div className="space-y-1">
-              {g.options.map((o) => (
-                <div key={o.id} className="flex items-center gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => setDefault(g.id, o.id)}
-                    title={g.multi ? 'В default' : 'По умолчанию (radio)'}
-                    className={cx(
-                      'h-6 w-6 rounded-md grid place-items-center border transition text-[11px]',
-                      o.default
-                        ? 'bg-brand text-brand-ink border-brand'
-                        : 'bg-surface-2 border-line text-muted hover:text-ink',
-                    )}
-                  >
-                    ✓
-                  </button>
-                  <Input
-                    value={o.name}
-                    onChange={(e) => setOption(g.id, o.id, { name: e.target.value })}
-                    placeholder="Название"
-                    className="flex-1 h-8 text-sm"
-                  />
-                  <div className="relative w-24">
-                    <Input
-                      type="number"
-                      step="0.01"
-                      value={o.price}
-                      onChange={(e) => setOption(g.id, o.id, { price: Number(e.target.value) || 0 })}
-                      className="h-8 text-sm text-right pr-6"
-                    />
-                    <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[11px] text-muted">
-                      ₽
-                    </span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => removeOption(g.id, o.id)}
-                    className="h-8 w-8 rounded-lg text-muted hover:text-bad hover:bg-surface-2 grid place-items-center"
-                    title="Убрать"
-                  >
-                    <X size={13} />
-                  </button>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <p className="text-[11px] text-muted italic">
-              Нет опций. Нажмите «+ Опция», чтобы добавить.
-            </p>
-          )}
-
-          <button
-            type="button"
-            onClick={() => addOption(g.id)}
-            className="text-[12px] px-2 h-7 rounded-lg bg-surface-2 hover:bg-surface-3 border border-line"
-          >
-            + Опция
-          </button>
-        </div>
-      ))}
-    </div>
-  )
-}
-
-// Редактор состава комплекта — список товаров с qty. Кнопка «сумма
-// составляющих» подставляет цену как сумму розничных цен × qty (для
-// ориентира; ручная цена комплекта задаётся отдельно).
+// Редактор состава комплекта — список товаров с qty × шт. Кнопка «сумма
+// составляющих» подставляет цену комплекта как сумму розничных цен
+// компонентов (для ориентира; ручная цена задаётся отдельно, ниже она
+// же). Комплект не хранит собственный остаток: при продаже списываются
+// компоненты, а доступное количество наборов = min(component.stock /
+// component.qty). См. lib/kit.js и lib/posting.js expandItem().
 function KitComponentsEditor({
   components,
   onChange,
   allProducts,
   currentId,
-  isKit = false,
   onFillPriceFromComponents,
-  onFillCostFromComponents,
-  priceTypes,
 }) {
   const [q, setQ] = useState('')
-  // Из списка кандидатов исключаем услуги/комплекты и сам этот товар.
-  // Для техкарты (не kit) кандидаты те же — обычные товары/ингредиенты
-  // с реальным складским остатком.
+  // Кандидаты для состава — только обычные товары (не услуги, не другой
+  // комплект, не сам этот комплект).
   const candidates = allProducts
     .filter((p) => p.id !== currentId && (p.type || 'product') === 'product')
     .filter((p) => {
@@ -1313,22 +1130,14 @@ function KitComponentsEditor({
     })
     .slice(0, 6)
 
-  // Для комплекта — сумма розничных цен составляющих (ориентир для цены
-  // комплекта). Для блюда — сумма себестоимостей × qty ингредиента
-  // (реальная COGS порции).
   const componentPriceTotal = components.reduce((s, c) => {
     const p = allProducts.find((x) => x.id === c.productId)
     return s + (Number(p?.price) || 0) * (Number(c.qty) || 0)
   }, 0)
-  const componentCostTotal = components.reduce((s, c) => {
-    const p = allProducts.find((x) => x.id === c.productId)
-    return s + (Number(p?.cost) || 0) * (Number(c.qty) || 0)
-  }, 0)
 
   const add = (p) => {
     if (components.find((c) => c.productId === p.id)) return
-    // Для kit — по 1 шт., для блюда qty подбирается вручную (граммовка).
-    onChange([...components, { productId: p.id, qty: isKit ? 1 : 0.1 }])
+    onChange([...components, { productId: p.id, qty: 1 }])
     setQ('')
   }
   const setQty = (id, qty) =>
@@ -1338,50 +1147,22 @@ function KitComponentsEditor({
         : components.map((c) => (c.productId === id ? { ...c, qty } : c)),
     )
 
-  const title = isKit ? 'Состав комплекта' : 'Техкарта · состав блюда'
-  const emptyHint = isKit
-    ? 'Добавьте товары в состав комплекта.'
-    : 'Добавьте ингредиенты. Единица измерения ингредиента — как у самого товара (кг/л/шт).'
-  const placeholder = isKit
-    ? 'Найти товар для добавления в комплект…'
-    : 'Найти ингредиент (молоко, кофе, сахар)…'
-
   return (
     <div className="rounded-xl border border-brand/30 bg-brand-soft/40 p-3 space-y-2">
       <div className="flex items-center gap-2 flex-wrap">
-        <span className="text-[13px] font-medium">{title}</span>
-        {/* Панель итогов и кнопок «взять как» */}
+        <span className="text-[13px] font-medium">Состав комплекта</span>
         <div className="ml-auto flex items-center gap-2 flex-wrap">
-          {isKit ? (
-            <>
-              <span className="text-[12px] text-muted">
-                Розница: <b className="text-ink tabular-nums">{money(componentPriceTotal)}</b>
-              </span>
-              <button
-                type="button"
-                onClick={() => onFillPriceFromComponents?.(componentPriceTotal)}
-                className="text-[12px] px-2 h-7 rounded-lg bg-surface hover:bg-surface-2 border border-line whitespace-nowrap"
-                title="Установить цену комплекта = сумма розничных цен"
-              >
-                Взять как цену
-              </button>
-            </>
-          ) : (
-            <>
-              <span className="text-[12px] text-muted">
-                Себестоимость порции:{' '}
-                <b className="text-ink tabular-nums">{money(componentCostTotal)}</b>
-              </span>
-              <button
-                type="button"
-                onClick={() => onFillCostFromComponents?.(componentCostTotal)}
-                className="text-[12px] px-2 h-7 rounded-lg bg-surface hover:bg-surface-2 border border-line whitespace-nowrap"
-                title="Проставить себестоимость блюда по техкарте"
-              >
-                Взять как себест.
-              </button>
-            </>
-          )}
+          <span className="text-[12px] text-muted">
+            Розница: <b className="text-ink tabular-nums">{money(componentPriceTotal)}</b>
+          </span>
+          <button
+            type="button"
+            onClick={() => onFillPriceFromComponents?.(componentPriceTotal)}
+            className="text-[12px] px-2 h-7 rounded-lg bg-surface hover:bg-surface-2 border border-line whitespace-nowrap"
+            title="Установить цену комплекта = сумма розничных цен"
+          >
+            Взять как цену
+          </button>
         </div>
       </div>
 
@@ -1399,32 +1180,26 @@ function KitComponentsEditor({
                 </div>
               )
             }
-            const rowCost = (Number(p.cost) || 0) * (Number(c.qty) || 0)
+            // Наборов «можно собрать» из этого компонента при текущей qty.
+            const perKit = Number(c.qty) || 0
+            const maxKits = perKit > 0 ? Math.floor((Number(p.stock) || 0) / perKit) : 0
             return (
               <div key={c.productId} className="flex items-center gap-2 p-2 rounded-lg bg-surface">
                 <div className="min-w-0 flex-1">
                   <div className="text-[13px] font-medium truncate">{p.name}</div>
                   <div className="text-[11px] text-muted">
-                    {p.sku} ·{' '}
-                    {isKit
-                      ? `${money(p.price)}/${p.unit}`
-                      : `${money(p.cost)}/${p.unit} закуп`}
+                    {p.sku} · {money(p.price)}/{p.unit} · ост. {num(p.stock)} → на {maxKits} наб.
                   </div>
                 </div>
                 <input
                   type="number"
                   min="0.001"
-                  step={isKit ? '1' : '0.001'}
+                  step="1"
                   value={c.qty}
                   onChange={(e) => setQty(c.productId, +e.target.value)}
                   className="w-20 h-8 px-1 rounded-lg bg-surface-2 border border-line text-sm text-center tabular-nums"
                 />
                 <span className="text-[12px] text-muted w-8">{p.unit}</span>
-                {!isKit && (
-                  <span className="text-[11px] text-muted tabular-nums w-16 text-right">
-                    {money(rowCost)}
-                  </span>
-                )}
                 <button
                   onClick={() => setQty(c.productId, 0)}
                   className="text-muted hover:text-bad"
@@ -1437,7 +1212,9 @@ function KitComponentsEditor({
           })}
         </div>
       ) : (
-        <div className="text-[12px] text-muted italic">{emptyHint}</div>
+        <div className="text-[12px] text-muted italic">
+          Добавьте товары в состав комплекта.
+        </div>
       )}
 
       {/* Добавление товара в состав */}
@@ -1446,7 +1223,7 @@ function KitComponentsEditor({
         <input
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          placeholder={placeholder}
+          placeholder="Найти товар для добавления в комплект…"
           className="w-full h-9 pl-8 pr-3 rounded-lg bg-surface border border-line text-[13px] outline-none focus:border-brand"
         />
         {q && candidates.length > 0 && (

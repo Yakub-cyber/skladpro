@@ -27,6 +27,7 @@ import { money, num } from '../lib/format'
 import { CATEGORIES, catInfo, priceFor } from '../lib/constants'
 import { resolveScan } from '../lib/barcode'
 import { reservedByProduct } from '../lib/orders'
+import { computeKitStock } from '../lib/kit'
 
 const CAT_ICON = { Wrench, Hammer, Zap, Droplets, PaintBucket, Package }
 
@@ -474,41 +475,18 @@ function CartBody({
               const base = Number(r.basePrice ?? r.price) || 0
               const price = Number(r.price) || 0
               const discounted = base > 0 && price < base
-              const rowKey =
-                r.productId + '|' + (r.modifiers || []).map((m) => m.optionId).sort().join(',')
-              const hasMods = (r.modifiers || []).length > 0
               return (
-                <div key={rowKey} className="p-2.5 rounded-xl bg-surface-2">
+                <div key={r.productId} className="p-2.5 rounded-xl bg-surface-2">
                   <div className="flex items-start justify-between gap-2">
                     <span className="text-[13px] font-medium leading-snug">{r.name}</span>
-                    <button onClick={() => onSetQty(rowKey, 0)} className="text-muted hover:text-bad shrink-0">
+                    <button onClick={() => onSetQty(r.productId, 0)} className="text-muted hover:text-bad shrink-0">
                       <Trash2 size={15} />
                     </button>
                   </div>
-                  {/* Модификаторы — компактный вложенный список сразу под названием.
-                      Показываем группу → значение → цена (если > 0). */}
-                  {hasMods && (
-                    <ul className="mt-1 space-y-0.5 pl-2 border-l-2 border-info/50">
-                      {r.modifiers.map((m) => (
-                        <li
-                          key={m.optionId}
-                          className="flex items-center gap-2 text-[11px] text-muted"
-                        >
-                          <span className="opacity-70">{m.groupName}:</span>
-                          <span className="text-ink font-medium truncate">{m.name}</span>
-                          {m.price !== 0 && (
-                            <span className="ml-auto tabular-nums whitespace-nowrap">
-                              {(m.price > 0 ? '+' : '') + money(m.price)}
-                            </span>
-                          )}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
                   {/* Строка 1: qty */}
                   <div className="flex items-center gap-2 mt-2">
                     <button
-                      onClick={() => onSetQty(rowKey, round3(r.qty - (r.weighted ? 0.1 : 1)))}
+                      onClick={() => onSetQty(r.productId, round3(r.qty - (r.weighted ? 0.1 : 1)))}
                       className="h-7 w-7 rounded-lg bg-surface grid place-items-center hover:bg-surface-3"
                     >
                       <Minus size={14} />
@@ -518,11 +496,11 @@ function CartBody({
                       value={r.qty}
                       min={r.weighted ? '0.001' : '1'}
                       step={r.weighted ? '0.1' : '1'}
-                      onChange={(e) => onSetQty(rowKey, Math.max(0, +e.target.value))}
+                      onChange={(e) => onSetQty(r.productId, Math.max(0, +e.target.value))}
                       className="w-14 h-7 px-1 rounded-lg bg-surface border border-line text-sm text-center"
                     />
                     <button
-                      onClick={() => onSetQty(rowKey, round3(r.qty + (r.weighted ? 0.1 : 1)))}
+                      onClick={() => onSetQty(r.productId, round3(r.qty + (r.weighted ? 0.1 : 1)))}
                       className="h-7 w-7 rounded-lg bg-surface grid place-items-center hover:bg-surface-3"
                     >
                       <Plus size={14} />
@@ -541,7 +519,7 @@ function CartBody({
                         value={r.price}
                         min="0"
                         step="0.01"
-                        onChange={(e) => onSetPrice(rowKey, e.target.value)}
+                        onChange={(e) => onSetPrice(r.productId, e.target.value)}
                         className={cx(
                           'w-24 h-7 px-2 rounded-lg bg-surface border text-sm text-right tabular-nums',
                           discounted ? 'border-ok text-ok font-medium' : 'border-line',
@@ -613,7 +591,12 @@ export default function NewOrder() {
   const { customers, products, priceTypes, addOrder, addCustomer, orders } = useStore()
   const defType = priceTypes.find((t) => t.default)?.id || priceTypes[0]?.id
   const reserved = useMemo(() => reservedByProduct(orders), [orders])
-  const availOf = (p) => (p.stock || 0) - (reserved[p.id] || 0)
+  // Для kit доступный остаток вычисляется по компонентам (свой stock у
+  // комплекта не хранится), для остальных — обычный p.stock − резерв.
+  const availOf = (p) => {
+    if (p.type === 'kit') return computeKitStock(p, products)
+    return (p.stock || 0) - (reserved[p.id] || 0)
+  }
 
   const [customerId, setCustomerId] = useState('')
   const [priceTypeId, setPriceTypeId] = useState(defType)
@@ -625,10 +608,6 @@ export default function NewOrder() {
   const [msg, setMsg] = useState('')
   const [mobileCart, setMobileCart] = useState(false) // bottom-sheet чека
   const [payOpen, setPayOpen] = useState(false) // модалка выбора способа оплаты
-  // Товар с непустым modifierGroups ожидает выбора модификаторов гостем.
-  // null → модалка закрыта. При скане (программное добавление) — сразу
-  // применяем defaults и не открываем модалку.
-  const [pickMod, setPickMod] = useState(null)
 
   const isCreditType = (id) =>
     priceTypes.find((t) => t.id === id)?.name.toLowerCase().includes('долг')
@@ -648,72 +627,8 @@ export default function NewOrder() {
 
   const round3 = (n) => Math.round(n * 1000) / 1000
 
-  // Сумма выбранных модификаторов для строки чека.
-  const modifiersTotal = (mods) =>
-    (mods || []).reduce((s, m) => s + (Number(m.price) || 0), 0)
-
-  // Общая функция «добавить товар с уже выбранными модификаторами».
-  // rows разделяют строки по productId + сигнатуре модификаторов, чтобы
-  // «Капучино M без сиропа» и «Капучино M с сиропом» жили отдельно.
-  const addWithModifiers = (p, qty, modifiers) => {
-    setMsg('')
-    const priceBase = priceFor(p, priceTypeId)
-    const finalPrice = priceBase + modifiersTotal(modifiers)
-    const modKey = (modifiers || []).map((m) => m.optionId).sort().join('|')
-    setRows((r) => {
-      const existing = r.find(
-        (x) => x.productId === p.id && ((x.modifiers || []).map((m) => m.optionId).sort().join('|') === modKey),
-      )
-      if (existing) {
-        return r.map((x) =>
-          x === existing ? { ...x, qty: round3(x.qty + qty) } : x,
-        )
-      }
-      return [
-        ...r,
-        {
-          productId: p.id,
-          name: p.name,
-          qty,
-          price: finalPrice,
-          basePrice: finalPrice,
-          unit: p.unit,
-          cell: p.cell,
-          weighted: p.weighted,
-          modifiers: modifiers || [],
-        },
-      ]
-    })
-  }
-
-  // Автовыбор defaults для модификаторов (для сканера / программного add).
-  const autoDefaults = (p) =>
-    (p.modifierGroups || []).flatMap((g) =>
-      g.options
-        .filter((o) => o.default)
-        .map((o) => ({
-          groupId: g.id,
-          groupName: g.name,
-          optionId: o.id,
-          name: o.name,
-          price: Number(o.price) || 0,
-        })),
-    )
-
   const add = (p, qty = 1) => {
     setMsg('')
-    // Если у товара есть модификаторы и это тап пользователя (qty=1) —
-    // открываем модалку выбора. Скан со штрихкода передаёт weighted qty
-    // или явное значение — берём defaults автоматом, чтобы не отвлекать
-    // кассира при массовом сканировании.
-    if ((p.modifierGroups || []).length > 0) {
-      if (qty === 1) {
-        setPickMod(p)
-        return
-      }
-      addWithModifiers(p, qty, autoDefaults(p))
-      return
-    }
     const inCart = rows.find((x) => x.productId === p.id)?.qty || 0
     if (inCart + qty > availOf(p)) {
       setMsg(
@@ -738,25 +653,20 @@ export default function NewOrder() {
           ],
     )
   }
-  // rowKey — уникальный ключ строки чека, учитывает модификаторы.
-  // Иначе «Капучино M без сиропа» и «Капучино M с сиропом» будут одной
-  // строкой (они у обоих product.id === 'dish1').
-  const rowKeyOf = (r) =>
-    r.productId + '|' + (r.modifiers || []).map((m) => m.optionId).sort().join(',')
 
-  const setQty = (key, qty) =>
+  const setQty = (id, qty) =>
     setRows((r) =>
       qty <= 0
-        ? r.filter((x) => rowKeyOf(x) !== key)
-        : r.map((x) => (rowKeyOf(x) === key ? { ...x, qty } : x)),
+        ? r.filter((x) => x.productId !== id)
+        : r.map((x) => (x.productId === id ? { ...x, qty } : x)),
     )
   // Персональная цена для строки — оптовику критично: клиент N торгуется,
   // цена меняется прямо в чеке. Сохраняем базовую (basePrice) — по ней
   // считаем скидку и показываем «зачёркнутую» когда цена ниже.
-  const setPrice = (key, price) =>
+  const setPrice = (id, price) =>
     setRows((r) =>
       r.map((x) =>
-        rowKeyOf(x) === key ? { ...x, price: Math.max(0, Number(price) || 0) } : x,
+        x.productId === id ? { ...x, price: Math.max(0, Number(price) || 0) } : x,
       ),
     )
 
@@ -986,17 +896,6 @@ export default function NewOrder() {
         total={total}
         onConfirm={finalSubmit}
       />
-
-      {/* Выбор модификаторов блюда: открывается когда пользователь кликает
-          по товару с непустым modifierGroups (кофе, бургер и т.п.). */}
-      <ModifiersPickerModal
-        product={pickMod}
-        onClose={() => setPickMod(null)}
-        onConfirm={(mods) => {
-          if (pickMod) addWithModifiers(pickMod, 1, mods)
-          setPickMod(null)
-        }}
-      />
     </div>
   )
 }
@@ -1215,159 +1114,6 @@ function PaymentModal({ open, onClose, total, onConfirm }) {
             Enter
           </kbd>
         </button>
-      </div>
-    </Modal>
-  )
-}
-
-// Модалка выбора модификаторов блюда. При открытии применяет defaults;
-// для required-групп без выбранной опции блокирует «Добавить». Enter
-// подтверждает, Esc закрывает — стандартный POS-flow.
-function ModifiersPickerModal({ product, onClose, onConfirm }) {
-  const open = !!product
-  const groups = product?.modifierGroups || []
-  const [selected, setSelected] = useState({}) // groupId → Set of optionId
-
-  useEffect(() => {
-    if (!open) return
-    const init = {}
-    for (const g of groups) {
-      init[g.id] = new Set(g.options.filter((o) => o.default).map((o) => o.id))
-    }
-    setSelected(init)
-  }, [open, product])
-
-  const toggle = (g, oid) => {
-    setSelected((prev) => {
-      const cur = new Set(prev[g.id] || [])
-      if (g.multi) {
-        if (cur.has(oid)) cur.delete(oid)
-        else cur.add(oid)
-      } else {
-        cur.clear()
-        cur.add(oid)
-      }
-      return { ...prev, [g.id]: cur }
-    })
-  }
-
-  const flat = groups.flatMap((g) =>
-    g.options
-      .filter((o) => (selected[g.id] || new Set()).has(o.id))
-      .map((o) => ({
-        groupId: g.id,
-        groupName: g.name,
-        optionId: o.id,
-        name: o.name,
-        price: Number(o.price) || 0,
-      })),
-  )
-
-  const modTotal = flat.reduce((s, m) => s + m.price, 0)
-  const base = Number(product?.price) || 0
-  const total = base + modTotal
-
-  const canConfirm = groups.every((g) => !g.required || (selected[g.id]?.size || 0) > 0)
-
-  const confirm = () => {
-    if (!canConfirm) return
-    onConfirm(flat)
-  }
-
-  useEffect(() => {
-    if (!open) return
-    const onKey = (e) => {
-      if (e.key === 'Enter' && canConfirm) {
-        e.preventDefault()
-        confirm()
-      }
-      if (e.key === 'Escape') onClose()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, canConfirm, flat])
-
-  if (!open) return null
-
-  return (
-    <Modal
-      open={open}
-      onClose={onClose}
-      wide
-      title={
-        <span className="flex items-center gap-2">
-          {product.name}
-          <span className="text-[13px] text-muted">·</span>
-          <span className="text-[13px] text-muted tabular-nums">{money(base)}</span>
-        </span>
-      }
-    >
-      <div className="space-y-4">
-        {groups.map((g) => (
-          <div key={g.id}>
-            <div className="flex items-center gap-2 mb-1.5">
-              <span className="text-[13px] font-medium">{g.name}</span>
-              {g.required && (
-                <Badge tone="bad" className="text-[10px]">обязательно</Badge>
-              )}
-              {g.multi && (
-                <Badge tone="info" className="text-[10px]">несколько</Badge>
-              )}
-              {g.required && !(selected[g.id]?.size > 0) && (
-                <span className="text-[11px] text-bad ml-auto">выберите одну</span>
-              )}
-            </div>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-              {g.options.map((o) => {
-                const isSel = (selected[g.id] || new Set()).has(o.id)
-                return (
-                  <button
-                    key={o.id}
-                    onClick={() => toggle(g, o.id)}
-                    className={cx(
-                      'h-14 rounded-xl px-3 border-2 flex items-center justify-between gap-2 transition text-left',
-                      isSel
-                        ? 'bg-brand-soft border-brand text-brand'
-                        : 'bg-surface-2 border-line text-muted hover:text-ink',
-                    )}
-                  >
-                    <span className="font-medium text-[13px] truncate">{o.name}</span>
-                    <span className="text-[12px] tabular-nums shrink-0">
-                      {o.price === 0
-                        ? '—'
-                        : (o.price > 0 ? '+' : '') + money(o.price)}
-                    </span>
-                  </button>
-                )
-              })}
-            </div>
-          </div>
-        ))}
-
-        {/* Итог + CTA */}
-        <div className="border-t border-line pt-3">
-          <div className="flex justify-between items-center mb-2">
-            <span className="text-muted text-sm">Итого за позицию</span>
-            <span className="text-2xl font-bold tabular-nums">{money(total)}</span>
-          </div>
-          <button
-            onClick={confirm}
-            disabled={!canConfirm}
-            className={cx(
-              'w-full h-14 rounded-2xl flex items-center justify-center gap-2 text-white text-lg font-bold transition shadow-lg',
-              canConfirm
-                ? 'bg-[var(--ok,#16a34a)] hover:brightness-110 shadow-emerald-500/25'
-                : 'bg-surface-3 text-muted cursor-not-allowed shadow-none',
-            )}
-          >
-            <Check size={20} />
-            Добавить в чек
-            <kbd className="text-[11px] font-semibold bg-black/20 rounded px-1.5 py-0.5">
-              Enter
-            </kbd>
-          </button>
-        </div>
       </div>
     </Modal>
   )

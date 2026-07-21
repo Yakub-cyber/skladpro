@@ -36,17 +36,20 @@ export const POST_SIGN = {
   sale: -1,
 }
 
-// Развернуть позицию документа: если строка — комплект, возвращает
-// её составляющие как отдельные виртуальные items со ссылкой на родителя
-// (для UI/журнала). Услуги остаются как есть — движок их пропускает
-// (см. ветку по типу ниже).
-// Любой товар с непустым `components` — раскрывается: комплект (type=kit)
-// и блюдо с техкартой (type=product с ингредиентами) работают одинаково.
-// В чек попадает одна строка, а движок при проводке списывает каждый
-// ингредиент по его собственным батчам FIFO.
+// Развернуть позицию документа: если строка — комплект (type='kit') с
+// непустым `components`, возвращает его компоненты как виртуальные items
+// со ссылкой на родителя. В чек попадает одна строка «комплект», а
+// движок при проводке списывает каждый компонент по его FIFO-батчам.
+// Обычные товары (type='product') и услуги (type='service') не
+// разворачиваются: остаток берётся с самого товара.
 function expandItem(state, it) {
   const p = state.products.find((x) => x.id === it.productId)
-  if (!p || !Array.isArray(p.components) || !p.components.length) {
+  if (
+    !p ||
+    p.type !== 'kit' ||
+    !Array.isArray(p.components) ||
+    !p.components.length
+  ) {
     return [it]
   }
   return p.components
@@ -60,8 +63,7 @@ function expandItem(state, it) {
         unit: inner.unit,
         qty: (Number(it.qty) || 0) * (Number(c.qty) || 0),
         weighted: inner.weighted,
-        // фиксируем происхождение — из какого блюда/комплекта строка
-        _fromParent: p.id,
+        _fromKit: p.id,
       }
     })
     .filter(Boolean)
