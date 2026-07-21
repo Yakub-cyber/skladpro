@@ -30,6 +30,7 @@ import {
   CloudOff,
   CloudUpload,
   ShoppingCart,
+  UtensilsCrossed,
 } from 'lucide-react'
 import { cx, Avatar } from './ui'
 import CommandPalette from './CommandPalette'
@@ -56,6 +57,7 @@ export const NAV = [
   { to: '/', label: 'Дашборд', icon: LayoutDashboard, end: true, perm: 'dashboard' },
   { to: '/operations', label: 'Документы', icon: ClipboardCheck, perm: 'operations', highlight: true },
   { to: '/orders', label: 'Заказы', icon: ClipboardList, perm: 'orders' },
+  { to: '/halls', label: 'Столы', icon: UtensilsCrossed, perm: 'orders' },
   { to: '/delivery', label: 'Доставка', icon: Navigation, perm: 'delivery' },
   { to: '/products', label: 'Товары', icon: Package, perm: 'products' },
   { to: '/warehouse', label: 'Карта склада', icon: WarehouseIcon, perm: 'warehouse' },

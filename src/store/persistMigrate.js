@@ -132,6 +132,18 @@ export function persistMigrate(state, version) {
     }))
   }
 
+  if (version < 11) {
+    // Общепит: залы (halls) и столы (tables). Для существующих торговых
+    // точек эти сущности не нужны — просто досыпаем пустые массивы, чтобы
+    // страница «Столы» не падала при первом открытии.
+    state.halls = state.halls || []
+    state.tables = state.tables || []
+    // Роль kitchen — для повара (см. constants.js). Существующим сотрудникам
+    // с ролью, которая перестала существовать, ставим stock как безопасный
+    // fallback.
+    state.employees = (state.employees || []).map((e) => e)
+  }
+
   return state
 }
 

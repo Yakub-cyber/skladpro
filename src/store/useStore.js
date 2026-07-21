@@ -769,6 +769,83 @@ export const useStore = create(
           ),
         })),
 
+      // ── Залы и столы (общепит) ────────────────────────────────
+      // Модель: halls [{ id, name, w, h }], tables [{ id, hallId, no, x, y,
+      // seats, shape? }]. Открытый заказ стола держится в orders со
+      // статусом 'open' и полем tableId — стол вычисляет current-заказ
+      // на лету (см. страницу Halls).
+      addHall: (h) => {
+        const id = uid('hall')
+        set((s) => ({
+          halls: [...(s.halls || []), { id, w: 12, h: 8, ...h }],
+        }))
+        get().logAction(`Добавлен зал «${h.name || 'без названия'}»`, {
+          section: 'Столы',
+          type: 'create',
+        })
+        return id
+      },
+      updateHall: (id, patch) =>
+        set((s) => ({
+          halls: (s.halls || []).map((h) => (h.id === id ? { ...h, ...patch } : h)),
+        })),
+      removeHall: (id) =>
+        set((s) => {
+          const hasTables = (s.tables || []).some((t) => t.hallId === id)
+          if (hasTables) return {} // не удаляем зал со столами
+          return { halls: (s.halls || []).filter((h) => h.id !== id) }
+        }),
+      addTable: (t) => {
+        const id = uid('tbl')
+        set((s) => ({
+          tables: [
+            ...(s.tables || []),
+            { id, seats: 4, shape: 'round', x: 3, y: 3, no: (s.tables?.length || 0) + 1, ...t },
+          ],
+        }))
+        return id
+      },
+      updateTable: (id, patch) =>
+        set((s) => ({
+          tables: (s.tables || []).map((t) => (t.id === id ? { ...t, ...patch } : t)),
+        })),
+      removeTable: (id) =>
+        set((s) => ({ tables: (s.tables || []).filter((t) => t.id !== id) })),
+      // Найти или открыть заказ этого стола. Возвращает id заказа.
+      // Открытый заказ — status='open', резерв в этом статусе не действует
+      // (см. lib/orders.js OPEN_STATUSES — 'open' туда не добавляется, чтобы
+      // ресторанный заказ не резервировал остаток каждой позиции по всему
+      // магазину).
+      openTableOrder: (tableId) => {
+        const s = get()
+        const existing = s.orders.find(
+          (o) => o.tableId === tableId && o.status === 'open',
+        )
+        if (existing) return existing.id
+        const table = (s.tables || []).find((t) => t.id === tableId)
+        const id = uid('o')
+        const seq = s.orders.length + 101
+        const o = {
+          id,
+          no: docNo('СТ', seq),
+          status: 'open',
+          createdAt: new Date().toISOString(),
+          track: [{ status: 'open', at: new Date().toISOString() }],
+          priority: false,
+          shiftId: s.activeShiftId || null,
+          stockConsumed: false,
+          tableId,
+          customerId: 'table',
+          customerName: `Стол ${table?.no ?? ''}`.trim() || 'Стол',
+          items: [],
+          subtotal: 0,
+          discount: 0,
+          total: 0,
+        }
+        set((st) => ({ orders: [o, ...st.orders] }))
+        return id
+      },
+
       // ── Сотрудники / роли + PIN — см. slices/hrSlice.js ─────
       ...createHrSlice(set, get),
 
@@ -779,7 +856,7 @@ export const useStore = create(
     }),
     {
       name: 'sklad.db',
-      version: 10,
+      version: 11,
       partialize: persistPartialize,
       merge: persistMerge,
       migrate: persistMigrate,

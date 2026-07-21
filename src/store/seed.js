@@ -391,6 +391,18 @@ export function makeSeed() {
     cells: ALL_CELLS.map((c) => ({ ...c })),
     warehouses: WAREHOUSES.map((w) => ({ ...w })),
     activeWarehouseId: 'wh1',
+    // Демо-зал для общепита. Столы разбросаны по сетке 12×8: сверху 3
+    // круглых на 2-4 гостя, снизу 3 квадратных на 6. Пользователь сам
+    // подстроит план в редакторе.
+    halls: [{ id: 'hall1', name: 'Основной зал', w: 12, h: 8 }],
+    tables: [
+      { id: 'tbl1', hallId: 'hall1', no: 1, x: 2, y: 2, seats: 2, shape: 'round' },
+      { id: 'tbl2', hallId: 'hall1', no: 2, x: 6, y: 2, seats: 4, shape: 'round' },
+      { id: 'tbl3', hallId: 'hall1', no: 3, x: 10, y: 2, seats: 2, shape: 'round' },
+      { id: 'tbl4', hallId: 'hall1', no: 4, x: 3, y: 6, seats: 6, shape: 'square' },
+      { id: 'tbl5', hallId: 'hall1', no: 5, x: 7, y: 6, seats: 4, shape: 'square' },
+      { id: 'tbl6', hallId: 'hall1', no: 6, x: 11, y: 6, seats: 2, shape: 'square' },
+    ],
     settings: {
       company: 'СкладПро',
       currency: '₽',
