@@ -30,6 +30,12 @@ jobs:
         env:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_KEY: ${{ secrets.VITE_SUPABASE_KEY }}
+          # Опционально: если секрет задан — ИИ-ассистент заработает
+          # на GH Pages «из коробки», без ввода ключа в Настройках.
+          # Внимание: ключ окажется в публичном JS-бандле, поэтому
+          # для промышленного релиза лучше просить пользователя ввести
+          # свой ключ в Настройки (он лежит только в его localStorage).
+          VITE_AI_KEY: ${{ secrets.VITE_AI_KEY }}
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
