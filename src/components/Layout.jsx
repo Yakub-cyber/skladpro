@@ -1,4 +1,4 @@
-import { useState, Suspense } from 'react'
+import { useState, useEffect, Suspense } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import {
   LayoutDashboard,
@@ -54,25 +54,70 @@ function useCurrentUser() {
 // перемещение, инвентаризация — все под рукой), важнее «Заказов» и
 // «Товаров». Highlight-пункт рендерится с брендовой обводкой, чтобы
 // глаз находил его моментально.
+//
+// Формат навигации: массив «узлов». Узел — либо прямой пункт (`to`),
+// либо группа (`items: [...]`). Группы схлопываемые; активная группа
+// (в её `items` есть текущий роут) раскрывается автоматически.
+// В NAV_ITEMS хранится «расплющенный» список всех пунктов — для расчёта
+// заголовка страницы и других вычислений, где группировка не важна.
 export const NAV = [
   { to: '/', label: 'Дашборд', icon: LayoutDashboard, end: true, perm: 'dashboard' },
-  { to: '/operations', label: 'Документы', icon: ClipboardCheck, perm: 'operations', highlight: true },
-  { to: '/orders', label: 'Заказы', icon: ClipboardList, perm: 'orders' },
-  { to: '/halls', label: 'Столы', icon: UtensilsCrossed, perm: 'orders' },
-  { to: '/kitchen', label: 'Кухня', icon: ChefHat, perm: 'orders' },
-  { to: '/delivery', label: 'Доставка', icon: Navigation, perm: 'delivery' },
-  { to: '/products', label: 'Товары', icon: Package, perm: 'products' },
-  { to: '/warehouse', label: 'Карта склада', icon: WarehouseIcon, perm: 'warehouse' },
-  { to: '/invoices', label: 'Накладные', icon: FileText, ai: true, perm: 'invoices' },
-  { to: '/customers', label: 'Клиенты', icon: Users, perm: 'customers' },
-  { to: '/suppliers', label: 'Поставщики', icon: Truck, perm: 'suppliers' },
-  { to: '/analytics', label: 'Аналитика', icon: BarChart3, ai: true, perm: 'analytics' },
-  { to: '/assistant', label: 'ИИ-ассистент', icon: Bot, ai: true, perm: 'assistant' },
-  { to: '/storefront', label: 'Витрина', icon: Store, perm: 'storefront' },
-  { to: '/journal', label: 'Смены и журнал', icon: History, perm: 'journal' },
-  { to: '/employees', label: 'Сотрудники', icon: UserCog, perm: 'employees' },
-  { to: '/settings', label: 'Настройки', icon: SettingsIcon, perm: 'settings' },
+  {
+    label: 'Продажи',
+    icon: ShoppingCart,
+    key: 'sales',
+    items: [
+      { to: '/orders', label: 'Заказы', icon: ClipboardList, perm: 'orders' },
+      { to: '/halls', label: 'Столы', icon: UtensilsCrossed, perm: 'orders' },
+      { to: '/kitchen', label: 'Кухня', icon: ChefHat, perm: 'orders' },
+      { to: '/delivery', label: 'Доставка', icon: Navigation, perm: 'delivery' },
+    ],
+  },
+  {
+    label: 'Склад',
+    icon: WarehouseIcon,
+    key: 'stock',
+    items: [
+      // «Документы» — самый частый экран оператора, отмечен highlight.
+      { to: '/operations', label: 'Документы', icon: ClipboardCheck, perm: 'operations', highlight: true },
+      { to: '/products', label: 'Товары', icon: Package, perm: 'products' },
+      { to: '/warehouse', label: 'Карта склада', icon: WarehouseIcon, perm: 'warehouse' },
+      { to: '/invoices', label: 'Накладные', icon: FileText, ai: true, perm: 'invoices' },
+    ],
+  },
+  {
+    label: 'Партнёры',
+    icon: Users,
+    key: 'partners',
+    items: [
+      { to: '/customers', label: 'Клиенты', icon: Users, perm: 'customers' },
+      { to: '/suppliers', label: 'Поставщики', icon: Truck, perm: 'suppliers' },
+    ],
+  },
+  {
+    label: 'Аналитика',
+    icon: BarChart3,
+    key: 'analytics',
+    items: [
+      { to: '/analytics', label: 'Отчёты', icon: BarChart3, ai: true, perm: 'analytics' },
+      { to: '/assistant', label: 'ИИ-ассистент', icon: Bot, ai: true, perm: 'assistant' },
+    ],
+  },
+  {
+    label: 'Управление',
+    icon: SettingsIcon,
+    key: 'admin',
+    items: [
+      { to: '/journal', label: 'Смены и журнал', icon: History, perm: 'journal' },
+      { to: '/employees', label: 'Сотрудники', icon: UserCog, perm: 'employees' },
+      { to: '/settings', label: 'Настройки', icon: SettingsIcon, perm: 'settings' },
+    ],
+  },
 ]
+
+// Расплющенный список всех пунктов — для Topbar title и других мест,
+// где группировка не нужна.
+export const NAV_ITEMS = NAV.flatMap((n) => (n.items ? n.items : [n]))
 
 function Logo() {
   return (
@@ -92,6 +137,106 @@ function Logo() {
   )
 }
 
+// Одиночный NavLink пункта. Отдельно вынесен, чтобы одинаково рендерить
+// прямые пункты NAV (Дашборд) и пункты внутри группы.
+function NavItem({ item, counts, onClose, nested = false }) {
+  return (
+    <NavLink
+      to={item.to}
+      end={item.end}
+      onClick={onClose}
+      className={({ isActive }) =>
+        cx(
+          'flex items-center gap-3 h-10 rounded-xl text-sm font-medium transition-colors relative group',
+          nested ? 'px-3 ml-2' : 'px-3',
+          isActive
+            ? 'bg-brand text-brand-ink'
+            : item.highlight
+              ? 'text-ink bg-brand-soft/60 hover:bg-brand-soft border border-brand/25'
+              : 'text-muted hover:text-ink hover:bg-surface-2',
+        )
+      }
+    >
+      <item.icon size={item.highlight ? 19 : 18} strokeWidth={item.highlight ? 2.3 : 2.1} />
+      <span className="flex-1 truncate">{item.label}</span>
+      {item.ai && <Sparkles size={13} className="text-brand opacity-80" />}
+      {counts[item.to] > 0 && (
+        <span className="text-[11px] font-semibold px-1.5 h-5 min-w-5 grid place-items-center rounded-md bg-surface-3 text-ink">
+          {counts[item.to]}
+        </span>
+      )}
+    </NavLink>
+  )
+}
+
+// Схлопываемая группа. Активная (внутри — текущий роут) раскрывается
+// автоматически. Состояние раскрытия других групп персистится в
+// localStorage — иначе клик по любой вкладке снова закрывал бы всё.
+function NavGroup({ node, counts, onClose }) {
+  const { pathname } = useLocation()
+  const key = 'sklad.nav.' + (node.key || node.label)
+  const hasActive = node.items.some((it) =>
+    it.end ? it.to === pathname : it.to !== '/' && pathname.startsWith(it.to),
+  )
+  const [open, setOpen] = useState(() => {
+    if (hasActive) return true
+    try {
+      const v = localStorage.getItem(key)
+      return v == null ? true : v === '1'
+    } catch {
+      return true
+    }
+  })
+  // Автораскрытие при переходе на любой роут внутри группы.
+  useEffect(() => {
+    if (hasActive) setOpen(true)
+  }, [hasActive])
+
+  const toggle = () => {
+    setOpen((v) => {
+      const next = !v
+      try {
+        localStorage.setItem(key, next ? '1' : '0')
+      } catch {}
+      return next
+    })
+  }
+
+  const totalCount = node.items.reduce((n, it) => n + (counts[it.to] || 0), 0)
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={toggle}
+        className={cx(
+          'w-full flex items-center gap-3 h-10 px-3 rounded-xl text-sm font-medium transition-colors',
+          hasActive ? 'text-ink' : 'text-muted hover:text-ink hover:bg-surface-2',
+        )}
+      >
+        <node.icon size={18} strokeWidth={2.1} />
+        <span className="flex-1 text-left">{node.label}</span>
+        {totalCount > 0 && (
+          <span className="text-[11px] font-semibold px-1.5 h-5 min-w-5 grid place-items-center rounded-md bg-surface-3 text-ink">
+            {totalCount}
+          </span>
+        )}
+        <ChevronDown
+          size={14}
+          className={cx('transition-transform text-muted', open ? '' : '-rotate-90')}
+        />
+      </button>
+      {open && (
+        <div className="mt-0.5 space-y-0.5">
+          {node.items.map((it) => (
+            <NavItem key={it.to} item={it} counts={counts} onClose={onClose} nested />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function Sidebar({ open, onClose }) {
   const orders = useStore((s) => s.orders)
   const products = useStore((s) => s.products)
@@ -103,7 +248,16 @@ function Sidebar({ open, onClose }) {
   const lowStock = products.filter((p) => availableStock(p, reserved) <= p.minStock).length
 
   const counts = { '/orders': activeOrders, '/products': lowStock }
-  const items = NAV.filter((n) => canAccess(me.role, n.perm))
+
+  // Фильтруем группы по правам роли. Прямые пункты — по perm; группы —
+  // по перечню прав внутри: группа скрыта, если ни одного её пункта нет.
+  const visibleNodes = NAV.map((node) => {
+    if (node.items) {
+      const kept = node.items.filter((it) => canAccess(me.role, it.perm))
+      return kept.length ? { ...node, items: kept } : null
+    }
+    return canAccess(me.role, node.perm) ? node : null
+  }).filter(Boolean)
 
   return (
     <>
@@ -123,33 +277,18 @@ function Sidebar({ open, onClose }) {
           <Logo />
         </div>
         <nav className="flex-1 overflow-y-auto no-scrollbar p-3 space-y-0.5">
-          {items.map((item) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              end={item.end}
-              onClick={onClose}
-              className={({ isActive }) =>
-                cx(
-                  'flex items-center gap-3 h-10 px-3 rounded-xl text-sm font-medium transition-colors relative group',
-                  isActive
-                    ? 'bg-brand text-brand-ink'
-                    : item.highlight
-                      ? 'text-ink bg-brand-soft/60 hover:bg-brand-soft border border-brand/25'
-                      : 'text-muted hover:text-ink hover:bg-surface-2',
-                )
-              }
-            >
-              <item.icon size={item.highlight ? 19 : 18} strokeWidth={item.highlight ? 2.3 : 2.1} />
-              <span className="flex-1">{item.label}</span>
-              {item.ai && <Sparkles size={13} className="text-brand opacity-80" />}
-              {counts[item.to] > 0 && (
-                <span className="text-[11px] font-semibold px-1.5 h-5 min-w-5 grid place-items-center rounded-md bg-surface-3 text-ink">
-                  {counts[item.to]}
-                </span>
-              )}
-            </NavLink>
-          ))}
+          {visibleNodes.map((node) =>
+            node.items ? (
+              <NavGroup
+                key={node.key || node.label}
+                node={node}
+                counts={counts}
+                onClose={onClose}
+              />
+            ) : (
+              <NavItem key={node.to} item={node} counts={counts} onClose={onClose} />
+            ),
+          )}
         </nav>
         <div className="p-3 border-t border-line">
           <NavLink
@@ -225,7 +364,7 @@ function CashierButton() {
 function Topbar({ onMenu, onSearch }) {
   const { pathname } = useLocation()
   const title =
-    NAV.find((n) => (n.end ? n.to === pathname : pathname.startsWith(n.to) && n.to !== '/'))
+    NAV_ITEMS.find((n) => (n.end ? n.to === pathname : pathname.startsWith(n.to) && n.to !== '/'))
       ?.label || 'Дашборд'
   const [dark, setDark] = useState(() =>
     document.documentElement.classList.contains('dark'),
@@ -328,7 +467,7 @@ export default function Layout() {
   const { pathname } = useLocation()
   const me = useCurrentUser()
 
-  const item = NAV.find((n) =>
+  const item = NAV_ITEMS.find((n) =>
     n.end ? n.to === pathname : n.to !== '/' && pathname.startsWith(n.to),
   )
   const allowed = !item || canAccess(me.role, item.perm)

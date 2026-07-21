@@ -32,7 +32,9 @@ import { reservedByProduct, availableStock } from '../lib/orders'
 
 const CAT_ICON = { Wrench, Hammer, Zap, Droplets, PaintBucket, Package }
 
-export default function Storefront() {
+// isPublic — если витрина открыта клиентом по прямой ссылке (/shop),
+// прячем «баннер админки» и текст «Так заказывают ваши клиенты».
+export default function Storefront({ isPublic = false }) {
   const { products, priceTypes, orders, addOrder, addCustomer } = useStore()
   const defType = priceTypes.find((t) => t.default)?.id || priceTypes[0]?.id
   const [q, setQ] = useState('')
@@ -139,17 +141,23 @@ export default function Storefront() {
   }
 
   return (
-    <div className="animate-fadeUp">
+    <div className={cx('animate-fadeUp', isPublic && 'max-w-6xl mx-auto p-4 lg:p-6')}>
       {/* Баннер с корзиной */}
       <div className="rounded-2xl bg-gradient-to-r from-brand to-info p-5 mb-5 text-white relative overflow-hidden">
         <div className="relative z-10 flex items-start justify-between gap-3">
           <div>
-            <Badge className="bg-white/20 text-white mb-2">
-              <Store size={12} /> Так заказывают ваши клиенты
-            </Badge>
-            <h2 className="text-2xl font-semibold">Оптовая витрина СкладПро</h2>
+            {!isPublic && (
+              <Badge className="bg-white/20 text-white mb-2">
+                <Store size={12} /> Так заказывают ваши клиенты
+              </Badge>
+            )}
+            <h2 className="text-2xl font-semibold">
+              {isPublic ? 'Витрина оптовых заказов' : 'Оптовая витрина СкладПро'}
+            </h2>
             <p className="text-white/85 text-sm mt-1">
-              Каталог с актуальными остатками. Заказ создаётся в системе и сразу на карте доставки.
+              {isPublic
+                ? 'Каталог с актуальными остатками. Оформите заказ прямо здесь — мы позвоним для подтверждения.'
+                : 'Каталог с актуальными остатками. Заказ создаётся в системе и сразу на карте доставки.'}
             </p>
           </div>
           <button

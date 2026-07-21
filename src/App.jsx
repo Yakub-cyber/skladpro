@@ -62,6 +62,17 @@ export default function App() {
           </Suspense>
         }
       />
+      {/* Публичная витрина — доступна клиентам без входа в админку.
+          Тот же компонент, что в /storefront, но без брендового
+          «баннера админки» — определяется по props isPublic. */}
+      <Route
+        path="/shop"
+        element={
+          <Suspense fallback={<PageLoader />}>
+            <Storefront isPublic />
+          </Suspense>
+        }
+      />
 
       <Route
         element={
@@ -85,6 +96,8 @@ export default function App() {
         <Route path="suppliers" element={<Suppliers />} />
         <Route path="analytics" element={<Analytics />} />
         <Route path="assistant" element={<Assistant />} />
+        {/* /storefront — предпросмотр витрины из админки; /shop — то же
+            без Layout для клиента (см. публичный маршрут выше). */}
         <Route path="storefront" element={<Storefront />} />
         <Route path="journal" element={<Journal />} />
         <Route path="employees" element={<Employees />} />
