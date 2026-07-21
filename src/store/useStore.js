@@ -846,6 +846,25 @@ export const useStore = create(
         set((st) => ({ orders: [o, ...st.orders] }))
         return id
       },
+      // Кухня: смена статуса позиции блюда. Ищем по rowKey (productId +
+      // '|' + отсортированные optionIds модификаторов), чтобы «Капучино с
+      // сиропом» и «Капучино без сиропа» не смешивались.
+      setKitchenStatus: (orderId, rowKey, status) =>
+        set((s) => ({
+          orders: s.orders.map((o) => {
+            if (o.id !== orderId) return o
+            return {
+              ...o,
+              items: (o.items || []).map((it) => {
+                const key =
+                  it.productId +
+                  '|' +
+                  (it.modifiers || []).map((m) => m.optionId).sort().join(',')
+                return key === rowKey ? { ...it, kitchenStatus: status } : it
+              }),
+            }
+          }),
+        })),
 
       // ── Сотрудники / роли + PIN — см. slices/hrSlice.js ─────
       ...createHrSlice(set, get),
