@@ -40,9 +40,13 @@ export const POST_SIGN = {
 // её составляющие как отдельные виртуальные items со ссылкой на родителя
 // (для UI/журнала). Услуги остаются как есть — движок их пропускает
 // (см. ветку по типу ниже).
+// Любой товар с непустым `components` — раскрывается: комплект (type=kit)
+// и блюдо с техкартой (type=product с ингредиентами) работают одинаково.
+// В чек попадает одна строка, а движок при проводке списывает каждый
+// ингредиент по его собственным батчам FIFO.
 function expandItem(state, it) {
   const p = state.products.find((x) => x.id === it.productId)
-  if (!p || p.type !== 'kit' || !Array.isArray(p.components) || !p.components.length) {
+  if (!p || !Array.isArray(p.components) || !p.components.length) {
     return [it]
   }
   return p.components
@@ -56,8 +60,8 @@ function expandItem(state, it) {
         unit: inner.unit,
         qty: (Number(it.qty) || 0) * (Number(c.qty) || 0),
         weighted: inner.weighted,
-        // фиксируем происхождение — из какого комплекта пришла строка
-        _fromKit: p.id,
+        // фиксируем происхождение — из какого блюда/комплекта строка
+        _fromParent: p.id,
       }
     })
     .filter(Boolean)

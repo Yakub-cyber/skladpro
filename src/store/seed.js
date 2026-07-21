@@ -178,6 +178,43 @@ const KITS = [
 // Демо-блюда с модификаторами — для показа общепитового сценария.
 // Кофе с 2 группами: «Размер» (обязательная одна опция, влияет на цену)
 // и «Добавки» (несколько на выбор, каждая с ценой).
+// Демо-ингредиенты для общепита — обычные товары, которые расходуются
+// по граммовке при пробитии блюд с техкартой (см. Капучино).
+const INGREDIENTS = [
+  {
+    id: 'ing_coffee',
+    type: 'product',
+    sku: 'ИНГ-К01',
+    name: 'Кофе-зёрна (арабика)',
+    category: 'Расходники',
+    unit: 'кг',
+    price: 3200,
+    cost: 2100,
+    stock: 5, // 5 кг на складе
+    minStock: 2,
+    tags: ['ингредиент', 'кофе'],
+    batches: [{ id: 'ing_coffee_b0', qty: 5, cost: 2100, at: '1970-01-01T00:00:00Z' }],
+    components: [],
+    modifierGroups: [],
+  },
+  {
+    id: 'ing_milk',
+    type: 'product',
+    sku: 'ИНГ-М01',
+    name: 'Молоко цельное',
+    category: 'Расходники',
+    unit: 'л',
+    price: 120,
+    cost: 78,
+    stock: 12, // 12 литров
+    minStock: 5,
+    tags: ['ингредиент', 'молоко'],
+    batches: [{ id: 'ing_milk_b0', qty: 12, cost: 78, at: '1970-01-01T00:00:00Z' }],
+    components: [],
+    modifierGroups: [],
+  },
+]
+
 const DISHES = [
   {
     id: 'dish1',
@@ -187,12 +224,24 @@ const DISHES = [
     category: 'Расходники',
     unit: 'чашка',
     price: 190, // базовая цена (за средний размер)
-    cost: 40,
-    stock: 999, // блюдо не расходуется как штучный товар в MVP
+    // Себестоимость = сумма по техкарте: 0.02 кг кофе × 2100 + 0.15 л
+    // молока × 78 = 42 + 11.7 ≈ 53.7 (округляем до 54). В UI можно
+    // пересчитать кнопкой «Взять как себест.».
+    cost: 54,
+    // Блюдо само по себе не хранится на складе — расходуется через
+    // ингредиенты. Оставляем виртуальный запас 999, чтобы касса не
+    // ругалась «нет остатка», а списание идёт через components.
+    stock: 999,
     minStock: 0,
     tags: ['напиток', 'кофе'],
-    batches: [{ id: 'dish1_b0', qty: 999, cost: 40, at: '1970-01-01T00:00:00Z' }],
-    components: [],
+    batches: [{ id: 'dish1_b0', qty: 999, cost: 54, at: '1970-01-01T00:00:00Z' }],
+    // Техкарта: 20 г кофе + 150 мл молока на одну порцию (средний размер).
+    // При пробитии Капучино движок posting.js спишет эти количества по
+    // FIFO с ингредиентов ing_coffee / ing_milk.
+    components: [
+      { productId: 'ing_coffee', qty: 0.02 },
+      { productId: 'ing_milk', qty: 0.15 },
+    ],
     modifierGroups: [
       {
         id: 'mg_size',
@@ -277,7 +326,7 @@ export function makeSeed() {
 
   // Услуги и комплекты — добавляем в общий список товаров. У них нет
   // партий, ячеек и штрихкодов; в кассе они выделены значком типа.
-  const svAndKits = [...SERVICES, ...KITS, ...DISHES].map((p) => {
+  const svAndKits = [...SERVICES, ...INGREDIENTS, ...KITS, ...DISHES].map((p) => {
     const prices = {}
     for (const t of PRICE_TYPE_SEED) prices[t.id] = Math.round(p.price * t.factor)
     return { ...p, prices, warehouseId: 'wh1' }

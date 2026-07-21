@@ -979,19 +979,25 @@ function ProductModal({ product, onClose }) {
           </Field>
         </div>
 
-        {/* Редактор состава — только для комплекта. */}
-        {isKitForm && (
+        {/* Редактор состава — доступен для комплектов и для обычных
+            товаров (техкарта блюда: молоко 0.15 л + кофе 0.02 кг). Услугам
+            состав не нужен. Один и тот же UI, но лейбл разный по типу. */}
+        {!isServiceForm && (
           <KitComponentsEditor
             components={f.components || []}
             onChange={(components) => set('components', components)}
             allProducts={allProducts}
             currentId={product?.id}
+            isKit={isKitForm}
             onFillPriceFromComponents={(sum) => {
               set('price', sum)
               // синхронизируем и категорийные цены — базой
               const nextPrices = {}
               for (const t of priceTypes) nextPrices[t.id] = Math.round(sum * (t.factor || 1))
               set('prices', nextPrices)
+            }}
+            onFillCostFromComponents={(costSum) => {
+              set('cost', costSum)
             }}
             priceTypes={priceTypes}
           />
@@ -1285,10 +1291,20 @@ function ModifierGroupsEditor({ groups, onChange }) {
 // Редактор состава комплекта — список товаров с qty. Кнопка «сумма
 // составляющих» подставляет цену как сумму розничных цен × qty (для
 // ориентира; ручная цена комплекта задаётся отдельно).
-function KitComponentsEditor({ components, onChange, allProducts, currentId, onFillPriceFromComponents, priceTypes }) {
+function KitComponentsEditor({
+  components,
+  onChange,
+  allProducts,
+  currentId,
+  isKit = false,
+  onFillPriceFromComponents,
+  onFillCostFromComponents,
+  priceTypes,
+}) {
   const [q, setQ] = useState('')
-  // Из списка товаров исключаем услуги/комплекты (нельзя комплект в комплект)
-  // и сам этот товар при редактировании.
+  // Из списка кандидатов исключаем услуги/комплекты и сам этот товар.
+  // Для техкарты (не kit) кандидаты те же — обычные товары/ингредиенты
+  // с реальным складским остатком.
   const candidates = allProducts
     .filter((p) => p.id !== currentId && (p.type || 'product') === 'product')
     .filter((p) => {
@@ -1297,14 +1313,22 @@ function KitComponentsEditor({ components, onChange, allProducts, currentId, onF
     })
     .slice(0, 6)
 
-  const componentTotal = components.reduce((s, c) => {
+  // Для комплекта — сумма розничных цен составляющих (ориентир для цены
+  // комплекта). Для блюда — сумма себестоимостей × qty ингредиента
+  // (реальная COGS порции).
+  const componentPriceTotal = components.reduce((s, c) => {
     const p = allProducts.find((x) => x.id === c.productId)
     return s + (Number(p?.price) || 0) * (Number(c.qty) || 0)
+  }, 0)
+  const componentCostTotal = components.reduce((s, c) => {
+    const p = allProducts.find((x) => x.id === c.productId)
+    return s + (Number(p?.cost) || 0) * (Number(c.qty) || 0)
   }, 0)
 
   const add = (p) => {
     if (components.find((c) => c.productId === p.id)) return
-    onChange([...components, { productId: p.id, qty: 1 }])
+    // Для kit — по 1 шт., для блюда qty подбирается вручную (граммовка).
+    onChange([...components, { productId: p.id, qty: isKit ? 1 : 0.1 }])
     setQ('')
   }
   const setQty = (id, qty) =>
@@ -1314,21 +1338,51 @@ function KitComponentsEditor({ components, onChange, allProducts, currentId, onF
         : components.map((c) => (c.productId === id ? { ...c, qty } : c)),
     )
 
+  const title = isKit ? 'Состав комплекта' : 'Техкарта · состав блюда'
+  const emptyHint = isKit
+    ? 'Добавьте товары в состав комплекта.'
+    : 'Добавьте ингредиенты. Единица измерения ингредиента — как у самого товара (кг/л/шт).'
+  const placeholder = isKit
+    ? 'Найти товар для добавления в комплект…'
+    : 'Найти ингредиент (молоко, кофе, сахар)…'
+
   return (
     <div className="rounded-xl border border-brand/30 bg-brand-soft/40 p-3 space-y-2">
-      <div className="flex items-center gap-2">
-        <span className="text-[13px] font-medium">Состав комплекта</span>
-        <span className="ml-auto text-[12px] text-muted">
-          Сумма розничных цен: <b className="text-ink tabular-nums">{money(componentTotal)}</b>
-        </span>
-        <button
-          type="button"
-          onClick={() => onFillPriceFromComponents(componentTotal)}
-          className="text-[12px] px-2 h-7 rounded-lg bg-surface hover:bg-surface-2 border border-line whitespace-nowrap"
-          title="Установить цену комплекта = сумма составляющих"
-        >
-          Взять как цену
-        </button>
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-[13px] font-medium">{title}</span>
+        {/* Панель итогов и кнопок «взять как» */}
+        <div className="ml-auto flex items-center gap-2 flex-wrap">
+          {isKit ? (
+            <>
+              <span className="text-[12px] text-muted">
+                Розница: <b className="text-ink tabular-nums">{money(componentPriceTotal)}</b>
+              </span>
+              <button
+                type="button"
+                onClick={() => onFillPriceFromComponents?.(componentPriceTotal)}
+                className="text-[12px] px-2 h-7 rounded-lg bg-surface hover:bg-surface-2 border border-line whitespace-nowrap"
+                title="Установить цену комплекта = сумма розничных цен"
+              >
+                Взять как цену
+              </button>
+            </>
+          ) : (
+            <>
+              <span className="text-[12px] text-muted">
+                Себестоимость порции:{' '}
+                <b className="text-ink tabular-nums">{money(componentCostTotal)}</b>
+              </span>
+              <button
+                type="button"
+                onClick={() => onFillCostFromComponents?.(componentCostTotal)}
+                className="text-[12px] px-2 h-7 rounded-lg bg-surface hover:bg-surface-2 border border-line whitespace-nowrap"
+                title="Проставить себестоимость блюда по техкарте"
+              >
+                Взять как себест.
+              </button>
+            </>
+          )}
+        </div>
       </div>
 
       {components.length > 0 ? (
@@ -1345,23 +1399,32 @@ function KitComponentsEditor({ components, onChange, allProducts, currentId, onF
                 </div>
               )
             }
+            const rowCost = (Number(p.cost) || 0) * (Number(c.qty) || 0)
             return (
               <div key={c.productId} className="flex items-center gap-2 p-2 rounded-lg bg-surface">
                 <div className="min-w-0 flex-1">
                   <div className="text-[13px] font-medium truncate">{p.name}</div>
                   <div className="text-[11px] text-muted">
-                    {p.sku} · {money(p.price)}/{p.unit}
+                    {p.sku} ·{' '}
+                    {isKit
+                      ? `${money(p.price)}/${p.unit}`
+                      : `${money(p.cost)}/${p.unit} закуп`}
                   </div>
                 </div>
                 <input
                   type="number"
-                  min="0.01"
-                  step="0.5"
+                  min="0.001"
+                  step={isKit ? '1' : '0.001'}
                   value={c.qty}
                   onChange={(e) => setQty(c.productId, +e.target.value)}
-                  className="w-16 h-8 px-1 rounded-lg bg-surface-2 border border-line text-sm text-center"
+                  className="w-20 h-8 px-1 rounded-lg bg-surface-2 border border-line text-sm text-center tabular-nums"
                 />
-                <span className="text-[12px] text-muted w-10">{p.unit}</span>
+                <span className="text-[12px] text-muted w-8">{p.unit}</span>
+                {!isKit && (
+                  <span className="text-[11px] text-muted tabular-nums w-16 text-right">
+                    {money(rowCost)}
+                  </span>
+                )}
                 <button
                   onClick={() => setQty(c.productId, 0)}
                   className="text-muted hover:text-bad"
@@ -1374,7 +1437,7 @@ function KitComponentsEditor({ components, onChange, allProducts, currentId, onF
           })}
         </div>
       ) : (
-        <div className="text-[12px] text-muted italic">Добавьте товары в состав снизу.</div>
+        <div className="text-[12px] text-muted italic">{emptyHint}</div>
       )}
 
       {/* Добавление товара в состав */}
@@ -1383,7 +1446,7 @@ function KitComponentsEditor({ components, onChange, allProducts, currentId, onF
         <input
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          placeholder="Найти товар для добавления в комплект…"
+          placeholder={placeholder}
           className="w-full h-9 pl-8 pr-3 rounded-lg bg-surface border border-line text-[13px] outline-none focus:border-brand"
         />
         {q && candidates.length > 0 && (
