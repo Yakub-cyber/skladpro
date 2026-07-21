@@ -89,6 +89,7 @@ export const NAV = [
     items: [
       { to: '/customers', label: 'Клиенты', icon: Users, perm: 'customers' },
       { to: '/suppliers', label: 'Поставщики', icon: Truck, perm: 'suppliers' },
+      { to: '/purchase-orders', label: 'Заказы поставщикам', icon: Truck, perm: 'purchase-orders' },
     ],
   },
   {

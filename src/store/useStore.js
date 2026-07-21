@@ -933,6 +933,133 @@ export const useStore = create(
         })
       },
 
+      // ── Заказы поставщикам (PO) ───────────────────────────────
+      // Pre-документ до приёмки товара. Флоу: draft → sent → received
+      // → closed. При «Получено» вызывается addDocument(type='purchase')
+      // с items из PO — движок posting.js оприходует остатки по FIFO.
+      addPurchaseOrder: (po) => {
+        const id = uid('po')
+        const items = (po.items || []).map((it) => ({ ...it }))
+        set((s) => {
+          const seq = (s.purchaseOrders || []).length + 1
+          const sup = s.suppliers.find((x) => x.id === po.supplierId)
+          const header = {
+            id,
+            no: docNo('ЗКП', seq),
+            supplierId: po.supplierId,
+            supplierName: sup?.name || po.supplierName || '',
+            items,
+            total: items.reduce((a, x) => a + (Number(x.qty) || 0) * (Number(x.cost) || 0), 0),
+            expectedAt: po.expectedAt || null,
+            note: po.note || '',
+            status: po.status || 'draft',
+            createdAt: new Date().toISOString(),
+            sentAt: null,
+            receivedAt: null,
+            receiveDocId: null,
+            by: s.authUserId,
+          }
+          return { purchaseOrders: [header, ...(s.purchaseOrders || [])] }
+        })
+        get().logAction(
+          `Заказ поставщику создан · ${po.supplierName || 'без поставщика'}`,
+          { section: 'Заказы поставщикам', type: 'create' },
+        )
+        return id
+      },
+      updatePurchaseOrder: (id, patch) =>
+        set((s) => ({
+          purchaseOrders: (s.purchaseOrders || []).map((p) => {
+            if (p.id !== id) return p
+            const items = patch.items || p.items
+            const total = items.reduce(
+              (a, x) => a + (Number(x.qty) || 0) * (Number(x.cost) || 0),
+              0,
+            )
+            return { ...p, ...patch, items, total }
+          }),
+        })),
+      // Отметить как отправленный (draft → sent).
+      sendPurchaseOrder: (id) => {
+        const p = get().purchaseOrders?.find((x) => x.id === id)
+        if (!p || p.status !== 'draft') return
+        set((s) => ({
+          purchaseOrders: s.purchaseOrders.map((x) =>
+            x.id === id
+              ? { ...x, status: 'sent', sentAt: new Date().toISOString() }
+              : x,
+          ),
+        }))
+        get().logAction(`ЗКП ${p.no} отправлен поставщику`, {
+          section: 'Заказы поставщикам',
+          type: 'update',
+        })
+      },
+      // Принять товар по PO: создаёт документ покупки (addDocument
+      // type='purchase') с items из PO, помечает PO как received и
+      // связывает с созданным документом. Если позиции отредактировались
+      // при приёмке — передайте новые в overrideItems.
+      receivePurchaseOrder: (id, overrideItems) => {
+        const p = get().purchaseOrders?.find((x) => x.id === id)
+        if (!p || (p.status !== 'draft' && p.status !== 'sent')) return null
+        const items = (overrideItems || p.items).map((it) => ({
+          productId: it.productId,
+          name: it.name,
+          unit: it.unit,
+          qty: Number(it.qty) || 0,
+          cost: Number(it.cost) || 0,
+        }))
+        const docId = get().addDocument(
+          {
+            type: 'purchase',
+            reason: `Приёмка по ${p.no}`,
+            note: `Заказ поставщику ${p.no} · ${p.supplierName || ''}`,
+            items,
+            supplierId: p.supplierId,
+          },
+          { post: true },
+        )
+        if (typeof docId !== 'string') return docId // ok:false / error
+        set((s) => ({
+          purchaseOrders: s.purchaseOrders.map((x) =>
+            x.id === id
+              ? {
+                  ...x,
+                  status: 'received',
+                  receivedAt: new Date().toISOString(),
+                  receiveDocId: docId,
+                  items,
+                }
+              : x,
+          ),
+        }))
+        get().logAction(`ЗКП ${p.no} принят по документу покупки`, {
+          section: 'Заказы поставщикам',
+          type: 'update',
+        })
+        return docId
+      },
+      cancelPurchaseOrder: (id) => {
+        const p = get().purchaseOrders?.find((x) => x.id === id)
+        if (!p || p.status === 'received') return
+        set((s) => ({
+          purchaseOrders: s.purchaseOrders.map((x) =>
+            x.id === id ? { ...x, status: 'cancelled' } : x,
+          ),
+        }))
+        get().logAction(`ЗКП ${p.no} отменён`, {
+          section: 'Заказы поставщикам',
+          type: 'delete',
+        })
+      },
+      removePurchaseOrder: (id) => {
+        const p = get().purchaseOrders?.find((x) => x.id === id)
+        if (!p || p.status === 'received') return
+        set((s) => ({
+          purchaseOrders: (s.purchaseOrders || []).filter((x) => x.id !== id),
+        }))
+      },
+
       // ── Настройки / прочее ───────────────────────────────────
       updateSettings: (patch) =>
         set((s) => ({ settings: { ...s.settings, ...patch } })),
@@ -940,7 +1067,7 @@ export const useStore = create(
     }),
     {
       name: 'sklad.db',
-      version: 13,
+      version: 14,
       partialize: persistPartialize,
       merge: persistMerge,
       migrate: persistMigrate,

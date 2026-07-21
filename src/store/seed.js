@@ -398,6 +398,9 @@ export function makeSeed() {
       { id: 'acc_bank', name: 'Расчётный счёт', kind: 'bank', currency: '₽', createdAt: iso(now) },
     ],
     moneyTx: [],
+    // Заказы поставщикам — pre-документ до приёмки товара. Пустой в
+    // демо; пользователь создаёт их вручную из /purchase-orders.
+    purchaseOrders: [],
     settings: {
       company: 'СкладПро',
       currency: '₽',

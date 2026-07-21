@@ -168,6 +168,12 @@ export function persistMigrate(state, version) {
     state.moneyTx = state.moneyTx || []
   }
 
+  if (version < 14) {
+    // Заказы поставщикам (PO): pre-документ до фактической приёмки.
+    // Пустой массив для существующих БД, статус draft у новых.
+    state.purchaseOrders = state.purchaseOrders || []
+  }
+
   return state
 }
 
