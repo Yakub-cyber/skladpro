@@ -30,6 +30,7 @@ import {
   CloudOff,
   CloudUpload,
   ShoppingCart,
+  Wallet,
 } from 'lucide-react'
 import { cx, Avatar } from './ui'
 import CommandPalette from './CommandPalette'
@@ -88,6 +89,14 @@ export const NAV = [
     items: [
       { to: '/customers', label: 'Клиенты', icon: Users, perm: 'customers' },
       { to: '/suppliers', label: 'Поставщики', icon: Truck, perm: 'suppliers' },
+    ],
+  },
+  {
+    label: 'Финансы',
+    icon: Wallet,
+    key: 'finance',
+    items: [
+      { to: '/money', label: 'Деньги', icon: Wallet, perm: 'money' },
     ],
   },
   {

@@ -391,6 +391,13 @@ export function makeSeed() {
     cells: ALL_CELLS.map((c) => ({ ...c })),
     warehouses: WAREHOUSES.map((w) => ({ ...w })),
     activeWarehouseId: 'wh1',
+    // Деньги: 2 счёта по умолчанию (Касса + Расчётный счёт). Стартовые
+    // балансы нулевые — пользователь пополняет через «Приход».
+    accounts: [
+      { id: 'acc_cash', name: 'Касса', kind: 'cash', currency: '₽', createdAt: iso(now) },
+      { id: 'acc_bank', name: 'Расчётный счёт', kind: 'bank', currency: '₽', createdAt: iso(now) },
+    ],
+    moneyTx: [],
     settings: {
       company: 'СкладПро',
       currency: '₽',

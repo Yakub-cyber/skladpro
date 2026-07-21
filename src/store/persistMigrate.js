@@ -154,6 +154,20 @@ export function persistMigrate(state, version) {
     }))
   }
 
+  if (version < 13) {
+    // Деньги: кассы/счета и денежные транзакции. Для существующих БД
+    // досыпаем 2 счёта по умолчанию (Касса + Р/с) и пустой moneyTx[].
+    // Стартовые балансы 0 — пользователь введёт их через «Приход» с
+    // типом «Начальный остаток».
+    if (!state.accounts || !state.accounts.length) {
+      state.accounts = [
+        { id: 'acc_cash', name: 'Касса', kind: 'cash', currency: '₽', createdAt: new Date().toISOString() },
+        { id: 'acc_bank', name: 'Расчётный счёт', kind: 'bank', currency: '₽', createdAt: new Date().toISOString() },
+      ]
+    }
+    state.moneyTx = state.moneyTx || []
+  }
+
   return state
 }
 

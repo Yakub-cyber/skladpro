@@ -773,6 +773,166 @@ export const useStore = create(
       // ── Сотрудники / роли + PIN — см. slices/hrSlice.js ─────
       ...createHrSlice(set, get),
 
+      // ── Деньги: кассы/счета и денежные транзакции ─────────────
+      // Модель:
+      //   accounts: [{ id, name, kind: 'cash'|'bank', currency }]
+      //   moneyTx:  [{ id, no, type, accountId, toAccountId?, amount,
+      //                purpose, customerId?, supplierId?, note, at, by,
+      //                status: 'posted'|'cancelled' }]
+      // Баланс счёта считается на лету из moneyTx (не хранится в state).
+      addAccount: (a) => {
+        const id = uid('acc')
+        set((s) => ({
+          accounts: [
+            ...(s.accounts || []),
+            {
+              id,
+              kind: 'cash',
+              currency: s.settings?.currency || '₽',
+              ...a,
+              createdAt: new Date().toISOString(),
+            },
+          ],
+        }))
+        get().logAction(`Добавлен счёт «${a.name || id}»`, {
+          section: 'Деньги',
+          type: 'create',
+        })
+        return id
+      },
+      updateAccount: (id, patch) =>
+        set((s) => ({
+          accounts: (s.accounts || []).map((a) =>
+            a.id === id ? { ...a, ...patch } : a,
+          ),
+        })),
+      removeAccount: (id) =>
+        set((s) => {
+          // Нельзя удалить счёт, по которому есть транзакции.
+          const hasTx = (s.moneyTx || []).some(
+            (t) => t.accountId === id || t.toAccountId === id,
+          )
+          if (hasTx) return {}
+          return { accounts: (s.accounts || []).filter((a) => a.id !== id) }
+        }),
+      // Провести денежный документ. Возвращает id или { ok:false, error }.
+      // Валидация:
+      //   - amount > 0
+      //   - для in/out — accountId обязателен
+      //   - для transfer — обе стороны обязательны и не равны
+      // Побочные эффекты:
+      //   - customerId + purpose='debt-in' → уменьшить его balance на amount
+      //   - supplierId + purpose='debt-out' → уменьшить долг перед ним
+      //     (у поставщика balance — сколько мы ему должны)
+      addMoneyTx: (tx) => {
+        const type = tx.type
+        const amount = Math.round(Number(tx.amount) * 100) / 100
+        if (!(amount > 0)) return { ok: false, error: 'Сумма должна быть > 0' }
+        if (type === 'in' || type === 'out') {
+          if (!tx.accountId) return { ok: false, error: 'Не выбран счёт' }
+        } else if (type === 'transfer') {
+          if (!tx.accountId || !tx.toAccountId)
+            return { ok: false, error: 'Выберите оба счёта' }
+          if (tx.accountId === tx.toAccountId)
+            return { ok: false, error: 'Счёт-источник и получатель совпадают' }
+        } else {
+          return { ok: false, error: `Неизвестный тип: ${type}` }
+        }
+        const id = uid('mtx')
+        set((s) => {
+          const seq = (s.moneyTx || []).length + 1
+          const prefix =
+            type === 'in' ? 'ПКО' : type === 'out' ? 'РКО' : 'ПРВ'
+          const header = {
+            id,
+            no: docNo(prefix, seq),
+            type,
+            accountId: tx.accountId,
+            toAccountId: tx.toAccountId || null,
+            amount,
+            purpose: tx.purpose || 'other',
+            customerId: tx.customerId || null,
+            supplierId: tx.supplierId || null,
+            note: tx.note || '',
+            at: new Date().toISOString(),
+            by: s.authUserId,
+            status: 'posted',
+          }
+          const next = { moneyTx: [header, ...(s.moneyTx || [])] }
+          // Долг контрагента, если явно связан.
+          if (tx.customerId && type === 'in') {
+            next.customers = s.customers.map((c) =>
+              c.id === tx.customerId
+                ? {
+                    ...c,
+                    balance: Math.max(0, (c.balance || 0) - amount),
+                  }
+                : c,
+            )
+          }
+          if (tx.supplierId && type === 'out') {
+            next.suppliers = s.suppliers.map((sp) =>
+              sp.id === tx.supplierId
+                ? {
+                    ...sp,
+                    balance: Math.max(0, (sp.balance || 0) - amount),
+                  }
+                : sp,
+            )
+          }
+          return next
+        })
+        const purposeLabel = {
+          'debt-in': 'Погашение долга клиентом',
+          'sale-cash': 'Приход за продажу',
+          'debt-out': 'Оплата поставщику',
+          salary: 'Зарплата',
+          rent: 'Аренда',
+          transfer: 'Перевод между счетами',
+        }
+        const kindLabel =
+          type === 'in' ? 'Приход' : type === 'out' ? 'Расход' : 'Перевод'
+        const amountStr =
+          new Intl.NumberFormat('ru-RU').format(amount) + ' ₽'
+        get().logAction(
+          `${kindLabel} ${amountStr} · ${purposeLabel[tx.purpose] || tx.purpose || 'прочее'}`,
+          { section: 'Деньги', type: 'create' },
+        )
+        return id
+      },
+      // Отменить транзакцию — оставляем запись, но не учитывается в
+      // балансе (status='cancelled') и откатывает влияние на контрагентов.
+      cancelMoneyTx: (id) => {
+        const tx = get().moneyTx?.find((t) => t.id === id)
+        if (!tx || tx.status !== 'posted') return
+        set((s) => {
+          const next = {
+            moneyTx: s.moneyTx.map((t) =>
+              t.id === id ? { ...t, status: 'cancelled' } : t,
+            ),
+          }
+          if (tx.customerId && tx.type === 'in') {
+            next.customers = s.customers.map((c) =>
+              c.id === tx.customerId
+                ? { ...c, balance: (c.balance || 0) + tx.amount }
+                : c,
+            )
+          }
+          if (tx.supplierId && tx.type === 'out') {
+            next.suppliers = s.suppliers.map((sp) =>
+              sp.id === tx.supplierId
+                ? { ...sp, balance: (sp.balance || 0) + tx.amount }
+                : sp,
+            )
+          }
+          return next
+        })
+        get().logAction(`Отменена транзакция ${tx.no}`, {
+          section: 'Деньги',
+          type: 'delete',
+        })
+      },
+
       // ── Настройки / прочее ───────────────────────────────────
       updateSettings: (patch) =>
         set((s) => ({ settings: { ...s.settings, ...patch } })),
@@ -780,7 +940,7 @@ export const useStore = create(
     }),
     {
       name: 'sklad.db',
-      version: 12,
+      version: 13,
       partialize: persistPartialize,
       merge: persistMerge,
       migrate: persistMigrate,

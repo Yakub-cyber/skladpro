@@ -23,6 +23,7 @@ const Analytics = lazy(() => import('./pages/Analytics'))
 const Assistant = lazy(() => import('./pages/Assistant'))
 const Storefront = lazy(() => import('./pages/Storefront'))
 const Journal = lazy(() => import('./pages/Journal'))
+const Money = lazy(() => import('./pages/Money'))
 const Employees = lazy(() => import('./pages/Employees'))
 const Settings = lazy(() => import('./pages/Settings'))
 const Tracking = lazy(() => import('./pages/Tracking'))
@@ -96,6 +97,7 @@ export default function App() {
             без Layout для клиента (см. публичный маршрут выше). */}
         <Route path="storefront" element={<Storefront />} />
         <Route path="journal" element={<Journal />} />
+        <Route path="money" element={<Money />} />
         <Route path="employees" element={<Employees />} />
         <Route path="settings" element={<Settings />} />
       </Route>
