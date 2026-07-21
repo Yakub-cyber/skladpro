@@ -363,8 +363,29 @@ export async function askLLM(
     }),
   })
   if (!res.ok) {
-    const t = await res.text().catch(() => '')
-    throw new Error(`DeepSeek ${res.status}: ${t.slice(0, 80)}`)
+    const text = await res.text().catch(() => '')
+    // Дружелюбные сообщения по типовым HTTP-кодам ProxyAPI/OpenAI. Иначе
+    // сырой JSON от прокси попадал в чат («DeepSeek 401: {…}»), и опера-
+    // тор не понимал, что делать.
+    if (res.status === 401 || res.status === 403) {
+      throw new Error(
+        'ProxyAPI 401: ключ отклонён. Проверьте ключ в Настройках → ИИ (или в .env VITE_AI_KEY). Возможно, ключ устарел, скопирован с пробелом или для другого провайдера.',
+      )
+    }
+    if (res.status === 429) {
+      throw new Error(
+        'ProxyAPI 429: превышен лимит или баланс на нуле. Пополните личный кабинет proxyapi.ru.',
+      )
+    }
+    if (res.status === 404) {
+      throw new Error(
+        `ProxyAPI 404: модель «${model}» не найдена. Выберите другую в Настройках.`,
+      )
+    }
+    if (res.status >= 500) {
+      throw new Error(`ProxyAPI ${res.status}: сервис недоступен, попробуйте через минуту.`)
+    }
+    throw new Error(`ProxyAPI ${res.status}: ${text.slice(0, 100)}`)
   }
   const data = await res.json()
   return data.choices?.[0]?.message?.content ?? ''
