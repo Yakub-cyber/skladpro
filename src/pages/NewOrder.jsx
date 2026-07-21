@@ -387,43 +387,44 @@ function CartBody({
 
       <div className="border-t border-line pt-3 space-y-2">
         <div className="flex items-center gap-3">
-          <label className="flex items-center gap-1.5 text-[13px] cursor-pointer">
-            <input
-              type="checkbox"
-              checked={onCredit}
-              onChange={(e) => setOnCredit(e.target.checked)}
-              className="accent-[var(--brand)] w-4 h-4"
-            />
-            В долг
-          </label>
-          <div className="flex items-center gap-1.5 ml-auto">
-            <span className="text-[12px] text-muted">Скидка</span>
-            <input
-              type="number"
-              min="0"
-              max="100"
-              value={discount}
-              onChange={(e) => setDiscount(e.target.value)}
-              className="w-14 h-8 px-2 rounded-lg bg-surface-2 border border-line text-sm text-center"
-            />
-            <span className="text-[12px] text-muted">%</span>
-          </div>
+          <span className="text-[12px] text-muted">Скидка</span>
+          <input
+            type="number"
+            min="0"
+            max="100"
+            value={discount}
+            onChange={(e) => setDiscount(e.target.value)}
+            className="w-14 h-8 px-2 rounded-lg bg-surface-2 border border-line text-sm text-center"
+          />
+          <span className="text-[12px] text-muted">%</span>
+          {discount > 0 && (
+            <span className="ml-auto text-[12px] text-muted line-through tabular-nums">
+              {money(subtotal)}
+            </span>
+          )}
         </div>
-        {discount > 0 && (
-          <div className="flex justify-between text-[12px] text-muted">
-            <span>Без скидки</span>
-            <span className="line-through tabular-nums">{money(subtotal)}</span>
-          </div>
-        )}
         <div className="flex justify-between items-center">
-          <span className="text-muted text-sm">
-            Итого {onCredit && <span className="text-bad">· в долг</span>}
-          </span>
-          <span className="text-xl font-semibold tabular-nums">{money(total)}</span>
+          <span className="text-muted text-sm">Итого</span>
+          <span className="text-2xl font-bold tabular-nums">{money(total)}</span>
         </div>
-        <Button icon={Check} className="w-full" onClick={onSubmit} disabled={!rows.length}>
-          Оформить заказ
-        </Button>
+        {/* Крупная зелёная CTA на всю ширину чека — сумма на самой кнопке.
+            F9 (в родителе) тоже открывает экран оплаты — подпись справа. */}
+        <button
+          onClick={onSubmit}
+          disabled={!rows.length}
+          className={cx(
+            'w-full h-14 rounded-2xl flex items-center justify-center gap-2 text-white text-lg font-bold tracking-tight transition shadow-lg',
+            rows.length
+              ? 'bg-[var(--ok,#16a34a)] hover:brightness-110 shadow-emerald-500/25'
+              : 'bg-surface-3 text-muted cursor-not-allowed shadow-none',
+          )}
+        >
+          <Check size={22} />
+          <span>ОПЛАТИТЬ · {money(total)}</span>
+          <kbd className="ml-2 hidden md:inline text-[11px] font-semibold bg-black/20 rounded px-1.5 py-0.5">
+            F9
+          </kbd>
+        </button>
       </div>
     </div>
   )
@@ -445,6 +446,7 @@ export default function NewOrder() {
   const [discount, setDiscount] = useState(0)
   const [msg, setMsg] = useState('')
   const [mobileCart, setMobileCart] = useState(false) // bottom-sheet чека
+  const [payOpen, setPayOpen] = useState(false) // модалка выбора способа оплаты
 
   const isCreditType = (id) =>
     priceTypes.find((t) => t.id === id)?.name.toLowerCase().includes('долг')
@@ -535,8 +537,16 @@ export default function NewOrder() {
     [rows],
   )
 
-  const submit = () => {
+  // Клик по «Оплатить» открывает экран выбора способа оплаты.
+  // Клавиша F9 (см. useEffect ниже) делает то же самое.
+  const openPay = () => {
     if (!rows.length) return
+    setPayOpen(true)
+  }
+
+  // Финальное оформление после выбора способа оплаты в PaymentModal.
+  // payment: { method: 'cash'|'card'|'credit'|'mixed', cashPaid, cardPaid, change }
+  const finalSubmit = (payment) => {
     const cust = customers.find((c) => c.id === customerId)
     addOrder({
       customerId: cust?.id || 'retail',
@@ -546,14 +556,38 @@ export default function NewOrder() {
       discount: Number(discount) || 0,
       total,
       priceTypeId,
-      onCredit,
+      // Долг — теперь производная от способа оплаты (для обратной совместимости
+      // с существующей логикой резервов/долгов клиента в сторе).
+      onCredit: payment.method === 'credit',
+      payment,
       address: cust?.city || 'Самовывоз',
       courier: 'Самовывоз',
     })
     const fresh = useStore.getState().orders[0]
+    setPayOpen(false)
     setMobileCart(false)
     nav(`/orders?id=${fresh.id}`)
   }
+
+  // Клавиатурные хоткеи кассы:
+  //   F9  → открыть экран оплаты (стандарт 1С/Frontol)
+  //   /   → сфокусировать SmartFind (только если фокус не в поле)
+  useEffect(() => {
+    const onKey = (e) => {
+      if (payOpen) return // модалка сама обрабатывает Enter/Esc
+      if (e.key === 'F9') {
+        e.preventDefault()
+        openPay()
+      }
+      if (e.key === '/' && !['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName)) {
+        e.preventDefault()
+        document.querySelector('input[placeholder^="Поиск товара"]')?.focus()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [payOpen, rows.length])
 
   const cartProps = {
     rows,
@@ -562,8 +596,6 @@ export default function NewOrder() {
     total,
     discount,
     setDiscount,
-    onCredit,
-    setOnCredit,
     customerId,
     customers,
     onPickCustomer: selectCustomer,
@@ -572,7 +604,7 @@ export default function NewOrder() {
     priceTypes,
     onChangeType: changeType,
     onSetQty: setQty,
-    onSubmit: submit,
+    onSubmit: openPay,
     round3,
   }
 
@@ -650,14 +682,20 @@ export default function NewOrder() {
             </div>
           </div>
         </div>
-        <Button
+        {/* На мобиле CTA-bar внизу: тап открывает bottom-sheet чека,
+            там свой большой «Оплатить» откроет PaymentModal. */}
+        <button
           onClick={() => setMobileCart(true)}
           disabled={!rows.length}
-          className="shrink-0"
-          icon={Check}
+          className={cx(
+            'h-12 px-5 rounded-2xl inline-flex items-center gap-2 text-white text-[15px] font-bold transition shrink-0',
+            rows.length
+              ? 'bg-[var(--ok,#16a34a)] hover:brightness-110'
+              : 'bg-surface-3 text-muted cursor-not-allowed',
+          )}
         >
-          Оформить
-        </Button>
+          <Check size={18} /> Оплатить
+        </button>
       </div>
 
       <Modal
@@ -672,7 +710,236 @@ export default function NewOrder() {
       >
         <CartBody {...cartProps} compact />
       </Modal>
+
+      {/* Экран выбора способа оплаты — открывается по клику «Оплатить» или F9.
+          Управляет всей логикой оплаты (кроме создания заказа) внутри себя,
+          а на подтверждение вызывает finalSubmit(payment). */}
+      <PaymentModal
+        open={payOpen}
+        onClose={() => setPayOpen(false)}
+        total={total}
+        onConfirm={finalSubmit}
+      />
     </div>
+  )
+}
+
+// Экран выбора способа оплаты. Крупные кнопки «Наличные / Карта / В долг /
+// Смешанная». Для наличных — поле «Получено» + расчёт сдачи. Для смешанной
+// — 2 поля. Enter подтверждает, Esc закрывает. Стандартный POS-flow: сумма
+// на экране крупно, минимум решений от кассира. Опирается на компоненты
+// Modal/Button/Input из components/ui.
+function PaymentModal({ open, onClose, total, onConfirm }) {
+  const [method, setMethod] = useState('cash') // cash | card | credit | mixed
+  const [cashPaid, setCashPaid] = useState('')
+  const [cardPaid, setCardPaid] = useState('')
+
+  useEffect(() => {
+    if (open) {
+      // Сброс к дефолтам при каждом открытии.
+      setMethod('cash')
+      setCashPaid(String(total || ''))
+      setCardPaid('')
+    }
+  }, [open, total])
+
+  const cashN = Number(cashPaid) || 0
+  const cardN = Number(cardPaid) || 0
+  const change = method === 'cash' ? Math.max(0, cashN - total) : 0
+  const mixedTotal = cashN + cardN
+  const mixedShort = Math.max(0, total - mixedTotal)
+
+  // Валидация «можно ли пробить».
+  const canConfirm =
+    method === 'card' ||
+    method === 'credit' ||
+    (method === 'cash' && cashN >= total) ||
+    (method === 'mixed' && mixedTotal >= total && cashN > 0 && cardN > 0)
+
+  const confirm = () => {
+    if (!canConfirm) return
+    onConfirm({
+      method,
+      cashPaid: method === 'cash' ? cashN : method === 'mixed' ? cashN : 0,
+      cardPaid: method === 'card' ? total : method === 'mixed' ? cardN : 0,
+      change,
+    })
+  }
+
+  // Enter — подтвердить, Esc — закрыть. Только пока модалка открыта.
+  useEffect(() => {
+    if (!open) return
+    const onKey = (e) => {
+      if (e.key === 'Enter' && canConfirm) {
+        e.preventDefault()
+        confirm()
+      }
+      if (e.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, canConfirm, method, cashN, cardN])
+
+  const methods = [
+    { key: 'cash', label: 'Наличные', icon: '₽', color: 'ok' },
+    { key: 'card', label: 'Карта', icon: '💳', color: 'info' },
+    { key: 'credit', label: 'В долг', icon: '⏱', color: 'warn' },
+    { key: 'mixed', label: 'Смешанная', icon: '±', color: 'brand' },
+  ]
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      wide
+      title={
+        <span className="flex items-center gap-2">
+          Оплата
+          <span className="text-2xl font-bold tabular-nums text-brand">{money(total)}</span>
+        </span>
+      }
+    >
+      <div className="space-y-4">
+        {/* Крупные плитки способов оплаты — тач-фрэндли. */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5">
+          {methods.map((m) => (
+            <button
+              key={m.key}
+              onClick={() => setMethod(m.key)}
+              className={cx(
+                'h-24 rounded-2xl flex flex-col items-center justify-center gap-1 text-[15px] font-semibold border-2 transition',
+                method === m.key
+                  ? 'bg-brand-soft border-brand text-brand'
+                  : 'bg-surface-2 border-line text-muted hover:text-ink',
+              )}
+            >
+              <div className="text-3xl leading-none">{m.icon}</div>
+              <div>{m.label}</div>
+            </button>
+          ))}
+        </div>
+
+        {/* Наличные — ввод «получено» и крупная плашка «сдача». */}
+        {method === 'cash' && (
+          <div className="rounded-2xl bg-surface-2 p-4 space-y-3">
+            <div>
+              <div className="text-[12px] text-muted mb-1.5">Получено, ₽</div>
+              <Input
+                type="number"
+                value={cashPaid}
+                onChange={(e) => setCashPaid(e.target.value)}
+                className="text-2xl font-bold text-right tabular-nums h-14"
+                autoFocus
+              />
+            </div>
+            {/* Быстрые суммы: точная / +100 / +500 / +1000 */}
+            <div className="grid grid-cols-4 gap-2">
+              {[total, total + 100, total + 500, total + 1000].map((v) => (
+                <button
+                  key={v}
+                  onClick={() => setCashPaid(String(v))}
+                  className="h-9 rounded-lg bg-surface hover:bg-surface-3 border border-line text-[13px] font-medium tabular-nums"
+                >
+                  {money(v)}
+                </button>
+              ))}
+            </div>
+            <div
+              className={cx(
+                'flex items-center justify-between p-3 rounded-xl font-semibold',
+                cashN < total
+                  ? 'bg-bad-soft text-bad'
+                  : change > 0
+                    ? 'bg-ok-soft text-ok'
+                    : 'bg-surface-3 text-muted',
+              )}
+            >
+              <span>{cashN < total ? 'Не хватает' : 'Сдача'}</span>
+              <span className="text-xl tabular-nums">
+                {money(cashN < total ? total - cashN : change)}
+              </span>
+            </div>
+          </div>
+        )}
+
+        {/* Карта — просто подтверждение суммы, ввода не требуется. */}
+        {method === 'card' && (
+          <div className="rounded-2xl bg-info-soft text-info p-4 flex items-center justify-between">
+            <span className="font-medium">К оплате картой</span>
+            <span className="text-2xl font-bold tabular-nums">{money(total)}</span>
+          </div>
+        )}
+
+        {/* В долг — предупреждение и подтверждение суммы. */}
+        {method === 'credit' && (
+          <div className="rounded-2xl bg-warn-soft text-warn p-4 space-y-1">
+            <div className="flex items-center justify-between">
+              <span className="font-medium">В долг клиенту</span>
+              <span className="text-2xl font-bold tabular-nums">{money(total)}</span>
+            </div>
+            <div className="text-[12px] opacity-80">
+              Сумма прибавится к балансу выбранного клиента. Розничным покупателям
+              «в долг» оформить нельзя — выберите клиента в чеке.
+            </div>
+          </div>
+        )}
+
+        {/* Смешанная — 2 поля с автопересчётом «недостающего». */}
+        {method === 'mixed' && (
+          <div className="rounded-2xl bg-surface-2 p-4 space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <div className="text-[12px] text-muted mb-1.5">Наличными, ₽</div>
+                <Input
+                  type="number"
+                  value={cashPaid}
+                  onChange={(e) => setCashPaid(e.target.value)}
+                  className="text-lg font-semibold text-right tabular-nums"
+                  autoFocus
+                />
+              </div>
+              <div>
+                <div className="text-[12px] text-muted mb-1.5">Картой, ₽</div>
+                <Input
+                  type="number"
+                  value={cardPaid}
+                  onChange={(e) => setCardPaid(e.target.value)}
+                  className="text-lg font-semibold text-right tabular-nums"
+                />
+              </div>
+            </div>
+            <div className="flex items-center justify-between p-2.5 rounded-xl bg-surface">
+              <span className="text-[13px] text-muted">Итого внесено</span>
+              <span className="font-semibold tabular-nums">{money(mixedTotal)}</span>
+            </div>
+            {mixedShort > 0 && (
+              <div className="text-[12px] text-bad text-right">
+                Не хватает {money(mixedShort)}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Финальная CTA. Enter тоже сработает. */}
+        <button
+          onClick={confirm}
+          disabled={!canConfirm}
+          className={cx(
+            'w-full h-16 rounded-2xl flex items-center justify-center gap-2 text-white text-xl font-bold transition shadow-lg',
+            canConfirm
+              ? 'bg-[var(--ok,#16a34a)] hover:brightness-110 shadow-emerald-500/25'
+              : 'bg-surface-3 text-muted cursor-not-allowed shadow-none',
+          )}
+        >
+          <Check size={22} />
+          Пробить чек
+          <kbd className="text-[11px] font-semibold bg-black/20 rounded px-1.5 py-0.5">
+            Enter
+          </kbd>
+        </button>
+      </div>
+    </Modal>
   )
 }
 
