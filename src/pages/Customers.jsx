@@ -99,7 +99,7 @@ export default function Customers() {
         />
       </div>
 
-      <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-3">
+      <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
         {list.map((c) => {
           const tier = tierFor(c.totalSpent)
           return (

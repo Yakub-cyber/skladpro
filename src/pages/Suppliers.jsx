@@ -153,7 +153,7 @@ export default function Suppliers() {
       </Section>
 
       {/* Поставщики */}
-      <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-3">
+      <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
         {suppliers.map((s) => (
           <Card key={s.id} className="p-4">
             <div className="flex items-center gap-3">

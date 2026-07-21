@@ -44,10 +44,11 @@ export const DOC_ICON = {
 
 const CAT_ICON = { Wrench, Hammer, Zap, Droplets, PaintBucket, Package }
 
-// Табы верхней панели Operations. Порядок = порядок отрисовки.
-// «Продажа» и «Закупка» стоят первыми — это самые частые операции.
+// Табы верхней панели Operations. Порядок = порядок отрисовки. Вкладка
+// «Продажа» удалена — вся продажа идёт через кассу (кнопка «Касса» в
+// шапке / маршрут /orders/new). «Закупка» — самая частая складская
+// операция, поэтому первая.
 export const TABS = [
-  { key: 'sale', label: 'Продажа', icon: ShoppingCart },
   { key: 'receive', label: 'Закупка', icon: ArrowDownToLine },
   { key: 'sreturn', label: 'Возврат продажи', icon: Undo2 },
   { key: 'preturn', label: 'Возврат поставщику', icon: Truck },
