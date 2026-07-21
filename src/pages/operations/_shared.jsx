@@ -17,6 +17,7 @@ import {
   Camera,
   X,
   Package,
+  PackagePlus,
   Wrench,
   Hammer,
   Zap,
@@ -40,21 +41,26 @@ export const DOC_ICON = {
   transfer: ArrowLeftRight,
   writeoff: TrendingDown,
   inventory: ClipboardCheck,
+  stockin: PackagePlus,
 }
 
 const CAT_ICON = { Wrench, Hammer, Zap, Droplets, PaintBucket, Package }
 
-// Табы верхней панели Operations. Порядок = порядок отрисовки. Вкладка
-// «Продажа» удалена — вся продажа идёт через кассу (кнопка «Касса» в
-// шапке / маршрут /orders/new). «Закупка» — самая частая складская
-// операция, поэтому первая.
+// Табы верхней панели Operations. Порядок как в CloudShop:
+// «Создать документ» — Продажа/Покупка/Возвраты/Инвентаризация/
+// Оприходование/Списание/Перемещение. За ними — Реестр/Маркировка/Журнал
+// (наши разделы, вне списка «создать»). Продажа-документ возвращена в
+// дополнение к кассе (/orders/new) — оптовик оформляет через документ
+// с клиентом/скидкой/долгом, розница через кассу.
 export const TABS = [
-  { key: 'receive', label: 'Закупка', icon: ArrowDownToLine },
-  { key: 'sreturn', label: 'Возврат продажи', icon: Undo2 },
-  { key: 'preturn', label: 'Возврат поставщику', icon: Truck },
-  { key: 'transfer', label: 'Перемещение', icon: ArrowLeftRight },
-  { key: 'writeoff', label: 'Списание', icon: TrendingDown },
+  { key: 'sale', label: 'Продажа', icon: ShoppingCart },
+  { key: 'receive', label: 'Покупка', icon: ArrowDownToLine },
+  { key: 'sreturn', label: 'Возврат при продаже', icon: Undo2 },
+  { key: 'preturn', label: 'Возврат при покупке', icon: Truck },
   { key: 'inventory', label: 'Инвентаризация', icon: ClipboardCheck },
+  { key: 'stockin', label: 'Оприходование', icon: PackagePlus },
+  { key: 'writeoff', label: 'Списание', icon: TrendingDown },
+  { key: 'transfer', label: 'Перемещение', icon: ArrowLeftRight },
   { key: 'registry', label: 'Реестр', icon: FileText },
   { key: 'marking', label: 'Маркировка', icon: ShieldCheck },
   { key: 'journal', label: 'Журнал', icon: History },

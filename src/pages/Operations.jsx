@@ -1,36 +1,40 @@
 // Операции: тонкий роутер по вкладкам. Каждая вкладка — отдельный файл в
 // pages/operations/. Общие элементы (ProductSearch, Toast, DOC_ICON, TABS)
-// — в operations/_shared.jsx. Вкладка «Продажа» удалена — единственный
-// путь продажи теперь касса (/orders/new + кнопка «Касса» в шапке). Так
-// убран дубль «продажа как документ» vs. «продажа как заказ».
+// — в operations/_shared.jsx. Порядок вкладок и метки — как в CloudShop.
+// «Продажа» = документ (для опта, с клиентом/скидкой/долгом), розница
+// пробивается через кассу (/orders/new).
 import { useState } from 'react'
 import { cx } from '../components/ui'
 import { TABS } from './operations/_shared'
+import SaleTab from './operations/SaleTab'
 import ReceiveTab from './operations/ReceiveTab'
 import ReturnTab from './operations/ReturnTab'
 import SupplierReturnTab from './operations/SupplierReturnTab'
 import TransferTab from './operations/TransferTab'
 import WriteOffTab from './operations/WriteOffTab'
 import InventoryTab from './operations/InventoryTab'
+import StockInTab from './operations/StockInTab'
 import DocumentsTab from './operations/DocumentsTab'
 import MarkingTab from './operations/MarkingTab'
 import JournalTab from './operations/JournalTab'
 
 const TAB_COMPONENT = {
+  sale: SaleTab,
   receive: ReceiveTab,
   sreturn: ReturnTab,
   preturn: SupplierReturnTab,
   transfer: TransferTab,
   writeoff: WriteOffTab,
   inventory: InventoryTab,
+  stockin: StockInTab,
   registry: DocumentsTab,
   marking: MarkingTab,
   journal: JournalTab,
 }
 
 export default function Operations() {
-  const [tab, setTab] = useState('receive')
-  const Active = TAB_COMPONENT[tab] || ReceiveTab
+  const [tab, setTab] = useState('sale')
+  const Active = TAB_COMPONENT[tab] || SaleTab
   return (
     <div className="animate-fadeUp">
       <div className="mb-4">

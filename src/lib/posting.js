@@ -27,6 +27,9 @@ export const POST_MV = {
   writeoff: 'writeoff',
   supplier_return: 'supplier_return',
   sale: 'writeoff',
+  // Оприходование — приход без поставщика: движение как у purchase (in),
+  // но по документу stockin (для реестра и журнала).
+  stockin: 'in',
 }
 export const POST_SIGN = {
   purchase: 1,
@@ -34,6 +37,7 @@ export const POST_SIGN = {
   writeoff: -1,
   supplier_return: -1,
   sale: -1,
+  stockin: 1,
 }
 
 // Развернуть позицию документа: если строка — комплект (type='kit') с
@@ -156,7 +160,9 @@ export function applyDocToState(state, doc, dir, by) {
   } else {
     const sign = (POST_SIGN[doc.type] ?? -1) * dir
     const mvType = POST_MV[doc.type] || 'writeoff'
-    const isPurchase = doc.type === 'purchase'
+    // Оприходование обрабатывается как «приход товара»: новая партия по
+    // указанной себестоимости (как у purchase), но без поставщика.
+    const isPurchase = doc.type === 'purchase' || doc.type === 'stockin'
     const isSaleReturn = doc.type === 'sale_return'
     for (const it of doc.items) {
       let mvCost = null // фактическая себестоимость расхода (для COGS)

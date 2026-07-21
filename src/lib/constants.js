@@ -25,11 +25,13 @@ export const nextStatus = (key) => {
 export const DOC_TYPES = [
   { key: 'purchase', label: 'Закупка', prefix: 'ЗАК' },
   { key: 'sale', label: 'Продажа', prefix: 'ПРД' },
-  { key: 'sale_return', label: 'Возврат продажи', prefix: 'ВЗП' },
-  { key: 'supplier_return', label: 'Возврат поставщику', prefix: 'ВЗС' },
+  { key: 'sale_return', label: 'Возврат при продаже', prefix: 'ВЗП' },
+  { key: 'supplier_return', label: 'Возврат при покупке', prefix: 'ВЗС' },
   { key: 'transfer', label: 'Перемещение', prefix: 'ПРМ' },
   { key: 'writeoff', label: 'Списание', prefix: 'СПС' },
   { key: 'inventory', label: 'Инвентаризация', prefix: 'ИНВ' },
+  // Оприходование — приход товара без поставщика (излишки, начальный ввод).
+  { key: 'stockin', label: 'Оприходование', prefix: 'ОПР' },
 ]
 export const docTypeInfo = (key) => DOC_TYPES.find((d) => d.key === key) || DOC_TYPES[0]
 
