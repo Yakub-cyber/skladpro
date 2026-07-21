@@ -997,6 +997,17 @@ function ProductModal({ product, onClose }) {
           />
         )}
 
+        {/* Модификаторы блюда — только для обычных товаров и не для kit.
+            Если список пуст, товар работает как обычно; если хотя бы одна
+            группа задана, при клике на товар в кассе откроется модалка
+            выбора модификаторов. */}
+        {!isServiceForm && !isKitForm && (
+          <ModifierGroupsEditor
+            groups={f.modifierGroups || []}
+            onChange={(mg) => set('modifierGroups', mg)}
+          />
+        )}
+
         <div>
           <span className="block text-[13px] font-medium text-muted mb-2">
             Цены по категориям
@@ -1089,6 +1100,185 @@ function ProductModal({ product, onClose }) {
         )}
       </div>
     </Modal>
+  )
+}
+
+// Редактор модификаторов блюда — группы опций с ценой (может быть
+// отрицательной для «маленького размера»). Group.required=true → нужно
+// выбрать одну опцию (radio); group.multi=true → любое число опций
+// (checkbox). Работает как в iiko/Poster: клик по товару в кассе с
+// непустыми modifierGroups открывает модалку выбора; каждый чекбокс
+// добавляет свою цену к позиции чека.
+function ModifierGroupsEditor({ groups, onChange }) {
+  const addGroup = () => {
+    const id = 'mg_' + Math.random().toString(36).slice(2, 8)
+    onChange([
+      ...groups,
+      { id, name: 'Новая группа', required: false, multi: false, options: [] },
+    ])
+  }
+  const setGroup = (gid, patch) =>
+    onChange(groups.map((g) => (g.id === gid ? { ...g, ...patch } : g)))
+  const removeGroup = (gid) => onChange(groups.filter((g) => g.id !== gid))
+
+  const addOption = (gid) => {
+    const id = 'op_' + Math.random().toString(36).slice(2, 8)
+    setGroup(gid, {
+      options: [
+        ...(groups.find((g) => g.id === gid)?.options || []),
+        { id, name: 'Опция', price: 0 },
+      ],
+    })
+  }
+  const setOption = (gid, oid, patch) => {
+    const g = groups.find((x) => x.id === gid)
+    if (!g) return
+    setGroup(gid, {
+      options: g.options.map((o) => (o.id === oid ? { ...o, ...patch } : o)),
+    })
+  }
+  const removeOption = (gid, oid) => {
+    const g = groups.find((x) => x.id === gid)
+    if (!g) return
+    setGroup(gid, { options: g.options.filter((o) => o.id !== oid) })
+  }
+
+  const setDefault = (gid, oid) => {
+    // Для не-multi групп ровно один default (radio-семантика).
+    const g = groups.find((x) => x.id === gid)
+    if (!g) return
+    if (g.multi) {
+      setOption(gid, oid, { default: !g.options.find((o) => o.id === oid)?.default })
+    } else {
+      setGroup(gid, {
+        options: g.options.map((o) => ({ ...o, default: o.id === oid })),
+      })
+    }
+  }
+
+  return (
+    <div className="rounded-xl border border-info/30 bg-info-soft/40 p-3 space-y-2">
+      <div className="flex items-center gap-2">
+        <span className="text-[13px] font-medium">Модификаторы блюда</span>
+        <span className="text-[11px] text-muted">
+          {groups.length ? `${groups.length} гр.` : 'нет — обычный товар'}
+        </span>
+        <button
+          type="button"
+          onClick={addGroup}
+          className="ml-auto text-[12px] px-2 h-7 rounded-lg bg-surface hover:bg-surface-2 border border-line whitespace-nowrap"
+        >
+          + Группа
+        </button>
+      </div>
+
+      {groups.length === 0 && (
+        <p className="text-[11px] text-muted italic">
+          Пример группы: «Размер» — Маленький (−30 ₽), Средний (0 ₽, по
+          умолчанию), Большой (+40 ₽). Одна группа = один вопрос гостю на
+          кассе.
+        </p>
+      )}
+
+      {groups.map((g) => (
+        <div key={g.id} className="rounded-lg bg-surface p-2.5 space-y-2 border border-line">
+          <div className="flex items-center gap-2">
+            <Input
+              value={g.name}
+              onChange={(e) => setGroup(g.id, { name: e.target.value })}
+              placeholder="Название группы"
+              className="flex-1 h-8 text-sm"
+            />
+            <label className="text-[11px] text-muted inline-flex items-center gap-1 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={!!g.required}
+                onChange={(e) => setGroup(g.id, { required: e.target.checked })}
+                className="accent-[var(--brand)] w-3.5 h-3.5"
+              />
+              обяз.
+            </label>
+            <label className="text-[11px] text-muted inline-flex items-center gap-1 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={!!g.multi}
+                onChange={(e) => setGroup(g.id, { multi: e.target.checked })}
+                className="accent-[var(--brand)] w-3.5 h-3.5"
+              />
+              несколько
+            </label>
+            <button
+              type="button"
+              onClick={() => removeGroup(g.id)}
+              title="Удалить группу"
+              className="h-7 w-7 rounded-lg text-muted hover:text-bad hover:bg-surface-2 grid place-items-center"
+            >
+              <X size={13} />
+            </button>
+          </div>
+
+          {g.options.length > 0 ? (
+            <div className="space-y-1">
+              {g.options.map((o) => (
+                <div key={o.id} className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setDefault(g.id, o.id)}
+                    title={g.multi ? 'В default' : 'По умолчанию (radio)'}
+                    className={cx(
+                      'h-6 w-6 rounded-md grid place-items-center border transition text-[11px]',
+                      o.default
+                        ? 'bg-brand text-brand-ink border-brand'
+                        : 'bg-surface-2 border-line text-muted hover:text-ink',
+                    )}
+                  >
+                    ✓
+                  </button>
+                  <Input
+                    value={o.name}
+                    onChange={(e) => setOption(g.id, o.id, { name: e.target.value })}
+                    placeholder="Название"
+                    className="flex-1 h-8 text-sm"
+                  />
+                  <div className="relative w-24">
+                    <Input
+                      type="number"
+                      step="0.01"
+                      value={o.price}
+                      onChange={(e) => setOption(g.id, o.id, { price: Number(e.target.value) || 0 })}
+                      className="h-8 text-sm text-right pr-6"
+                    />
+                    <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[11px] text-muted">
+                      ₽
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => removeOption(g.id, o.id)}
+                    className="h-8 w-8 rounded-lg text-muted hover:text-bad hover:bg-surface-2 grid place-items-center"
+                    title="Убрать"
+                  >
+                    <X size={13} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-[11px] text-muted italic">
+              Нет опций. Нажмите «+ Опция», чтобы добавить.
+            </p>
+          )}
+
+          <button
+            type="button"
+            onClick={() => addOption(g.id)}
+            className="text-[12px] px-2 h-7 rounded-lg bg-surface-2 hover:bg-surface-3 border border-line"
+          >
+            + Опция
+          </button>
+        </div>
+      ))}
+    </div>
   )
 }
 

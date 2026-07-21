@@ -107,6 +107,7 @@ export const useStore = create(
               marked: false,
               codes: [],
               components: [],
+              modifierGroups: [],
               prices,
               ...p,
             },
@@ -856,7 +857,7 @@ export const useStore = create(
     }),
     {
       name: 'sklad.db',
-      version: 11,
+      version: 12,
       partialize: persistPartialize,
       merge: persistMerge,
       migrate: persistMigrate,

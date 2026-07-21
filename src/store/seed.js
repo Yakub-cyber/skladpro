@@ -175,6 +175,52 @@ const KITS = [
   },
 ]
 
+// Демо-блюда с модификаторами — для показа общепитового сценария.
+// Кофе с 2 группами: «Размер» (обязательная одна опция, влияет на цену)
+// и «Добавки» (несколько на выбор, каждая с ценой).
+const DISHES = [
+  {
+    id: 'dish1',
+    type: 'product',
+    sku: 'КАФ-101',
+    name: 'Капучино',
+    category: 'Расходники',
+    unit: 'чашка',
+    price: 190, // базовая цена (за средний размер)
+    cost: 40,
+    stock: 999, // блюдо не расходуется как штучный товар в MVP
+    minStock: 0,
+    tags: ['напиток', 'кофе'],
+    batches: [{ id: 'dish1_b0', qty: 999, cost: 40, at: '1970-01-01T00:00:00Z' }],
+    components: [],
+    modifierGroups: [
+      {
+        id: 'mg_size',
+        name: 'Размер',
+        required: true,
+        multi: false,
+        options: [
+          { id: 'op_s', name: 'Маленький', price: -30 },
+          { id: 'op_m', name: 'Средний', price: 0, default: true },
+          { id: 'op_l', name: 'Большой', price: 40 },
+        ],
+      },
+      {
+        id: 'mg_extras',
+        name: 'Добавки',
+        required: false,
+        multi: true,
+        options: [
+          { id: 'op_syrup', name: 'Сироп (карамель/ваниль)', price: 30 },
+          { id: 'op_extra_shot', name: 'Двойной эспрессо', price: 50 },
+          { id: 'op_oat', name: 'Овсяное молоко', price: 40 },
+          { id: 'op_marshmallow', name: 'Маршмеллоу', price: 20 },
+        ],
+      },
+    ],
+  },
+]
+
 // ── Клиенты ──────────────────────────────────────────────────────────────
 // [name, type, city, contact, phone, totalSpent, bonus, daysAgo]
 const C = [
@@ -231,7 +277,7 @@ export function makeSeed() {
 
   // Услуги и комплекты — добавляем в общий список товаров. У них нет
   // партий, ячеек и штрихкодов; в кассе они выделены значком типа.
-  const svAndKits = [...SERVICES, ...KITS].map((p) => {
+  const svAndKits = [...SERVICES, ...KITS, ...DISHES].map((p) => {
     const prices = {}
     for (const t of PRICE_TYPE_SEED) prices[t.id] = Math.round(p.price * t.factor)
     return { ...p, prices, warehouseId: 'wh1' }

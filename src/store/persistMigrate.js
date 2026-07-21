@@ -144,6 +144,16 @@ export function persistMigrate(state, version) {
     state.employees = (state.employees || []).map((e) => e)
   }
 
+  if (version < 12) {
+    // Модификаторы блюд: у товара новое поле `modifierGroups: []`.
+    // Если пусто — товар работает как обычно; если непустой массив —
+    // касса открывает модалку выбора модификаторов при добавлении.
+    state.products = (state.products || []).map((p) => ({
+      ...p,
+      modifierGroups: p.modifierGroups || [],
+    }))
+  }
+
   return state
 }
 
