@@ -57,7 +57,15 @@ export default function Orders() {
   const authUserId = useStore((s) => s.authUserId)
   const [params, setParams] = useSearchParams()
   const nav = useNavigate()
-  const [filter, setFilter] = useState('all')
+  // Начальный фильтр можно задать через URL: /orders?filter=new — так
+  // NAV-пункт «Заявки клиентов» ведёт на предфильтрованный список.
+  const initialFilter = params.get('filter') || 'all'
+  const [filter, setFilter] = useState(initialFilter)
+  useEffect(() => {
+    const f = params.get('filter')
+    if (f && f !== filter) setFilter(f)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params])
   const [q, setQ] = useState('')
 
   // курьер видит только назначенные ему заказы

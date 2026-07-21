@@ -67,6 +67,10 @@ export const NAV = [
     key: 'sales',
     items: [
       { to: '/orders', label: 'Заказы', icon: ClipboardList, perm: 'orders' },
+      // «Заявки клиентов» = преднастроенный фильтр на Orders (status='new').
+      // Отдельный NAV-пункт, чтобы менеджер сразу видел, что просят
+      // подтвердить/собрать.
+      { to: '/orders?filter=new', label: 'Заявки клиентов', icon: ClipboardList, perm: 'orders' },
       { to: '/delivery', label: 'Доставка', icon: Navigation, perm: 'delivery' },
     ],
   },
