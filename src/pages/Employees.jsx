@@ -253,6 +253,7 @@ function TeamMembers({ companyId }) {
   const [members, setMembers] = useState([])
   const [busy, setBusy] = useState(null) // { userId, action }
   const [msg, setMsg] = useState(null)
+  const confirm = useConfirm()
 
   const refresh = () => loadMembers().then(setMembers).catch(() => {})
   useEffect(() => {
@@ -270,7 +271,13 @@ function TeamMembers({ companyId }) {
   }
 
   const remove = async (m) => {
-    if (!window.confirm(`Удалить «${m.name || m.email}» из компании?`)) return
+    const ok = await confirm({
+      title: `Удалить «${m.name || m.email}» из компании?`,
+      body: 'Пользователь потеряет доступ к данным компании. Если это последний админ, сервер откажет.',
+      tone: 'danger',
+      okLabel: 'Удалить участника',
+    })
+    if (!ok) return
     setBusy({ userId: m.user_id, action: 'remove' })
     setMsg(null)
     const r = await removeMember(m.user_id, companyId)
