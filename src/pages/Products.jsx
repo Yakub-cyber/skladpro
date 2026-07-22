@@ -28,6 +28,7 @@ import {
   ScanLine,
   Camera,
   SlidersHorizontal,
+  Trash2,
 } from 'lucide-react'
 import { compressImage } from '../lib/image'
 import {
@@ -43,7 +44,7 @@ import {
   cx,
 } from '../components/ui'
 import { useStore } from '../store/useStore'
-import { money, num } from '../lib/format'
+import { money, num, plural } from '../lib/format'
 import { CATEGORIES, catInfo, PRODUCT_TYPES, isService, isKit, isRealProduct } from '../lib/constants'
 import { computeKitStock } from '../lib/kit'
 import { CELLS } from '../store/seed'
@@ -82,6 +83,7 @@ const EMPTY_FILTERS = {
 export default function Products() {
   const products = useStore((s) => s.products)
   const orders = useStore((s) => s.orders)
+  const removeProduct = useStore((s) => s.removeProduct)
   const reserved = useMemo(() => reservedByProduct(orders), [orders])
   const [params] = useSearchParams()
   const [q, setQ] = useState(params.get('q') || '')
@@ -92,6 +94,24 @@ export default function Products() {
   const [showLabels, setShowLabels] = useState(false)
   const [filters, setFilters] = useState(EMPTY_FILTERS)
   const [filtersOpen, setFiltersOpen] = useState(false)
+  // Bulk-select: множество id выбранных товаров. При выборе появляется
+  // sticky-тулбар с массовыми действиями (печать этикеток, удалить).
+  const [selected, setSelected] = useState(() => new Set())
+  const confirm = useConfirm()
+  const toggleOne = (id) => setSelected((prev) => {
+    const next = new Set(prev)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    return next
+  })
+  const clearSelection = () => setSelected(new Set())
+  // ESC — снять выбор. Не мешает Modal (у той свой listener).
+  useEffect(() => {
+    if (selected.size === 0) return
+    const onKey = (e) => e.key === 'Escape' && clearSelection()
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [selected.size])
 
   // Число активных фильтров — для бейджа рядом с кнопкой «Фильтр».
   const activeFiltersCount = useMemo(() => {
@@ -359,12 +379,82 @@ export default function Products() {
         )}
       </div>
 
+      {/* Sticky-тулбар при выделении. Всплывает сверху с массовыми
+          действиями. Тёмный цвет — чтобы контрастировал с обычной таблицей. */}
+      {selected.size > 0 && (
+        <div className="sticky top-16 z-10 -mx-4 lg:-mx-6 px-4 lg:px-6 mb-3">
+          <div className="rounded-xl bg-ink text-white shadow-xl shadow-ink/20 flex items-center gap-3 px-4 py-2.5 animate-fadeUp">
+            <div className="h-5 w-5 rounded bg-brand grid place-items-center shrink-0">
+              <Check size={13} strokeWidth={3} />
+            </div>
+            <span className="text-[13px] font-semibold">
+              Выбрано {selected.size} {plural(selected.size, 'товар', 'товара', 'товаров')}
+            </span>
+            <div className="h-5 w-px bg-white/15 mx-1" />
+            <button
+              onClick={() => {
+                const chosen = shown.filter((p) => selected.has(p.id)).map((p) => ({ p, qty: 1 }))
+                if (chosen.length) printLabels(chosen)
+              }}
+              className="flex items-center gap-1.5 h-8 px-3 rounded-lg bg-white/10 hover:bg-white/20 text-[12.5px] font-semibold transition"
+            >
+              <Tags size={14} /> Печать этикеток
+            </button>
+            <button
+              onClick={async () => {
+                const chosen = shown.filter((p) => selected.has(p.id))
+                const ok = await confirm({
+                  title: `Удалить ${chosen.length} ${plural(chosen.length, 'товар', 'товара', 'товаров')}?`,
+                  body: 'Товары пропадут из каталога. История продаж и остатки в закрытых документах сохранятся.',
+                  details: chosen.length > 3
+                    ? `${chosen.slice(0, 3).map((p) => p.name).join(' · ')} и ещё ${chosen.length - 3}`
+                    : chosen.map((p) => p.name).join(' · '),
+                  tone: 'danger',
+                  okLabel: `Удалить ${chosen.length}`,
+                  requireInput: chosen.length >= 5 ? 'УДАЛИТЬ' : undefined,
+                })
+                if (ok) {
+                  chosen.forEach((p) => removeProduct(p.id))
+                  clearSelection()
+                }
+              }}
+              className="flex items-center gap-1.5 h-8 px-3 rounded-lg bg-bad text-white hover:brightness-110 text-[12.5px] font-semibold transition"
+            >
+              <Trash2 size={14} /> Удалить
+            </button>
+            <span className="ml-auto text-[11px] text-white/60 hidden sm:inline">ESC — снять выбор</span>
+            <button
+              onClick={clearSelection}
+              className="h-7 w-7 grid place-items-center rounded-md hover:bg-white/10"
+              title="Снять выбор"
+            >
+              <X size={15} />
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Десктопная таблица */}
       <Card className="overflow-hidden hidden lg:block">
         <div>
           <table className="w-full text-sm">
             <thead>
               <tr className="text-muted text-[12px] text-left border-b border-line bg-surface-2/40">
+                <th className="font-medium py-3 pl-4 pr-2 w-8">
+                  <input
+                    type="checkbox"
+                    checked={shown.length > 0 && shown.every((p) => selected.has(p.id))}
+                    ref={(el) => {
+                      if (el) el.indeterminate = selected.size > 0 && !shown.every((p) => selected.has(p.id))
+                    }}
+                    onChange={(e) => {
+                      if (e.target.checked) setSelected(new Set(shown.map((p) => p.id)))
+                      else clearSelection()
+                    }}
+                    className="h-4 w-4 rounded cursor-pointer accent-brand"
+                    aria-label="Выделить все"
+                  />
+                </th>
                 <th className="font-medium py-3 px-4">Товар</th>
                 <th className="font-medium py-3 px-3 hidden xl:table-cell">Категория</th>
                 <th className="font-medium py-3 px-3 hidden xl:table-cell">Ячейка</th>
@@ -384,9 +474,21 @@ export default function Products() {
                 return (
                   <tr
                     key={p.id}
-                    className="hover:bg-surface-2/50 transition cursor-pointer"
+                    className={cx(
+                      'hover:bg-surface-2/50 transition cursor-pointer',
+                      selected.has(p.id) && 'bg-brand-soft/40',
+                    )}
                     onClick={() => setEdit(p)}
                   >
+                    <td className="py-2.5 pl-4 pr-2" onClick={(e) => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        checked={selected.has(p.id)}
+                        onChange={() => toggleOne(p.id)}
+                        className="h-4 w-4 rounded cursor-pointer accent-brand"
+                        aria-label={`Выделить ${p.name}`}
+                      />
+                    </td>
                     <td className="py-2.5 px-4">
                       <div className="flex items-center gap-3">
                         {p.image ? (
