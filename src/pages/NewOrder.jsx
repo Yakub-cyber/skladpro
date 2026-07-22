@@ -608,6 +608,58 @@ export default function NewOrder() {
   const [msg, setMsg] = useState('')
   const [mobileCart, setMobileCart] = useState(false) // bottom-sheet чека
   const [payOpen, setPayOpen] = useState(false) // модалка выбора способа оплаты
+  const [savedAt, setSavedAt] = useState(0) // время последнего автосейва (для UI-статуса)
+
+  // ── Автосейв корзины ─────────────────────────────────────────────────
+  // На /orders/new частая ситуация: кассир пробивает 100 позиций опт-клиенту,
+  // случайно закрыл вкладку / зашёл в клиента / открыл другой заказ. Без
+  // автосейва — всё с нуля. Сохраняем черновик в localStorage при каждом
+  // изменении и восстанавливаем при возврате.
+  const DRAFT_KEY = 'sklad.newOrder.draft'
+  const DRAFT_TTL_MS = 6 * 60 * 60 * 1000 // 6 часов — типичная смена
+  const restoredRef = useRef(false)
+  // Восстановление один раз на mount. Если черновик просрочен — игнорируем.
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(DRAFT_KEY)
+      if (!raw) { restoredRef.current = true; return }
+      const d = JSON.parse(raw)
+      if (!d?.at || Date.now() - d.at > DRAFT_TTL_MS) {
+        localStorage.removeItem(DRAFT_KEY)
+        restoredRef.current = true
+        return
+      }
+      if (d.customerId) setCustomerId(d.customerId)
+      if (d.priceTypeId) setPriceTypeId(d.priceTypeId)
+      if (Array.isArray(d.rows) && d.rows.length) setRows(d.rows)
+      if (typeof d.discount === 'number') setDiscount(d.discount)
+      if (typeof d.onCredit === 'boolean') setOnCredit(d.onCredit)
+      setSavedAt(d.at)
+    } catch {}
+    restoredRef.current = true
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  // Сохранение при каждом изменении полей чека. Дебаунс 400мс, чтобы не
+  // писать в localStorage на каждый keystroke qty.
+  useEffect(() => {
+    if (!restoredRef.current) return
+    if (!rows.length && !customerId && !discount) {
+      // Пустой чек — стираем черновик, чтобы «Очистить» не оставлял хвост.
+      localStorage.removeItem(DRAFT_KEY)
+      setSavedAt(0)
+      return
+    }
+    const t = setTimeout(() => {
+      try {
+        const at = Date.now()
+        localStorage.setItem(DRAFT_KEY, JSON.stringify({
+          customerId, priceTypeId, rows, discount, onCredit, at,
+        }))
+        setSavedAt(at)
+      } catch {}
+    }, 400)
+    return () => clearTimeout(t)
+  }, [rows, customerId, priceTypeId, discount, onCredit])
 
   const isCreditType = (id) =>
     priceTypes.find((t) => t.id === id)?.name.toLowerCase().includes('долг')
@@ -739,6 +791,9 @@ export default function NewOrder() {
       courier: 'Самовывоз',
     })
     const fresh = useStore.getState().orders[0]
+    // Заказ создан — черновик больше не нужен, чтобы возврат на /orders/new
+    // не восстанавливал уже проведённый чек.
+    try { localStorage.removeItem(DRAFT_KEY) } catch {}
     setPayOpen(false)
     setMobileCart(false)
     nav(`/orders?id=${fresh.id}`)
@@ -788,12 +843,21 @@ export default function NewOrder() {
     <div className="animate-fadeUp pb-24 lg:pb-0">
       <div className="flex items-center gap-3 mb-4">
         <Button variant="ghost" size="icon" icon={ArrowLeft} onClick={() => nav('/orders')} />
-        <div>
+        <div className="min-w-0 flex-1">
           <h2 className="text-xl font-semibold tracking-tight">Новый заказ</h2>
           <p className="text-sm text-muted hidden sm:block">
             Касса: ищите или сканируйте товар — он попадёт в чек.
           </p>
         </div>
+        {savedAt > 0 && rows.length > 0 && (
+          <span
+            className="hidden sm:inline-flex items-center gap-1.5 px-2.5 h-7 rounded-md bg-ok-soft text-ok text-[11.5px] font-semibold"
+            title={`Черновик сохранён ${new Date(savedAt).toLocaleTimeString('ru-RU')}`}
+          >
+            <span className="w-1.5 h-1.5 rounded-full bg-ok" />
+            Черновик сохранён
+          </span>
+        )}
       </div>
 
       <div className="grid lg:grid-cols-[1fr_380px] gap-5 items-start">
