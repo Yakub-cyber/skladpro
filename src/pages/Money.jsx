@@ -15,6 +15,7 @@ import {
   Building2,
 } from 'lucide-react'
 import { Card, Button, Badge, Field, Input, Select, Modal, Empty, cx } from '../components/ui'
+import { useConfirm } from '../components/Confirm'
 import { useStore } from '../store/useStore'
 import { money, num } from '../lib/format'
 import { accountBalances, MONEY_PURPOSES, purposeLabel } from '../lib/money'
@@ -202,6 +203,17 @@ export default function Money() {
 }
 
 function TxRow({ tx, accounts, customers, suppliers, onCancel }) {
+  const confirm = useConfirm()
+  const askCancel = async () => {
+    const ok = await confirm({
+      title: `Отменить транзакцию ${tx.no}?`,
+      body: 'Баланс счёта пересчитается автоматически. Историю запись сохранит со статусом «отменено».',
+      tone: 'warning',
+      okLabel: 'Отменить транзакцию',
+      cancelLabel: 'Оставить',
+    })
+    if (ok) onCancel()
+  }
   const acc = accounts.find((a) => a.id === tx.accountId)
   const toAcc = accounts.find((a) => a.id === tx.toAccountId)
   const cust = customers.find((c) => c.id === tx.customerId)
@@ -263,10 +275,7 @@ function TxRow({ tx, accounts, customers, suppliers, onCancel }) {
       </div>
       {!cancelled && (
         <button
-          onClick={() => {
-            if (confirm('Отменить транзакцию? Баланс счёта пересчитается.'))
-              onCancel()
-          }}
+          onClick={askCancel}
           className="text-muted hover:text-bad p-1.5"
           title="Отменить"
         >

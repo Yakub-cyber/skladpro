@@ -4,6 +4,7 @@
 import { useState } from 'react'
 import { Ban, Check, FileText, Printer, Trash2 } from 'lucide-react'
 import { Card, Button, Badge, Empty, cx } from '../../components/ui'
+import { useConfirm } from '../../components/Confirm'
 import { useStore } from '../../store/useStore'
 import { num, relTime } from '../../lib/format'
 import { docTypeInfo, DOC_STATUS } from '../../lib/constants'
@@ -56,6 +57,27 @@ export default function DocumentsTab() {
   const removeDocument = useStore((s) => s.removeDocument)
   const [filter, setFilter] = useState('all')
   const nameOf = (id) => employees.find((e) => e.id === id)?.name || 'Система'
+  const confirm = useConfirm()
+  const askCancel = async (d) => {
+    const ti = docTypeInfo(d.type)
+    const ok = await confirm({
+      title: `Отменить документ ${d.no}?`,
+      body: `${ti.label} будет отменён, остатки откатятся к состоянию «до проведения».`,
+      tone: 'warning',
+      okLabel: 'Отменить документ',
+      cancelLabel: 'Оставить',
+    })
+    if (ok) cancelDocument(d.id)
+  }
+  const askRemove = async (d) => {
+    const ok = await confirm({
+      title: `Удалить документ ${d.no}?`,
+      body: 'Документ удалится безвозвратно. Только для черновиков и отменённых.',
+      tone: 'danger',
+      okLabel: 'Удалить',
+    })
+    if (ok) removeDocument(d.id)
+  }
 
   const list = filter === 'all' ? documents : documents.filter((d) => d.status === filter)
 
@@ -120,7 +142,7 @@ export default function DocumentsTab() {
                       </Button>
                     )}
                     {d.status === 'posted' && (
-                      <Button size="sm" variant="ghost" icon={Ban} onClick={() => cancelDocument(d.id)}>
+                      <Button size="sm" variant="ghost" icon={Ban} onClick={() => askCancel(d)}>
                         Отменить
                       </Button>
                     )}
@@ -128,7 +150,7 @@ export default function DocumentsTab() {
                       Печать
                     </Button>
                     {d.status !== 'posted' && (
-                      <Button size="sm" variant="ghost" icon={Trash2} onClick={() => removeDocument(d.id)} />
+                      <Button size="sm" variant="ghost" icon={Trash2} onClick={() => askRemove(d)} />
                     )}
                   </div>
                 </div>

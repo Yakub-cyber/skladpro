@@ -18,12 +18,14 @@ import {
   Loader2,
 } from 'lucide-react'
 import { Section, Button, Field, Input, Select, Badge, cx } from '../components/ui'
+import { useConfirm } from '../components/Confirm'
 import { useStore } from '../store/useStore'
 import { askLLM, aiConfig, aiEnabled, AI_MODELS, ENV_AI_KEY } from '../lib/ai'
 import { changePassword } from '../lib/cloud'
 
 export default function Settings() {
   const { settings, updateSettings, resetDemo, cloud, companyName } = useStore()
+  const confirm = useConfirm()
   const [saved, setSaved] = useState(false)
   const [aiTest, setAiTest] = useState(null) // null | 'loading' | {ok, msg}
 
@@ -67,10 +69,16 @@ export default function Settings() {
     URL.revokeObjectURL(url)
   }
 
-  const reset = () => {
-    if (confirm('Сбросить все данные и вернуть демо-набор? Текущие изменения будут удалены.')) {
-      resetDemo()
-    }
+  const reset = async () => {
+    const ok = await confirm({
+      title: 'Сбросить все данные?',
+      body: 'Текущие товары, заказы, клиенты, документы и настройки будут стёрты. Вернётся демо-набор.',
+      details: 'Действие безвозвратно. Сделайте бэкап через «Скачать резервную копию», если он вам ещё пригодится.',
+      tone: 'danger',
+      okLabel: 'Сбросить',
+      requireInput: 'СБРОСИТЬ',
+    })
+    if (ok) resetDemo()
   }
 
   return (
@@ -364,6 +372,16 @@ function RequisitesSection() {
 function PriceTypesSection() {
   const { priceTypes, addPriceType, updatePriceType, removePriceType, setDefaultPriceType } =
     useStore()
+  const confirm = useConfirm()
+  const askRemove = async (t) => {
+    const ok = await confirm({
+      title: `Удалить тип цены «${t.name}»?`,
+      body: 'У товаров, где для этого типа задана цена, значение перестанет отображаться. Восстановить нельзя.',
+      tone: 'danger',
+      okLabel: 'Удалить',
+    })
+    if (ok) removePriceType(t.id)
+  }
   const [name, setName] = useState('')
 
   return (
@@ -397,7 +415,7 @@ function PriceTypesSection() {
             </button>
             {!t.default && (
               <button
-                onClick={() => removePriceType(t.id)}
+                onClick={() => askRemove(t)}
                 className="h-8 w-8 grid place-items-center rounded-lg text-muted hover:text-bad shrink-0"
               >
                 <Trash2 size={15} />

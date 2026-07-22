@@ -26,6 +26,7 @@ import {
   cx,
 } from '../components/ui'
 import { useStore } from '../store/useStore'
+import { useConfirm } from '../components/Confirm'
 import { money, num } from '../lib/format'
 
 const STATUS_INFO = {
@@ -54,6 +55,25 @@ export default function PurchaseOrders() {
   const receivePurchaseOrder = useStore((s) => s.receivePurchaseOrder)
   const cancelPurchaseOrder = useStore((s) => s.cancelPurchaseOrder)
   const removePurchaseOrder = useStore((s) => s.removePurchaseOrder)
+  const confirm = useConfirm()
+  const askCancelPO = async (p) => {
+    const ok = await confirm({
+      title: `Отменить заказ поставщику ${p.no}?`,
+      body: 'Заказ помечается отменённым. На остатки товаров это не влияет.',
+      tone: 'warning',
+      okLabel: 'Отменить заказ',
+    })
+    if (ok) cancelPurchaseOrder(p.id)
+  }
+  const askRemovePO = async (p) => {
+    const ok = await confirm({
+      title: `Удалить заказ ${p.no}?`,
+      body: 'Действие необратимо — восстановить будет нельзя.',
+      tone: 'danger',
+      okLabel: 'Удалить',
+    })
+    if (ok) removePurchaseOrder(p.id)
+  }
 
   const [modal, setModal] = useState(null) // null | { id? }
   const [filter, setFilter] = useState('all')
@@ -160,14 +180,8 @@ export default function PurchaseOrders() {
                 onEdit={() => setModal({ id: p.id })}
                 onSend={() => sendPurchaseOrder(p.id)}
                 onReceive={() => onReceive(p)}
-                onCancel={() => {
-                  if (confirm(`Отменить заказ ${p.no}?`))
-                    cancelPurchaseOrder(p.id)
-                }}
-                onDelete={() => {
-                  if (confirm(`Удалить заказ ${p.no}? (безвозвратно)`))
-                    removePurchaseOrder(p.id)
-                }}
+                onCancel={() => askCancelPO(p)}
+                onDelete={() => askRemovePO(p)}
               />
             ))}
           </div>

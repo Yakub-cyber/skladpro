@@ -61,6 +61,7 @@ import { downloadCsv } from '../lib/export'
 import { reservedByProduct } from '../lib/orders'
 import { generateEan13 } from '../lib/barcode'
 import ScannerInput from '../components/ScannerInput'
+import { useConfirm } from '../components/Confirm'
 
 const CAT_ICON = { Wrench, Hammer, Zap, Droplets, PaintBucket, Package }
 
@@ -833,6 +834,19 @@ function Chip({ active, onClick, children }) {
 
 function ProductModal({ product, onClose }) {
   const { addProduct, updateProduct, adjustStock, removeProduct, priceTypes, products: allProducts } = useStore()
+  const confirm = useConfirm()
+  const handleRemove = async () => {
+    const ok = await confirm({
+      title: `Удалить «${product.name}»?`,
+      body: 'Товар пропадёт из каталога. История продаж и остатки в закрытых документах сохранятся.',
+      tone: 'danger',
+      okLabel: 'Удалить',
+    })
+    if (ok) {
+      removeProduct(product.id)
+      onClose()
+    }
+  }
   const isNew = !product
   const [f, setF] = useState(
     product || {
@@ -888,10 +902,7 @@ function ProductModal({ product, onClose }) {
             <Button
               variant="ghost"
               className="text-bad mr-auto"
-              onClick={() => {
-                removeProduct(product.id)
-                onClose()
-              }}
+              onClick={handleRemove}
             >
               Удалить
             </Button>
