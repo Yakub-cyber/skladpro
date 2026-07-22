@@ -111,7 +111,7 @@ export default function Customers() {
               <div className="flex items-center gap-3">
                 <Avatar name={c.name} color={tier.color} />
                 <div className="min-w-0 flex-1">
-                  <div className="font-medium truncate">{c.name}</div>
+                  <div className="font-medium truncate" style={{ maxWidth: '100%' }}>{c.name}</div>
                   <div className="text-[12px] text-muted flex items-center gap-1">
                     <MapPin size={11} /> {c.city} · {c.type}
                   </div>
