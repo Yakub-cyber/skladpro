@@ -106,7 +106,8 @@ export default function Customers() {
             <button
               key={c.id}
               onClick={() => setParams({ id: c.id })}
-              className="card p-4 text-left hover:border-brand/40 transition"
+              className="card p-4 text-left hover:border-brand/40 transition truncate"
+              style={{ maxWidth: '100%' }}
             >
               <div className="flex items-center gap-3">
                 <Avatar name={c.name} color={tier.color} />
