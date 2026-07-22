@@ -29,6 +29,8 @@ import { money, num, dateShort, plural } from '../lib/format'
 import { analyticsInsights, soldByProduct } from '../lib/ai'
 import { reservedByProduct, availableStock } from '../lib/orders'
 import { catInfo } from '../lib/constants'
+import DashboardStock from './DashboardStock'
+import DashboardCourier from './DashboardCourier'
 
 const INSIGHT_ICON = { PackageMinus, TrendingDown, Flame, Snowflake }
 const SEV = {
@@ -57,7 +59,20 @@ const METRICS = [
   { key: 'avg', label: 'Средний чек', color: '#8b5cf6', axis: 'right' },
 ]
 
+// Дашборд-router: по роли текущего сотрудника рендерит нужный вариант.
+// Менеджер/админ — DashboardManager (финансы, KPI, аналитика). Кладовщик —
+// DashboardStock (приёмка, сборка, ниже минимума). Курьер — DashboardCourier
+// (прогресс маршрута + следующая точка).
 export default function Dashboard() {
+  const employees = useStore((s) => s.employees) || []
+  const authUserId = useStore((s) => s.authUserId)
+  const me = employees.find((e) => e.id === authUserId)
+  if (me?.role === 'stock') return <DashboardStock />
+  if (me?.role === 'courier') return <DashboardCourier />
+  return <DashboardManager />
+}
+
+function DashboardManager() {
   const { products, orders, customers } = useStore()
   const [period, setPeriod] = useState('month')
   // Активные метрики графика (клик по чипу — тумблер). Default: все 4.

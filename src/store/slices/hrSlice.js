@@ -65,13 +65,13 @@ export const createHrSlice = (set, get) => ({
         employees: s.employees.map((x) => (x.id === id ? { ...x, pin: h } : x)),
       }))
     }
-    set({ authUserId: e.id })
+    set({ authUserId: e.id, authAt: Date.now() })
     get().logAction('Вход в систему', { section: 'Авторизация', type: 'login' })
     return { ok: true }
   },
 
   logout: () => {
     get().logAction('Выход из системы', { section: 'Авторизация', type: 'logout' })
-    set({ authUserId: null })
+    set({ authUserId: null, authAt: null })
   },
 })
