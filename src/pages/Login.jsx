@@ -149,7 +149,12 @@ function PinLogin() {
 
   // авто-проверка при вводе 4 цифр (login асинхронный: хэшируем PIN)
   useEffect(() => {
-    if (!(sel && pin.length === 4)) return
+    if (!sel) return
+    if (pin.length === 0) {
+      setError('Введите PIN')
+      return
+    }
+    if (pin.length !== 4) return
     let cancelled = false
     ;(async () => {
       const res = await login(sel, pin)
