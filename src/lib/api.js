@@ -212,6 +212,20 @@ export function apiMarkCodes(productId, body, idemKey) {
 	return apiFetch('POST', `/v1/products/${encodeURIComponent(productId)}/mark-codes`, body, withIdem(idemKey))
 }
 
+// ── Support (AI-суппорт) ─────────────────────────────────────────────────────
+// Клиент отправляет жалобу; бэкенд сохраняет тикет и (если настроен n8n) шлёт
+// пайплайну, который зовёт Claude → открывает PR → шлёт нам Telegram-уведомление.
+export function apiCreateSupportTicket(payload) {
+	return apiFetch('POST', '/v1/support/tickets', payload)
+}
+export function apiListSupportTickets({ mine = true, limit = 20, offset = 0 } = {}) {
+	const qs = new URLSearchParams({ mine: mine ? 'true' : 'false', limit: String(limit), offset: String(offset) })
+	return apiFetch('GET', `/v1/support/tickets?${qs.toString()}`)
+}
+export function apiGetSupportTicket(id) {
+	return apiFetch('GET', `/v1/support/tickets/${encodeURIComponent(id)}`)
+}
+
 // Password reset — эндпоинты не требуют авторизации.
 // Realtime подписка на события компании через Server-Sent Events.
 // Возвращает функцию отписки. Автопереподключение при разрыве.

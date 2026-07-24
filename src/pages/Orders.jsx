@@ -30,6 +30,7 @@ import {
   cx,
 } from '../components/ui'
 import WarehouseMap from '../components/WarehouseMap'
+import { useConfirm } from '../components/Confirm'
 import { useStore } from '../store/useStore'
 import { money, dateTime, dateShort, plural, num } from '../lib/format'
 import {
@@ -232,8 +233,19 @@ export default function Orders() {
 
 function OrderDetail({ order }) {
   const nav = useNavigate()
+  const confirm = useConfirm()
   const advance = useStore((s) => s.advanceOrder)
   const cancel = useStore((s) => s.cancelOrder)
+  const handleCancel = async () => {
+    const ok = await confirm({
+      title: `Отменить заказ ${order.no || '#' + order.id.slice(-4)}?`,
+      body: 'Резерв возвращается на склад, клиенту уйдёт уведомление (если настроено). Действие можно повторить, только пересоздав заказ.',
+      tone: 'warning',
+      okLabel: 'Отменить заказ',
+      cancelLabel: 'Не отменять',
+    })
+    if (ok) cancel(order.id)
+  }
   const assignCourier = useStore((s) => s.assignCourier)
   const employees = useStore((s) => s.employees)
   const authUserId = useStore((s) => s.authUserId)
@@ -367,7 +379,7 @@ function OrderDetail({ order }) {
               variant="ghost"
               icon={X}
               className="text-bad"
-              onClick={() => cancel(order.id)}
+              onClick={handleCancel}
             >
               Отменить
             </Button>

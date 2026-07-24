@@ -13,6 +13,7 @@ import {
   Empty,
   cx,
 } from '../components/ui'
+import { useConfirm } from '../components/Confirm'
 import { useStore } from '../store/useStore'
 import { ROLES, roleInfo } from '../lib/constants'
 import { NAV } from '../components/Layout'
@@ -27,11 +28,21 @@ const PERM_LABEL = NAV.reduce((m, n) => {
 export default function Employees() {
   const { employees, authUserId, updateEmployee, removeEmployee, cloud, companyId } = useStore()
   const [adding, setAdding] = useState(false)
+  const confirm = useConfirm()
 
   const changePin = (e) => {
     const pin = window.prompt(`Новый PIN для «${e.name}» (4 цифры)`, e.pin || '')
     if (pin && /^\d{4}$/.test(pin)) updateEmployee(e.id, { pin })
     else if (pin != null) alert('PIN должен состоять из 4 цифр')
+  }
+  const askRemove = async (e) => {
+    const ok = await confirm({
+      title: `Удалить сотрудника «${e.name}»?`,
+      body: 'Учётная запись пропадёт из списка. Записи, где сотрудник указан автором, сохранятся с прежним именем.',
+      tone: 'danger',
+      okLabel: 'Удалить',
+    })
+    if (ok) removeEmployee(e.id)
   }
 
   return (
@@ -154,7 +165,7 @@ export default function Employees() {
                         </button>
                         {!isMe && employees.length > 1 && (
                           <button
-                            onClick={() => removeEmployee(e.id)}
+                            onClick={() => askRemove(e)}
                             className="h-8 w-8 grid place-items-center rounded-lg text-muted hover:text-bad hover:bg-surface-2"
                           >
                             <Trash2 size={16} />
@@ -242,6 +253,7 @@ function TeamMembers({ companyId }) {
   const [members, setMembers] = useState([])
   const [busy, setBusy] = useState(null) // { userId, action }
   const [msg, setMsg] = useState(null)
+  const confirm = useConfirm()
 
   const refresh = () => loadMembers().then(setMembers).catch(() => {})
   useEffect(() => {
@@ -259,7 +271,13 @@ function TeamMembers({ companyId }) {
   }
 
   const remove = async (m) => {
-    if (!window.confirm(`Удалить «${m.name || m.email}» из компании?`)) return
+    const ok = await confirm({
+      title: `Удалить «${m.name || m.email}» из компании?`,
+      body: 'Пользователь потеряет доступ к данным компании. Если это последний админ, сервер откажет.',
+      tone: 'danger',
+      okLabel: 'Удалить участника',
+    })
+    if (!ok) return
     setBusy({ userId: m.user_id, action: 'remove' })
     setMsg(null)
     const r = await removeMember(m.user_id, companyId)
