@@ -31,9 +31,23 @@ export default function Employees() {
   const confirm = useConfirm()
 
   const changePin = (e) => {
-    const pin = window.prompt(`Новый PIN для «${e.name}» (4 цифры)`, e.pin || '')
-    if (pin && /^\d{4}$/.test(pin)) updateEmployee(e.id, { pin })
-    else if (pin != null) alert('PIN должен состоять из 4 цифр')
+    // Prompt БЕЗ дефолтного значения: раньше сюда подставлялся текущий
+    // PIN (в новых версиях — 64-символьный хэш). Пользователь стирал
+    // непонятную строку, нажимал OK — PIN становился пустым, и админ
+    // терял доступ навсегда (verifyPin('', '') === false для любого
+    // ввода). Пустой ввод здесь тоже игнорируем — не пишем в стор.
+    const pin = window.prompt(`Новый PIN для «${e.name}» — 4 цифры`)
+    if (pin == null) return // отмена — не трогаем
+    const trimmed = pin.trim()
+    if (!trimmed) {
+      alert('PIN не задан. Ничего не меняем — старый PIN остался в силе.')
+      return
+    }
+    if (!/^\d{4}$/.test(trimmed)) {
+      alert('PIN должен состоять ровно из 4 цифр.')
+      return
+    }
+    updateEmployee(e.id, { pin: trimmed })
   }
   const askRemove = async (e) => {
     const ok = await confirm({

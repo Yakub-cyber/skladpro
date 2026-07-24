@@ -122,6 +122,58 @@ describe('addEmployee / updateEmployee — PIN хэшируется', () => {
     expect(after.pin).toBe(before)
     expect(after.role).toBe('admin')
   })
+
+  it('updateEmployee с пустой pin строкой НЕ затирает существующий PIN', async () => {
+    // Регрессия: раньше при patch { pin: '' } (случайное сохранение
+    // пустого prompt) PIN админа обнулялся и войти становилось нельзя.
+    // Теперь пустое поле игнорируется — старый хэш остаётся.
+    await state().updateEmployee('e1', { pin: '1234' })
+    const before = state().employees.find((e) => e.id === 'e1').pin
+    await state().updateEmployee('e1', { pin: '' })
+    const after = state().employees.find((e) => e.id === 'e1').pin
+    expect(after).toBe(before)
+    expect(after).toMatch(/^[0-9a-f]{64}$/)
+  })
+})
+
+describe('login — восстановление при пустом PIN', () => {
+  // Аккаунт-lockout: у сотрудника e.pin === '' (случайно стёрли в
+  // Employees). Обычный verifyPin вернёт ok:false для любого ввода,
+  // и войти будет нельзя. Восстановление: разрешить разовый вход по
+  // любому валидному 4-знач. PIN, тут же сохранить его как новый.
+  it('вход при пустом PIN с валидным 4-знач. значением → recovered:true и PIN сохранён', async () => {
+    useStore.setState((s) => ({
+      employees: s.employees.map((e) =>
+        e.id === 'e1' ? { ...e, pin: '' } : e,
+      ),
+    }))
+    const r = await state().login('e1', '9999')
+    expect(r.ok).toBe(true)
+    expect(r.recovered).toBe(true)
+    expect(state().authUserId).toBe('e1')
+    // PIN сохранён как хэш, повторный вход с ним работает
+    const stored = state().employees.find((e) => e.id === 'e1').pin
+    expect(stored).toBe(await hashPin('9999'))
+    state().logout()
+    const r2 = await state().login('e1', '9999')
+    expect(r2.ok).toBe(true)
+  })
+
+  it('вход при пустом PIN с невалидным вводом (не 4 цифры) → ok:false', async () => {
+    useStore.setState((s) => ({
+      employees: s.employees.map((e) =>
+        e.id === 'e1' ? { ...e, pin: '' } : e,
+      ),
+    }))
+    // 3 цифры
+    expect((await state().login('e1', '123')).ok).toBe(false)
+    // буквы
+    expect((await state().login('e1', 'abcd')).ok).toBe(false)
+    // пусто
+    expect((await state().login('e1', '')).ok).toBe(false)
+    // authUserId не менялся
+    expect(state().authUserId).toBeNull()
+  })
 })
 
 describe('addOrder — резервирование остатка', () => {

@@ -19,7 +19,15 @@ export const createHrSlice = (set, get) => ({
 
   updateEmployee: async (id, patch) => {
     const next = { ...patch }
-    if ('pin' in next) next.pin = next.pin ? await hashPin(next.pin) : ''
+    // Защита от аккаунт-lockout: если в patch пришёл пустой pin (форма
+    // не заполнена или пользователь очистил prompt), НЕ затираем PIN —
+    // просто игнорируем поле. Смена PIN должна быть явной: 4-значное
+    // значение. Иначе легко потерять доступ к учётной записи, а войти
+    // без PIN нельзя (verifyPin вернёт ok:false).
+    if ('pin' in next) {
+      if (next.pin) next.pin = await hashPin(next.pin)
+      else delete next.pin
+    }
 
     // Если меняется РОЛЬ сотрудника, привязанного к аккаунту Supabase
     // (authUid есть), синхронно правим и `memberships.role`. Иначе RLS
@@ -57,6 +65,26 @@ export const createHrSlice = (set, get) => ({
     const e = get().employees.find((x) => x.id === id)
     if (!e) return { ok: false, error: 'Сотрудник не найден' }
     if (!e.active) return { ok: false, error: 'Учётная запись отключена' }
+    // Восстановление: если у сотрудника нет заданного PIN (например,
+    // случайно стёрли в форме), разрешаем разовый вход по любому 4-знач.
+    // значению и сразу сохраняем его как новый PIN. Иначе аккаунт с
+    // e.pin === '' полностью залочен: verifyPin вернёт ok:false, войти
+    // невозможно, никто уже не задаст новый PIN изнутри. Небезопасно для
+    // публичного продакшна, но для многотенантного демо это единственный
+    // способ восстановиться без прямой правки БД.
+    if (!e.pin && /^\d{4}$/.test(String(pin || ''))) {
+      const h = await hashPin(pin)
+      set((s) => ({
+        employees: s.employees.map((x) => (x.id === id ? { ...x, pin: h } : x)),
+        authUserId: e.id,
+        authAt: Date.now(),
+      }))
+      get().logAction('PIN восстановлен · вход', {
+        section: 'Авторизация',
+        type: 'login',
+      })
+      return { ok: true, recovered: true }
+    }
     const v = await verifyPin(pin, e.pin)
     if (!v.ok) return { ok: false, error: 'Неверный PIN' }
     if (v.legacy) {
