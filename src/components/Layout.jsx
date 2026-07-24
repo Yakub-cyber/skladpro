@@ -1,5 +1,5 @@
 import { useState, useEffect, Suspense } from 'react'
-import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
+import { Link, NavLink, Outlet, useLocation, useMatch, useNavigate } from 'react-router-dom'
 import {
   LayoutDashboard,
   ClipboardList,
@@ -34,9 +34,12 @@ import {
 } from 'lucide-react'
 import { cx, Avatar } from './ui'
 import CommandPalette from './CommandPalette'
+import { ConfirmProvider } from './Confirm'
+import SupportWidget from './SupportWidget'
 import { useStore } from '../store/useStore'
 import { canAccess, roleInfo } from '../lib/constants'
 import { reservedByProduct, availableStock } from '../lib/orders'
+import { plural } from '../lib/format'
 import { syncNow } from '../lib/cloud'
 import PageLoader from './PageLoader'
 
@@ -128,6 +131,33 @@ export const NAV = [
 // Расплющенный список всех пунктов — для Topbar title и других мест,
 // где группировка не нужна.
 export const NAV_ITEMS = NAV.flatMap((n) => (n.items ? n.items : [n]))
+
+// Кладовщик: приоритет операциям, товарам и складу. Продажи/финансы/аналитика
+// скрыты. «Заказы на сборку» — то, что реально важно для смены.
+export const NAV_STOCK = [
+  { to: '/', label: 'Дашборд', icon: LayoutDashboard, end: true, perm: 'dashboard' },
+  { to: '/operations', label: 'Документы', icon: ClipboardCheck, perm: 'operations', highlight: true },
+  { to: '/products', label: 'Товары', icon: Package, perm: 'products' },
+  { to: '/warehouse', label: 'Карта склада', icon: WarehouseIcon, perm: 'warehouse' },
+  { to: '/orders', label: 'На сборку', icon: ClipboardList, perm: 'orders' },
+  { to: '/invoices', label: 'Накладные', icon: FileText, perm: 'invoices' },
+  { to: '/assistant', label: 'ИИ-ассистент', icon: Bot, ai: true, perm: 'assistant' },
+]
+
+// Курьер: всего 3 пункта, плоский NAV. Дашборд + маршрут + история заказов.
+export const NAV_COURIER = [
+  { to: '/', label: 'Дашборд', icon: LayoutDashboard, end: true, perm: 'dashboard' },
+  { to: '/delivery', label: 'Мой маршрут', icon: Navigation, perm: 'delivery', highlight: true },
+  { to: '/orders', label: 'Мои заказы', icon: ClipboardList, perm: 'orders' },
+]
+
+// Выбор набора по роли. admin/manager видят полное дерево NAV;
+// stock/courier — свои плоские наборы, оптимизированные под задачу.
+export function navFor(role) {
+  if (role === 'courier') return NAV_COURIER
+  if (role === 'stock') return NAV_STOCK
+  return NAV
+}
 
 function Logo() {
   return (
@@ -247,9 +277,60 @@ function NavGroup({ node, counts, onClose }) {
   )
 }
 
+// Контекст-плитка над nav: для stock — «Смена открыта · Xч Yм · принято N»,
+// для courier — «Маршрут · X из Y точек». Даёт роли ощущение «это моя
+// смена, а не общий сайт». Для manager/admin плитку не показываем —
+// им контекст даёт саму дашборд.
+function ShiftContextTile({ me, orders, documents, authAt }) {
+  if (me?.role !== 'stock' && me?.role !== 'courier') return null
+
+  if (me.role === 'stock') {
+    if (!authAt) return null
+    const ms = Date.now() - authAt
+    const h = Math.floor(ms / 3_600_000)
+    const min = Math.floor((ms % 3_600_000) / 60_000)
+    const dur = h ? `${h}ч ${min}м` : `${min}м`
+    const accepted = documents.filter(
+      (d) => d.by === me.id && d.type === 'purchase' && d.status === 'posted' && d.createdAt >= authAt,
+    ).length
+    return (
+      <div className="mx-3 mb-2 rounded-xl bg-ok-soft border border-ok/25 px-3 py-2.5">
+        <div className="text-[10px] font-semibold text-ok uppercase tracking-wide">
+          Смена · {dur}
+        </div>
+        <div className="text-[12.5px] text-ink mt-0.5">
+          Принято сегодня: <b>{accepted}</b>
+        </div>
+      </div>
+    )
+  }
+
+  // courier
+  const myRoute = orders.filter(
+    (o) => o.courierId === me.id && ['packed', 'shipped', 'picking'].includes(o.status),
+  )
+  const done = orders.filter(
+    (o) => o.courierId === me.id && o.status === 'delivered',
+  ).length
+  const total = myRoute.length + done
+  if (!total) return null
+  return (
+    <div className="mx-3 mb-2 rounded-xl bg-warn-soft border border-warn/25 px-3 py-2.5">
+      <div className="text-[10px] font-semibold text-warn uppercase tracking-wide">
+        Маршрут · {done}/{total}
+      </div>
+      <div className="text-[12.5px] text-ink mt-0.5">
+        Осталось {myRoute.length} {plural(myRoute.length, ['точка', 'точки', 'точек'])}
+      </div>
+    </div>
+  )
+}
+
 function Sidebar({ open, onClose }) {
   const orders = useStore((s) => s.orders)
   const products = useStore((s) => s.products)
+  const documents = useStore((s) => s.documents) || []
+  const authAt = useStore((s) => s.authAt)
   const me = useCurrentUser()
   const activeOrders = orders.filter((o) =>
     ['new', 'confirmed', 'picking', 'packed'].includes(o.status),
@@ -259,9 +340,12 @@ function Sidebar({ open, onClose }) {
 
   const counts = { '/orders': activeOrders, '/products': lowStock }
 
-  // Фильтруем группы по правам роли. Прямые пункты — по perm; группы —
-  // по перечню прав внутри: группа скрыта, если ни одного её пункта нет.
-  const visibleNodes = NAV.map((node) => {
+  // По роли берём свой NAV-набор (manager — полный, stock/courier — свои,
+  // заточенные под ежедневную задачу). Дополнительно фильтруем на всякий
+  // случай через canAccess: если админ поменял права роли — пункты, ставшие
+  // недоступными, автоматически скроются.
+  const roleNav = navFor(me.role)
+  const visibleNodes = roleNav.map((node) => {
     if (node.items) {
       const kept = node.items.filter((it) => canAccess(me.role, it.perm))
       return kept.length ? { ...node, items: kept } : null
@@ -286,6 +370,7 @@ function Sidebar({ open, onClose }) {
         <div className="h-16 flex items-center px-5 border-b border-line">
           <Logo />
         </div>
+        <ShiftContextTile me={me} orders={orders} documents={documents} authAt={authAt} />
         <nav className="flex-1 overflow-y-auto no-scrollbar p-3 space-y-0.5">
           {visibleNodes.map((node) =>
             node.items ? (
@@ -371,11 +456,57 @@ function CashierButton() {
   )
 }
 
-function Topbar({ onMenu, onSearch }) {
+// Хлебные крошки: раздел + при необходимости уточнение (номер заказа, «Правка»).
+// Первый крош — Дашборд (если мы не на нём), потом текущий раздел, потом
+// уточнение. Клик по крошу — переход в соответствующее место.
+function useBreadcrumbs() {
   const { pathname } = useLocation()
-  const title =
-    NAV_ITEMS.find((n) => (n.end ? n.to === pathname : pathname.startsWith(n.to) && n.to !== '/'))
-      ?.label || 'Дашборд'
+  const editMatch = useMatch('/orders/:id/edit')
+
+  if (pathname === '/') return [{ label: 'Дашборд' }]
+
+  const item = NAV_ITEMS.find((n) =>
+    n.end ? n.to === pathname : n.to !== '/' && pathname.startsWith(n.to),
+  )
+  const crumbs = [{ label: 'Дашборд', to: '/' }]
+  if (item) crumbs.push({ label: item.label, to: item.to })
+  else crumbs.push({ label: '—' })
+
+  // Уточнение под конкретный маршрут.
+  if (editMatch) {
+    const tail = editMatch.params.id?.slice(-4) || ''
+    crumbs.push({ label: `№${tail} · правка` })
+  } else if (pathname === '/orders/new') {
+    crumbs.push({ label: 'Новый · касса' })
+  }
+  return crumbs
+}
+
+function Breadcrumbs() {
+  const crumbs = useBreadcrumbs()
+  return (
+    <nav aria-label="breadcrumbs" className="flex items-center gap-1.5 text-[13px] min-w-0">
+      {crumbs.map((c, i) => {
+        const isLast = i === crumbs.length - 1
+        const cls = isLast
+          ? 'font-semibold text-ink'
+          : 'text-muted hover:text-ink transition-colors'
+        return (
+          <span key={i} className="flex items-center gap-1.5 min-w-0">
+            {c.to && !isLast ? (
+              <Link to={c.to} className={cx('truncate', cls)}>{c.label}</Link>
+            ) : (
+              <span className={cx('truncate', cls)}>{c.label}</span>
+            )}
+            {!isLast && <span className="text-muted/60 shrink-0">/</span>}
+          </span>
+        )
+      })}
+    </nav>
+  )
+}
+
+function Topbar({ onMenu, onSearch }) {
   const [dark, setDark] = useState(() =>
     document.documentElement.classList.contains('dark'),
   )
@@ -393,9 +524,9 @@ function Topbar({ onMenu, onSearch }) {
       >
         <Menu size={20} />
       </button>
-      <h1 className="font-semibold text-[17px] tracking-tight hidden md:block">
-        {title}
-      </h1>
+      <div className="min-w-0 flex-shrink">
+        <Breadcrumbs />
+      </div>
 
       <button
         onClick={onSearch}
@@ -483,31 +614,34 @@ export default function Layout() {
   const allowed = !item || canAccess(me.role, item.perm)
 
   return (
-    <div className="min-h-screen bg-bg">
-      <Sidebar open={navOpen} onClose={() => setNavOpen(false)} />
-      <CommandPalette open={cmdOpen} setOpen={setCmdOpen} />
-      <div className="lg:pl-[252px] flex flex-col min-h-screen">
-        <Topbar onMenu={() => setNavOpen(true)} onSearch={() => setCmdOpen(true)} />
-        <main className="flex-1 p-4 lg:p-6 max-w-[1400px] w-full mx-auto">
-          {allowed ? (
-            <Suspense fallback={<PageLoader />}>
-              <Outlet />
-            </Suspense>
-          ) : (
-            <div className="grid place-items-center py-24 text-center">
-              <div>
-                <div className="h-16 w-16 rounded-2xl bg-bad-soft text-bad grid place-items-center mx-auto mb-4">
-                  <ShieldX size={30} />
+    <ConfirmProvider>
+      <div className="min-h-screen bg-bg">
+        <Sidebar open={navOpen} onClose={() => setNavOpen(false)} />
+        <CommandPalette open={cmdOpen} setOpen={setCmdOpen} />
+        <SupportWidget />
+        <div className="lg:pl-[252px] flex flex-col min-h-screen">
+          <Topbar onMenu={() => setNavOpen(true)} onSearch={() => setCmdOpen(true)} />
+          <main className="flex-1 p-4 lg:p-6 max-w-[1400px] w-full mx-auto">
+            {allowed ? (
+              <Suspense fallback={<PageLoader />}>
+                <Outlet />
+              </Suspense>
+            ) : (
+              <div className="grid place-items-center py-24 text-center">
+                <div>
+                  <div className="h-16 w-16 rounded-2xl bg-bad-soft text-bad grid place-items-center mx-auto mb-4">
+                    <ShieldX size={30} />
+                  </div>
+                  <h2 className="text-lg font-semibold">Нет доступа</h2>
+                  <p className="text-sm text-muted mt-1 max-w-xs">
+                    Раздел недоступен для роли «{roleInfo(me.role).label}». Обратитесь к администратору.
+                  </p>
                 </div>
-                <h2 className="text-lg font-semibold">Нет доступа</h2>
-                <p className="text-sm text-muted mt-1 max-w-xs">
-                  Раздел недоступен для роли «{roleInfo(me.role).label}». Обратитесь к администратору.
-                </p>
               </div>
-            </div>
-          )}
-        </main>
+            )}
+          </main>
+        </div>
       </div>
-    </div>
+    </ConfirmProvider>
   )
 }

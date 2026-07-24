@@ -18,7 +18,20 @@ import { Card, Button, Badge, Field, Input, Select, Modal, Empty, cx } from '../
 import { useConfirm } from '../components/Confirm'
 import { useStore } from '../store/useStore'
 import { money, num } from '../lib/format'
-import { accountBalances, MONEY_PURPOSES, purposeLabel } from '../lib/money'
+import {
+  accountBalances,
+  MONEY_PURPOSES,
+  purposeLabel,
+  rangeFor,
+  summarize,
+} from '../lib/money'
+
+const PERIODS = [
+  { key: 'today', label: 'Сегодня' },
+  { key: 'week', label: '7 дней' },
+  { key: 'month', label: '30 дней' },
+  { key: 'all', label: 'Всё время' },
+]
 
 export default function Money() {
   const accounts = useStore((s) => s.accounts) || []
@@ -31,12 +44,28 @@ export default function Money() {
 
   const [modal, setModal] = useState(null) // null | 'in' | 'out' | 'transfer' | 'account'
   const [filterAcc, setFilterAcc] = useState('all')
+  const [period, setPeriod] = useState('month')
 
   const balances = useMemo(
     () => accountBalances(accounts, moneyTx),
     [accounts, moneyTx],
   )
   const total = accounts.reduce((a, x) => a + (balances[x.id] || 0), 0)
+
+  // Сводка за выбранный период (и опционально по одному счёту). При
+  // «Всё время» from=null и суммы считаются от самой первой транзакции.
+  // Переводы включаются в приход/расход только при фильтре по счёту —
+  // иначе это внутренние движения и в отчёт по компании не идут.
+  const range = useMemo(() => rangeFor(period), [period])
+  const summary = useMemo(
+    () =>
+      summarize(moneyTx, {
+        from: range.from,
+        to: range.to,
+        accountId: filterAcc === 'all' ? null : filterAcc,
+      }),
+    [moneyTx, range, filterAcc],
+  )
 
   const visibleTx = moneyTx.filter(
     (t) => filterAcc === 'all' || t.accountId === filterAcc || t.toAccountId === filterAcc,
@@ -136,6 +165,14 @@ export default function Money() {
           </button>
         )}
       </div>
+
+      {/* Сводка за период — «касса-книга» без листания ленты */}
+      <SummaryPanel
+        summary={summary}
+        period={period}
+        setPeriod={setPeriod}
+        filteredByAccount={filterAcc !== 'all'}
+      />
 
       {/* Лента транзакций */}
       <Card className="overflow-hidden">
@@ -480,5 +517,112 @@ function AccountModal({ onClose, onSubmit }) {
         </div>
       </div>
     </Modal>
+  )
+}
+
+// Панель сводки за период — компактная «касса-книга»: приход, расход,
+// чистое движение + разбивка по назначениям, чтобы оператор сразу видел,
+// откуда пришло и куда ушло, без листания ленты.
+function SummaryPanel({ summary, period, setPeriod, filteredByAccount }) {
+  const inItems = Object.entries(summary.inByPurpose).sort((a, b) => b[1] - a[1])
+  const outItems = Object.entries(summary.outByPurpose).sort((a, b) => b[1] - a[1])
+
+  return (
+    <Card className="p-4 space-y-3">
+      <div className="flex items-center gap-3 flex-wrap">
+        <span className="text-[13px] font-medium">Сводка за период</span>
+        <div className="flex gap-1 bg-surface-2 rounded-lg p-0.5">
+          {PERIODS.map((p) => (
+            <button
+              key={p.key}
+              onClick={() => setPeriod(p.key)}
+              className={cx(
+                'px-2.5 h-7 rounded-md text-[12px] font-medium transition',
+                period === p.key
+                  ? 'bg-brand text-brand-ink'
+                  : 'text-muted hover:text-ink',
+              )}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+        <span className="text-[11.5px] text-muted ml-auto">
+          {summary.count} движений
+          {filteredByAccount && ' · по выбранному счёту (переводы учтены)'}
+        </span>
+      </div>
+
+      <div className="grid sm:grid-cols-3 gap-2.5">
+        <SummaryTile
+          label="Приход"
+          value={summary.inTotal}
+          tone="ok"
+          items={inItems.map(([k, v]) => ({
+            label: purposeLabel('in', k) || purposeLabel('transfer', k),
+            value: v,
+          }))}
+        />
+        <SummaryTile
+          label="Расход"
+          value={summary.outTotal}
+          tone="bad"
+          items={outItems.map(([k, v]) => ({
+            label: purposeLabel('out', k) || purposeLabel('transfer', k),
+            value: v,
+          }))}
+        />
+        <SummaryTile
+          label="Чистое движение"
+          value={summary.net}
+          tone={summary.net > 0 ? 'ok' : summary.net < 0 ? 'bad' : 'brand'}
+          hero
+        />
+      </div>
+    </Card>
+  )
+}
+
+function SummaryTile({ label, value, tone, items = [], hero = false }) {
+  const cls =
+    tone === 'ok'
+      ? 'text-ok bg-ok-soft/40'
+      : tone === 'bad'
+        ? 'text-bad bg-bad-soft/40'
+        : 'text-brand bg-brand-soft/40'
+  return (
+    <div className={cx('rounded-xl p-3', cls)}>
+      <div className="text-[11.5px] text-muted">{label}</div>
+      <div
+        className={cx(
+          'font-bold tabular-nums',
+          hero ? 'text-2xl' : 'text-xl',
+        )}
+      >
+        {value > 0 && tone !== 'bad' ? '+' : ''}
+        {value < 0 ? '−' : ''}
+        {money(Math.abs(value))}
+      </div>
+      {items.length > 0 && (
+        <ul className="mt-2 space-y-0.5 text-[11.5px] text-muted">
+          {items.slice(0, 4).map((it, i) => (
+            <li
+              key={i}
+              className="flex items-center justify-between gap-2"
+            >
+              <span className="truncate">{it.label || 'прочее'}</span>
+              <span className="tabular-nums shrink-0 text-ink">
+                {money(it.value)}
+              </span>
+            </li>
+          ))}
+          {items.length > 4 && (
+            <li className="text-muted italic">
+              ещё {items.length - 4}…
+            </li>
+          )}
+        </ul>
+      )}
+    </div>
   )
 }
