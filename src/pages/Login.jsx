@@ -11,8 +11,15 @@ export default function Login() {
   const cloud = useStore((s) => s.cloud)
   const [showAuth, setShowAuth] = useState(false)
   const [showConnect, setShowConnect] = useState(false)
-  if (!cloud) return <PinLogin />
-  if (showAuth) return <CloudLogin onBack={() => setShowAuth(false)} />
+  // И для облачного, и для локального режима стартовый экран после
+  // выхода — Landing, чтобы «Выйти» действительно уводило на главную,
+  // а не на выбор сотрудника. Локальному режиму «Начать» показывает
+  // PIN-pad, облачному — экран входа Supabase.
+  if (showAuth) {
+    return cloud
+      ? <CloudLogin onBack={() => setShowAuth(false)} />
+      : <PinLogin onBack={() => setShowAuth(false)} />
+  }
   if (showConnect)
     return <Connect onStart={() => setShowAuth(true)} onBack={() => setShowConnect(false)} />
   return <Landing onStart={() => setShowAuth(true)} onConnect={() => setShowConnect(true)} />
@@ -137,7 +144,7 @@ export function ResetPassword() {
   )
 }
 
-function PinLogin() {
+function PinLogin({ onBack }) {
   const employees = (useStore((s) => s.employees) || []).filter((e) => e.active)
   const login = useStore((s) => s.login)
   const [sel, setSel] = useState(null)
@@ -192,6 +199,19 @@ function PinLogin() {
           </div>
           <div className="text-[12px] text-muted mt-1">Вход в систему</div>
         </div>
+
+        {/* Ссылка «На главную» — только на экране выбора сотрудника.
+            На экране ввода PIN тот же клик уводит на «Сменить сотрудника».
+            Кнопка появляется, если в родитель передал onBack (пришли с
+            Landing), и не мешает в других сценариях. */}
+        {onBack && !sel && (
+          <button
+            onClick={onBack}
+            className="flex items-center gap-1.5 text-[13px] text-muted hover:text-ink mb-3 mx-auto"
+          >
+            <ArrowLeft size={15} /> На главную
+          </button>
+        )}
 
         {!sel ? (
           /* Выбор сотрудника */
