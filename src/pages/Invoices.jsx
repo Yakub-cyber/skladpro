@@ -26,6 +26,7 @@ import { useStore } from '../store/useStore'
 import { money, num, dateFull } from '../lib/format'
 import { parseInvoiceText, aiParseInvoice, aiEnabled, aiConfig } from '../lib/ai'
 import { priceFor } from '../lib/constants'
+import DocPreviewModal from '../components/DocPreviewModal'
 
 const EXAMPLES = [
   'Гвозди 100шт, Молоток слесалный 5шт, Саморез по дереву 3.5x40 20 уп',
@@ -43,6 +44,25 @@ export default function Invoices() {
   const [party, setParty] = useState('')
   const [priceTypeId, setPriceTypeId] = useState(defType)
   const [applyStock, setApplyStock] = useState(true)
+  const [printInv, setPrintInv] = useState(null)
+
+  // Маппинг накладной на doc + категорию для DocPreviewModal.
+  // Приходная (kind='in') → «purchase» (Приёмный акт / М-4).
+  // Расходная (kind='out') → «sale» (Счёт / ТОРГ-12 / УПД / Товарный чек).
+  const openPrint = (inv) => {
+    const isIn = inv.kind === 'in'
+    setPrintInv({
+      doc: {
+        no: inv.no,
+        createdAt: inv.createdAt,
+        items: inv.items,
+        total: inv.total,
+        reason: inv.kind === 'in' ? 'Приход по накладной' : 'Отгрузка по накладной',
+        [isIn ? 'supplierName' : 'customerName']: inv.party,
+      },
+      category: isIn ? 'purchase' : 'sale',
+    })
+  }
   const [busy, setBusy] = useState(false)
   const [aiMode, setAiMode] = useState('')
 
@@ -337,7 +357,7 @@ export default function Invoices() {
                     variant="soft"
                     icon={Printer}
                     onClick={() =>
-                      printInvoice({
+                      openPrint({
                         kind,
                         party:
                           parties.find((p) => p.id === party)?.name ||
@@ -386,7 +406,7 @@ export default function Invoices() {
                 <span className="text-sm font-semibold tabular-nums hidden sm:block">
                   {money(inv.total)}
                 </span>
-                <Button size="sm" variant="ghost" icon={Printer} onClick={() => printInvoice(inv)}>
+                <Button size="sm" variant="ghost" icon={Printer} onClick={() => openPrint(inv)}>
                   Печать
                 </Button>
               </div>
@@ -394,6 +414,13 @@ export default function Invoices() {
           </div>
         )}
       </Card>
+      {printInv && (
+        <DocPreviewModal
+          doc={printInv.doc}
+          category={printInv.category}
+          onClose={() => setPrintInv(null)}
+        />
+      )}
     </div>
   )
 }
@@ -433,78 +460,5 @@ function NumBox({ value, onChange, suffix, wide }) {
   )
 }
 
-// ── Печать накладной (ТОРГ-12-подобная форма) ──────────────────────────────
-function printInvoice(inv) {
-  const company = useStore.getState().settings.company || 'СкладПро'
-  const rows = inv.items
-    .map(
-      (it, i) => `
-    <tr>
-      <td class="c">${i + 1}</td>
-      <td>${escapeHtml(it.name)}</td>
-      <td class="c">${it.unit || 'шт'}</td>
-      <td class="r">${num(it.qty)}</td>
-      <td class="r">${num(it.price || 0)}</td>
-      <td class="r">${num((it.qty || 0) * (it.price || 0))}</td>
-    </tr>`,
-    )
-    .join('')
-  const dir = inv.kind === 'in' ? 'Приходная накладная' : 'Расходная накладная'
-  const html = `<!doctype html><html lang="ru"><head><meta charset="utf-8">
-  <title>Накладная ${inv.no}</title>
-  <style>
-    *{font-family:Arial,sans-serif;box-sizing:border-box}
-    body{margin:0;padding:32px;color:#111;font-size:13px}
-    h1{font-size:18px;margin:0 0 2px}
-    .muted{color:#666}
-    .head{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:18px;border-bottom:2px solid #111;padding-bottom:12px}
-    .meta div{margin:3px 0}
-    table{width:100%;border-collapse:collapse;margin-top:10px}
-    th,td{border:1px solid #999;padding:7px 9px;text-align:left}
-    th{background:#f0f0f0;font-size:12px}
-    td.c,th.c{text-align:center}
-    td.r,th.r{text-align:right}
-    tfoot td{font-weight:bold;border:none;padding-top:10px}
-    .sign{margin-top:46px;display:flex;justify-content:space-between}
-    .sign div{width:45%;border-top:1px solid #111;padding-top:6px;font-size:12px;color:#444}
-    @media print{body{padding:0}}
-  </style></head><body>
-    <div class="head">
-      <div>
-        <h1>${dir}</h1>
-        <div class="muted">№ ${inv.no} от ${dateFull(inv.createdAt)}</div>
-      </div>
-      <div style="text-align:right">
-        <div style="font-weight:bold;font-size:15px">${escapeHtml(company)}</div>
-        <div class="muted">Оптовый склад</div>
-      </div>
-    </div>
-    <div class="meta">
-      <div><b>${inv.kind === 'in' ? 'Поставщик' : 'Покупатель'}:</b> ${escapeHtml(inv.party)}</div>
-    </div>
-    <table>
-      <thead><tr>
-        <th class="c">№</th><th>Наименование</th><th class="c">Ед.</th>
-        <th class="r">Кол-во</th><th class="r">Цена, ₽</th><th class="r">Сумма, ₽</th>
-      </tr></thead>
-      <tbody>${rows}</tbody>
-      <tfoot><tr>
-        <td colspan="5" class="r">ИТОГО:</td><td class="r">${num(inv.total)} ₽</td>
-      </tr></tfoot>
-    </table>
-    <div class="sign">
-      <div>Отпустил / Сдал</div>
-      <div>Получил / Принял</div>
-    </div>
-    <script>window.onload=()=>{window.print()}</script>
-  </body></html>`
-  const w = window.open('', '_blank', 'width=820,height=900')
-  if (w) {
-    w.document.write(html)
-    w.document.close()
-  }
-}
-
-function escapeHtml(s = '') {
-  return s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c])
-}
+// Локальный printInvoice удалён — заменён общей DocPreviewModal
+// (см. openPrint в компоненте Invoices). Все шаблоны — из lib/templates/.

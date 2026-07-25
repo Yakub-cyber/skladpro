@@ -13,9 +13,11 @@ import {
   Trash2,
   Check,
   Building2,
+  Printer,
 } from 'lucide-react'
 import { Card, Button, Badge, Field, Input, Select, Modal, Empty, cx } from '../components/ui'
 import { useConfirm } from '../components/Confirm'
+import DocPreviewModal from '../components/DocPreviewModal'
 import { useStore } from '../store/useStore'
 import { money, num } from '../lib/format'
 import {
@@ -44,6 +46,7 @@ export default function Money() {
 
   const [modal, setModal] = useState(null) // null | 'in' | 'out' | 'transfer' | 'account'
   const [filterAcc, setFilterAcc] = useState('all')
+  const [printTx, setPrintTx] = useState(null)
   const [period, setPeriod] = useState('month')
 
   const balances = useMemo(
@@ -192,6 +195,7 @@ export default function Money() {
                 customers={customers}
                 suppliers={suppliers}
                 onCancel={() => cancelMoneyTx(t.id)}
+                onPrint={() => setPrintTx(t)}
               />
             ))}
           </div>
@@ -235,11 +239,24 @@ export default function Money() {
           onSubmit={(a) => addAccount(a)}
         />
       )}
+      {printTx && (
+        <DocPreviewModal
+          doc={printTx}
+          category={
+            printTx.type === 'in'
+              ? 'moneyIn'
+              : printTx.type === 'out'
+                ? 'moneyOut'
+                : 'moneyTransfer'
+          }
+          onClose={() => setPrintTx(null)}
+        />
+      )}
     </div>
   )
 }
 
-function TxRow({ tx, accounts, customers, suppliers, onCancel }) {
+function TxRow({ tx, accounts, customers, suppliers, onCancel, onPrint }) {
   const confirm = useConfirm()
   const askCancel = async () => {
     const ok = await confirm({
@@ -310,6 +327,13 @@ function TxRow({ tx, accounts, customers, suppliers, onCancel }) {
         {sign}
         {money(tx.amount)}
       </div>
+      <button
+        onClick={onPrint}
+        className="text-muted hover:text-ink p-1.5"
+        title="Печать (КО-1 / КО-2)"
+      >
+        <Printer size={14} />
+      </button>
       {!cancelled && (
         <button
           onClick={askCancel}

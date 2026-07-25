@@ -9,6 +9,7 @@ import { useStore } from '../../store/useStore'
 import { num, relTime } from '../../lib/format'
 import { docTypeInfo, DOC_STATUS } from '../../lib/constants'
 import { DOC_ICON } from './_shared'
+import DocPreviewModal from '../../components/DocPreviewModal'
 
 const REG_FILTERS = [
   { key: 'all', label: 'Все' },
@@ -17,36 +18,13 @@ const REG_FILTERS = [
   { key: 'cancelled', label: 'Отменённые' },
 ]
 
-// Печать одного документа в отдельном окне — компактная форма без
-// НДС/подписей (для этого есть ТОРГ-12/УПД из заказов).
-function printDocument(doc, byName) {
-  const ti = docTypeInfo(doc.type)
-  const rows = (doc.items || [])
-    .map(
-      (it, i) =>
-        `<tr><td>${i + 1}</td><td>${it.name}</td><td style="text-align:right">${it.qty}</td><td>${it.unit || ''}</td></tr>`,
-    )
-    .join('')
-  const html = `<!doctype html><html><head><meta charset="utf-8"><title>${doc.no}</title>
-    <style>
-      body{font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#111;padding:32px;}
-      h1{font-size:20px;margin:0 0 4px}.muted{color:#666;font-size:13px}
-      table{width:100%;border-collapse:collapse;margin-top:18px;font-size:14px}
-      th,td{border:1px solid #ccc;padding:8px 10px;text-align:left}th{background:#f3f3f3}
-      .foot{margin-top:24px;font-size:13px;color:#444}
-    </style></head><body>
-    <h1>${ti.label} № ${doc.no}</h1>
-    <div class="muted">${new Date(doc.createdAt).toLocaleString('ru-RU')} · ${byName}${doc.reason ? ' · ' + doc.reason : ''}</div>
-    <table><thead><tr><th>#</th><th>Наименование</th><th style="text-align:right">Кол-во</th><th>Ед.</th></tr></thead>
-    <tbody>${rows}</tbody></table>
-    <div class="foot">Позиций: ${(doc.items || []).length} · Всего: ${doc.totalQty} · Статус: ${(DOC_STATUS[doc.status] || {}).label || doc.status}</div>
-    </body></html>`
-  const w = window.open('', '_blank', 'width=720,height=900')
-  if (!w) return
-  w.document.write(html)
-  w.document.close()
-  w.focus()
-  setTimeout(() => w.print(), 250)
+// Категорию для превью-модалки выбираем по типу документа: покупки и
+// оприходование печатаются как «Приёмный акт», продажи — как счёт/
+// накладная, остальное — универсальным stock-шаблоном.
+function categoryFor(doc) {
+  if (doc.type === 'sale') return 'sale'
+  if (doc.type === 'purchase' || doc.type === 'stockin') return 'purchase'
+  return 'stock'
 }
 
 export default function DocumentsTab() {
@@ -56,6 +34,7 @@ export default function DocumentsTab() {
   const cancelDocument = useStore((s) => s.cancelDocument)
   const removeDocument = useStore((s) => s.removeDocument)
   const [filter, setFilter] = useState('all')
+  const [printDoc, setPrintDoc] = useState(null)
   const nameOf = (id) => employees.find((e) => e.id === id)?.name || 'Система'
   const confirm = useConfirm()
   const askCancel = async (d) => {
@@ -146,7 +125,7 @@ export default function DocumentsTab() {
                         Отменить
                       </Button>
                     )}
-                    <Button size="sm" variant="soft" icon={Printer} onClick={() => printDocument(d, nameOf(d.by))}>
+                    <Button size="sm" variant="soft" icon={Printer} onClick={() => setPrintDoc(d)}>
                       Печать
                     </Button>
                     {d.status !== 'posted' && (
@@ -158,6 +137,13 @@ export default function DocumentsTab() {
             })}
           </div>
         </Card>
+      )}
+      {printDoc && (
+        <DocPreviewModal
+          doc={printDoc}
+          category={categoryFor(printDoc)}
+          onClose={() => setPrintDoc(null)}
+        />
       )}
     </div>
   )

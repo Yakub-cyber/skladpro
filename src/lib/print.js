@@ -80,11 +80,17 @@ export function rublesToWords(amount) {
 }
 
 // ── Общие хелперы ──────────────────────────────────────────────────────────
-const esc = (s = '') =>
+// esc/fmt/round2/PRINT_CSS экспортируются: их использует новый модуль
+// шаблонов lib/templates/*, где строятся другие печатные формы
+// (ПКО/РКО/заявка поставщику/приёмный акт), реюзая общий стиль.
+export const esc = (s = '') =>
   String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c])
 
-const fmt = (n) =>
+export const fmt = (n) =>
   new Intl.NumberFormat('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(n) || 0)
+
+// round2 экспортируется — нужен шаблонам для симметрии с splitVat.
+export const _round2 = round2
 
 // Открыть окно печати с готовым HTML. Возвращает окно (для тестов удобно
 // внедрить фейковый window.open, а в браузере — авто-печать через <script>).
@@ -138,7 +144,7 @@ export function itemFinancials(it, rate) {
 
 // Общий CSS для всех печатных форм. Единый макет уменьшает риск того, что
 // одна форма выглядит хорошо, а другая ломается при печати.
-const PRINT_CSS = `
+export const PRINT_CSS = `
 *{font-family:Arial,sans-serif;box-sizing:border-box}
 body{margin:0;padding:14mm;color:#111;font-size:12px}
 h1{font-size:18px;margin:0 0 2mm}

@@ -13,6 +13,7 @@ import {
   Search,
   FileEdit,
   Package,
+  Printer,
 } from 'lucide-react'
 import {
   Card,
@@ -27,6 +28,7 @@ import {
 } from '../components/ui'
 import { useStore } from '../store/useStore'
 import { useConfirm } from '../components/Confirm'
+import DocPreviewModal from '../components/DocPreviewModal'
 import { money, num } from '../lib/format'
 
 const STATUS_INFO = {
@@ -78,6 +80,7 @@ export default function PurchaseOrders() {
   const [modal, setModal] = useState(null) // null | { id? }
   const [filter, setFilter] = useState('all')
   const [receiveErr, setReceiveErr] = useState('')
+  const [printPO, setPrintPO] = useState(null)
 
   const list = useMemo(
     () =>
@@ -182,6 +185,7 @@ export default function PurchaseOrders() {
                 onReceive={() => onReceive(p)}
                 onCancel={() => askCancelPO(p)}
                 onDelete={() => askRemovePO(p)}
+                onPrint={() => setPrintPO(p)}
               />
             ))}
           </div>
@@ -201,11 +205,18 @@ export default function PurchaseOrders() {
           }}
         />
       )}
+      {printPO && (
+        <DocPreviewModal
+          doc={printPO}
+          category="purchaseOrder"
+          onClose={() => setPrintPO(null)}
+        />
+      )}
     </div>
   )
 }
 
-function PORow({ po, onEdit, onSend, onReceive, onCancel, onDelete }) {
+function PORow({ po, onEdit, onSend, onReceive, onCancel, onDelete, onPrint }) {
   const info = STATUS_INFO[po.status] || STATUS_INFO.draft
   const editable = po.status === 'draft'
   const canSend = po.status === 'draft'
@@ -248,6 +259,9 @@ function PORow({ po, onEdit, onSend, onReceive, onCancel, onDelete }) {
         </div>
       </div>
       <div className="flex items-center gap-1.5 flex-wrap shrink-0">
+        <Button size="sm" variant="soft" icon={Printer} onClick={onPrint}>
+          Печать
+        </Button>
         {editable && (
           <Button size="sm" variant="soft" icon={FileEdit} onClick={onEdit}>
             Править

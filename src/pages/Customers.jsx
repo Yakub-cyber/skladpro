@@ -281,14 +281,19 @@ function Mini({ label, value, icon: Icon }) {
 
 function AddCustomerModal({ open, onClose }) {
   const addCustomer = useStore((s) => s.addCustomer)
-  const [f, setF] = useState({ name: '', type: 'ООО', city: '', contact: '', phone: '' })
+  const emptyForm = {
+    name: '', type: 'ООО', city: '', contact: '', phone: '',
+    inn: '', kpp: '', address: '',
+  }
+  const [f, setF] = useState(emptyForm)
   const set = (k, v) => setF((s) => ({ ...s, [k]: v }))
   const save = () => {
     if (!f.name) return
     addCustomer(f)
-    setF({ name: '', type: 'ООО', city: '', contact: '', phone: '' })
+    setF(emptyForm)
     onClose()
   }
+  const isLegal = f.type === 'ООО' || f.type === 'ИП'
   return (
     <Modal
       open={open}
@@ -330,6 +335,21 @@ function AddCustomerModal({ open, onClose }) {
             <Input value={f.phone} onChange={(e) => set('phone', e.target.value)} placeholder="+7" />
           </Field>
         </div>
+        {/* Реквизиты — показываем только для юрлиц (ООО/ИП); попадают в
+            печатные формы ТОРГ-12 / УПД / Счёт как «покупатель». */}
+        {isLegal && (
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="ИНН">
+              <Input value={f.inn} onChange={(e) => set('inn', e.target.value)} placeholder="1650000000" />
+            </Field>
+            <Field label="КПП">
+              <Input value={f.kpp} onChange={(e) => set('kpp', e.target.value)} placeholder="165001001" />
+            </Field>
+            <Field label="Юридический адрес" className="col-span-2">
+              <Input value={f.address} onChange={(e) => set('address', e.target.value)} placeholder="г. Казань, ул. …" />
+            </Field>
+          </div>
+        )}
       </div>
     </Modal>
   )

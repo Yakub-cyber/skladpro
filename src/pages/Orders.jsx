@@ -41,7 +41,7 @@ import {
   priceFor,
 } from '../lib/constants'
 import { buildPickRoute } from '../lib/ai'
-import { printInvoiceBill, printInvoiceTORG12, printInvoiceUPD } from '../lib/print'
+import DocPreviewModal from '../components/DocPreviewModal'
 import { cellById } from '../store/seed'
 
 const FILTERS = [
@@ -253,6 +253,7 @@ function OrderDetail({ order }) {
   const customers = useStore((s) => s.customers)
   const [showRoute, setShowRoute] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [printOrder, setPrintOrder] = useState(null)
   // Редактировать можно только пока заказ не отгружен и не отменён —
   // движок стора вернёт ok:false в других статусах, но UI не показываем.
   const canEdit = !order.stockConsumed && order.status !== 'cancelled'
@@ -364,11 +365,9 @@ function OrderDetail({ order }) {
           <Button variant="soft" icon={copied ? Check : Link2} onClick={copyLink}>
             {copied ? 'Скопировано' : 'Ссылка клиенту'}
           </Button>
-          <PrintMenu
-            order={order}
-            settings={settings}
-            customer={customers.find((c) => c.id === order.customerId) || null}
-          />
+          <Button variant="soft" icon={Printer} onClick={() => setPrintOrder(order)}>
+            Печать
+          </Button>
           {canEdit && (
             <Button variant="soft" icon={Pencil} onClick={() => nav(`/orders/${order.id}/edit`)}>
               Изменить
@@ -523,46 +522,16 @@ function OrderDetail({ order }) {
           )}
         </div>
       </Card>
-    </div>
-  )
-}
-
-function PrintMenu({ order, settings, customer }) {
-  const [open, setOpen] = useState(false)
-  const forms = [
-    { key: 'bill', label: 'Счёт на оплату', fn: printInvoiceBill },
-    { key: 'torg12', label: 'ТОРГ-12 · товарная накладная', fn: printInvoiceTORG12 },
-    { key: 'upd', label: 'УПД · передаточный документ', fn: printInvoiceUPD },
-  ]
-  const emit = (fn) => {
-    setOpen(false)
-    fn(order, { settings, customer })
-  }
-  return (
-    <div className="relative">
-      <Button variant="soft" icon={Printer} onClick={() => setOpen((v) => !v)}>
-        Печать
-      </Button>
-      {open && (
-        <>
-          <div
-            className="fixed inset-0 z-10"
-            onClick={() => setOpen(false)}
-            aria-hidden
-          />
-          <div className="absolute right-0 mt-1 z-20 rounded-xl bg-surface border border-line shadow-lg min-w-[240px] p-1.5">
-            {forms.map((f) => (
-              <button
-                key={f.key}
-                className="w-full text-left px-3 py-2 rounded-lg text-[13px] hover:bg-surface-2 transition"
-                onClick={() => emit(f.fn)}
-              >
-                {f.label}
-              </button>
-            ))}
-          </div>
-        </>
+      {printOrder && (
+        <DocPreviewModal
+          doc={printOrder}
+          category="sale"
+          onClose={() => setPrintOrder(null)}
+        />
       )}
     </div>
   )
 }
+
+// PrintMenu удалён — заменён единой DocPreviewModal (см. state
+// printOrder в OrderDetail). Все шаблоны — из lib/templates/sale.
