@@ -68,20 +68,42 @@ function useCurrentUser() {
 // «Партнёров» — по решению пользователя (не увидел смысла); сама
 // страница /purchase-orders остаётся, вход через будущую карточку
 // поставщика.
+// Порядок NAV по образцу CloudShop: Дашборд → Товары → Документы →
+// Кассы и смены → Продажи → Движение товара → Движение денег → Склад →
+// Контрагенты → Отчёты → Витрина → Компания. Группы сохранены (юзер
+// явно попросил), поменялся порядок и лейблы.
 export const NAV = [
   { to: '/', label: 'Дашборд', icon: LayoutDashboard, end: true, perm: 'dashboard' },
-  // ── Одиночные быстрые пункты вверху — по частоте использования.
-  { to: '/operations', label: 'Документы', icon: ClipboardCheck, perm: 'operations', highlight: true },
   { to: '/products', label: 'Товары', icon: Package, perm: 'products' },
+  { to: '/operations', label: 'Документы', icon: ClipboardCheck, perm: 'operations', highlight: true },
+  {
+    label: 'Кассы и смены',
+    icon: ShoppingCart,
+    key: 'pos',
+    items: [
+      // Прямой заход в POS-кассу — как в CloudShop «Кассы».
+      { to: '/orders/new', label: 'Касса', icon: ShoppingCart, perm: 'orders' },
+      { to: '/journal', label: 'Смены и журнал', icon: History, perm: 'journal' },
+    ],
+  },
   {
     label: 'Продажи',
-    icon: ShoppingCart,
+    icon: ClipboardList,
     key: 'sales',
     items: [
       { to: '/orders', label: 'Заказы', icon: ClipboardList, perm: 'orders' },
       // «Заявки клиентов» = преднастроенный фильтр на Orders (status='new').
       { to: '/orders?filter=new', label: 'Заявки клиентов', icon: ClipboardList, perm: 'orders' },
       { to: '/delivery', label: 'Доставка', icon: Navigation, perm: 'delivery' },
+    ],
+  },
+  { to: '/movements', label: 'Движение товара', icon: BarChart3, perm: 'analytics' },
+  {
+    label: 'Движение денег',
+    icon: Wallet,
+    key: 'finance',
+    items: [
+      { to: '/money', label: 'Деньги', icon: Wallet, perm: 'money' },
     ],
   },
   {
@@ -94,7 +116,7 @@ export const NAV = [
     ],
   },
   {
-    label: 'Партнёры',
+    label: 'Контрагенты',
     icon: Users,
     key: 'partners',
     items: [
@@ -103,16 +125,7 @@ export const NAV = [
     ],
   },
   {
-    label: 'Финансы',
-    icon: Wallet,
-    key: 'finance',
-    items: [
-      { to: '/money', label: 'Деньги', icon: Wallet, perm: 'money' },
-      { to: '/movements', label: 'Движение товара', icon: BarChart3, perm: 'analytics' },
-    ],
-  },
-  {
-    label: 'Аналитика',
+    label: 'Отчёты',
     icon: BarChart3,
     key: 'analytics',
     items: [
@@ -120,12 +133,12 @@ export const NAV = [
       { to: '/assistant', label: 'ИИ-ассистент', icon: Bot, ai: true, perm: 'assistant' },
     ],
   },
+  { to: '/storefront', label: 'Интернет-витрина', icon: Store, perm: 'storefront' },
   {
-    label: 'Управление',
+    label: 'Компания',
     icon: SettingsIcon,
     key: 'admin',
     items: [
-      { to: '/journal', label: 'Смены и журнал', icon: History, perm: 'journal' },
       { to: '/employees', label: 'Сотрудники', icon: UserCog, perm: 'employees' },
       { to: '/subscription', label: 'Подписка', icon: Sparkles, perm: 'settings' },
       { to: '/settings', label: 'Настройки', icon: SettingsIcon, perm: 'settings' },

@@ -4,28 +4,22 @@
 //   orders    (заказы клиентов — status=posted/delivered = движение),
 //   invoices  (накладные приход/расход),
 //   moneyTx   (кассовые движения: ПКО/РКО/переводы).
-// Фильтры: тип, период, контрагент, сотрудник, счёт.
 //
-// По образцу CloudShop «Движение товара» — но у нас деньги/накладные
-// тоже туда попадают, потому что оператору важнее видеть один поток,
-// чем ходить по 4 разным экранам.
+// Табличный вид по образцу CloudShop: колонки Статус / Документ /
+// Время / Позиций / Сумма / Оплачено / Отправитель / Получатель /
+// Автор, sticky-заголовки дней, узкая полоска фильтров сверху.
 import { useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
 import {
   BarChart3,
+  Check,
+  AlertTriangle,
+  Search,
   ArrowDownToLine,
   ArrowUpFromLine,
   ArrowLeftRight,
-  ShoppingCart,
   ClipboardCheck,
-  Truck,
-  TrendingDown,
-  Undo2,
-  FileText,
-  Wallet,
-  Search,
 } from 'lucide-react'
-import { Card, Button, Badge, Field, Input, Select, Empty, cx } from '../components/ui'
+import { Card, Badge, Field, Input, Select, Empty, cx } from '../components/ui'
 import { useStore } from '../store/useStore'
 import { money, num } from '../lib/format'
 import { docTypeInfo, statusInfo } from '../lib/constants'
@@ -63,30 +57,58 @@ function classify(row) {
   return 'other'
 }
 
-function ICON_FOR(kind) {
-  return {
-    'goods-in': ArrowDownToLine,
-    'goods-out': ArrowUpFromLine,
-    'goods-transfer': ArrowLeftRight,
-    'goods-inv': ClipboardCheck,
-    'money-in': ArrowDownToLine,
-    'money-out': ArrowUpFromLine,
-    'money-transfer': ArrowLeftRight,
-    other: FileText,
-  }[kind] || FileText
-}
-
 function TONE_FOR(kind) {
   if (kind.startsWith('goods-in') || kind === 'money-in') return 'ok'
   if (kind.startsWith('goods-out') || kind === 'money-out') return 'bad'
   return 'info'
 }
 
-// Собрать timeline из 4 источников.
+// Собрать timeline из 4 источников. Дополняем полями `sum` (для складских
+// документов из d.total), `paid` (для order из payment.cashPaid+cardPaid)
+// и парой `from` / `to` — для колонок Отправитель / Получатель.
 function buildTimeline(state) {
+  const company = state.settings?.company || 'Склад'
   const rows = []
+
+  // Резолвим имя склада (для transfer) или клиента/поставщика по id.
+  const custName = (id) => (state.customers || []).find((c) => c.id === id)?.name
+  const supName = (id) => (state.suppliers || []).find((s) => s.id === id)?.name
+  const whName = (id) =>
+    (state.warehouses || []).find((w) => w.id === id)?.name || 'Склад'
+  const accName = (id) => (state.accounts || []).find((a) => a.id === id)?.name || '—'
+
   for (const d of state.documents || []) {
     if (d.status === 'cancelled') continue
+    // От → к: логика зависит от типа документа.
+    let from = null
+    let to = null
+    switch (d.type) {
+      case 'purchase':
+      case 'stockin':
+        from = supName(d.supplierId) || 'Внешний'
+        to = company
+        break
+      case 'sale':
+      case 'sale_return':
+        // sale_return — обратно (клиент → склад), но визуально пусть будет
+        // клиент как контрагент.
+        from = d.type === 'sale_return' ? custName(d.customerId) || d.customerName : company
+        to = d.type === 'sale_return' ? company : custName(d.customerId) || d.customerName
+        break
+      case 'supplier_return':
+        from = company
+        to = supName(d.supplierId) || 'Поставщик'
+        break
+      case 'transfer':
+        from = whName(d.fromWarehouseId)
+        to = whName(d.toWarehouseId)
+        break
+      case 'writeoff':
+      case 'inventory':
+      default:
+        from = company
+        to = null
+    }
     rows.push({
       kind: 'doc',
       at: d.postedAt || d.createdAt,
@@ -94,29 +116,38 @@ function buildTimeline(state) {
       title: docTypeInfo(d.type).label,
       type: d.type,
       by: d.by,
-      partyId: d.customerId || d.supplierId || null,
       qty: d.totalQty,
-      sum: null,
+      sum: Number(d.total) || null,
+      paid: null,
+      from,
+      to,
+      status: d.status,
       href: '#/operations',
       raw: d,
     })
   }
+
   for (const o of state.orders || []) {
     if (o.status === 'cancelled') continue
+    const p = o.payment || {}
+    const paid = (Number(p.cashPaid) || 0) + (Number(p.cardPaid) || 0)
     rows.push({
       kind: 'order',
       at: o.createdAt,
       no: o.no,
-      title: `Заказ · ${statusInfo(o.status).label}`,
+      title: `Продажа · ${statusInfo(o.status).label}`,
       by: o.by,
-      partyId: o.customerId,
-      party: o.customerName,
       qty: (o.items || []).reduce((a, x) => a + (Number(x.qty) || 0), 0),
       sum: o.total,
+      paid: paid || (['delivered', 'shipped'].includes(o.status) ? o.total : 0),
+      from: company,
+      to: o.customerName || custName(o.customerId) || 'Розница',
+      status: o.status,
       href: `#/orders?id=${o.id}`,
       raw: o,
     })
   }
+
   for (const inv of state.invoices || []) {
     rows.push({
       kind: 'invoice',
@@ -124,32 +155,77 @@ function buildTimeline(state) {
       no: inv.no,
       title: inv.kind === 'in' ? 'Приходная накладная' : 'Расходная накладная',
       by: null,
-      party: inv.party,
       qty: (inv.items || []).reduce((a, x) => a + (Number(x.qty) || 0), 0),
       sum: inv.total,
+      paid: null,
+      from: inv.kind === 'in' ? inv.party : company,
+      to: inv.kind === 'in' ? company : inv.party,
+      status: 'posted',
       href: '#/invoices',
       raw: inv,
     })
   }
+
   for (const t of state.moneyTx || []) {
     if (t.status === 'cancelled') continue
+    let from = null
+    let to = null
+    if (t.type === 'in') {
+      from = custName(t.customerId) || supName(t.supplierId) || 'Плательщик'
+      to = accName(t.accountId)
+    } else if (t.type === 'out') {
+      from = accName(t.accountId)
+      to = supName(t.supplierId) || custName(t.customerId) || 'Получатель'
+    } else {
+      from = accName(t.accountId)
+      to = accName(t.toAccountId)
+    }
     rows.push({
       kind: 'money',
       at: t.at,
       no: t.no,
       title: purposeLabel(t.type, t.purpose),
       by: t.by,
-      partyId: t.customerId || t.supplierId || null,
-      accountId: t.accountId,
-      toAccountId: t.toAccountId,
       qty: null,
       sum: t.amount,
+      paid: t.amount, // money-транзакция всегда «оплачено» полностью
+      from,
+      to,
+      status: t.status || 'posted',
       href: '#/money',
       raw: t,
     })
   }
+
   rows.sort((a, b) => (a.at < b.at ? 1 : -1))
   return rows
+}
+
+// Заголовок группы по дню — «25 июля», «Сегодня», «Вчера».
+function dayLabel(iso) {
+  const d = new Date(iso)
+  const today = new Date()
+  const yest = new Date()
+  yest.setDate(today.getDate() - 1)
+  const sameDay = (a, b) =>
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate()
+  if (sameDay(d, today)) return 'Сегодня'
+  if (sameDay(d, yest)) return 'Вчера'
+  return d.toLocaleDateString('ru-RU', { day: '2-digit', month: 'long', year: 'numeric' })
+}
+
+// Тональность точки-статуса.
+function statusDot(row) {
+  const c = classify(row)
+  if (row.status === 'draft') return { color: 'bg-warn', title: 'Черновик' }
+  if (row.status === 'cancelled') return { color: 'bg-bad', title: 'Отменён' }
+  if (c.startsWith('goods-in') || c === 'money-in')
+    return { color: 'bg-ok', title: 'Приход' }
+  if (c.startsWith('goods-out') || c === 'money-out')
+    return { color: 'bg-bad', title: 'Расход' }
+  return { color: 'bg-info', title: 'Служебное' }
 }
 
 export default function Movements() {
@@ -172,29 +248,33 @@ export default function Movements() {
   const filtered = useMemo(() => {
     const s = q.trim().toLowerCase()
     return timeline.filter((r) => {
-      // Период
       if (range.from && r.at < range.from) return false
       if (range.to && r.at > range.to) return false
-      // Тип
       const cls = classify(r)
-      if (kind !== 'all' && !cls.startsWith(kind.replace('goods-', 'goods-').replace('money-', 'money-')) && cls !== kind) return false
-      // Сотрудник
+      if (kind !== 'all' && cls !== kind) return false
       if (empId !== 'all' && r.by !== empId) return false
-      // Контрагент
-      if (partyId !== 'all' && r.partyId !== partyId) return false
-      // Счёт (только для money-строк — обычные документы не считаем «мимо кассы»)
-      if (accId !== 'all' && r.kind === 'money' && r.accountId !== accId && r.toAccountId !== accId) return false
-      if (accId !== 'all' && r.kind !== 'money') return false
-      // Поиск
+      if (partyId !== 'all') {
+        // Проверка partyId по всем источникам (customer/supplier/party name).
+        const raw = r.raw
+        const has =
+          raw.customerId === partyId ||
+          raw.supplierId === partyId ||
+          raw.partyId === partyId
+        if (!has) return false
+      }
+      if (accId !== 'all') {
+        if (r.kind !== 'money') return false
+        if (r.raw.accountId !== accId && r.raw.toAccountId !== accId) return false
+      }
       if (s) {
-        const hay = `${r.no} ${r.title} ${r.party || ''}`.toLowerCase()
+        const hay = `${r.no} ${r.title} ${r.from || ''} ${r.to || ''}`.toLowerCase()
         if (!hay.includes(s)) return false
       }
       return true
     })
   }, [timeline, range, kind, empId, partyId, accId, q])
 
-  // Сводки за фильтр
+  // Сводки за фильтр — 4 плитки.
   const summary = useMemo(() => {
     let goodsIn = 0, goodsOut = 0, moneyIn = 0, moneyOut = 0
     for (const r of filtered) {
@@ -210,23 +290,35 @@ export default function Movements() {
     return { goodsIn, goodsOut, moneyIn, moneyOut }
   }, [filtered])
 
+  // Группировка по дням для sticky-заголовков.
+  const groups = useMemo(() => {
+    const g = []
+    let cur = null
+    for (const r of filtered.slice(0, 500)) {
+      const label = dayLabel(r.at)
+      if (!cur || cur.label !== label) {
+        cur = { label, rows: [] }
+        g.push(cur)
+      }
+      cur.rows.push(r)
+    }
+    return g
+  }, [filtered])
+
   const nameOf = (id) => employees.find((e) => e.id === id)?.name || '—'
-  const partyName = (r) =>
-    r.party ||
-    customers.find((c) => c.id === r.partyId)?.name ||
-    suppliers.find((s) => s.id === r.partyId)?.name ||
-    ''
+  const fmtTime = (iso) =>
+    new Date(iso).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
 
   return (
     <div className="animate-fadeUp space-y-4">
       <div>
         <h2 className="text-xl font-semibold tracking-tight">Движение товара</h2>
         <p className="text-sm text-muted">
-          Все документы, заказы, накладные и деньги — в одной ленте с фильтрами.
+          Все документы, заказы, накладные и деньги — в одной ленте.
         </p>
       </div>
 
-      {/* Фильтр по типу — верхние табы */}
+      {/* Табы по типу */}
       <div className="flex gap-1.5 overflow-x-auto no-scrollbar">
         {KIND_TABS.map((t) => (
           <button
@@ -244,7 +336,7 @@ export default function Movements() {
         ))}
       </div>
 
-      {/* Сводки за период (по фильтру) */}
+      {/* Сводки */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <Mini label="Приход товара" value={`${num(summary.goodsIn)} ед.`} tone="ok" />
         <Mini label="Расход товара" value={`${num(summary.goodsOut)} ед.`} tone="bad" />
@@ -252,7 +344,7 @@ export default function Movements() {
         <Mini label="Расход денег" value={money(summary.moneyOut)} tone="bad" />
       </div>
 
-      {/* Панель фильтров */}
+      {/* Узкая полоска фильтров — 5 колонок как в CloudShop */}
       <Card className="p-3">
         <div className="grid sm:grid-cols-2 lg:grid-cols-5 gap-2">
           <Field label="Период">
@@ -307,77 +399,42 @@ export default function Movements() {
         </div>
       </Card>
 
-      {/* Лента */}
+      {/* Таблица движений */}
       <Card className="overflow-hidden">
-        {filtered.length === 0 ? (
+        {groups.length === 0 ? (
           <Empty
             icon={BarChart3}
             title="Ничего не найдено"
             text="Смените период или сбросьте фильтры."
           />
         ) : (
-          <div className="divide-y divide-line">
-            {filtered.slice(0, 500).map((r, i) => {
-              const cls = classify(r)
-              const Icon = ICON_FOR(cls)
-              const tone = TONE_FOR(cls)
-              return (
-                <a
-                  key={`${r.kind}-${r.no}-${i}`}
-                  href={r.href}
-                  className="flex items-center gap-3 p-3.5 hover:bg-surface-2/60 transition no-underline text-inherit"
-                >
-                  <div
-                    className={cx(
-                      'h-9 w-9 rounded-lg grid place-items-center shrink-0',
-                      tone === 'ok'
-                        ? 'bg-ok-soft text-ok'
-                        : tone === 'bad'
-                          ? 'bg-bad-soft text-bad'
-                          : 'bg-info-soft text-info',
-                    )}
-                  >
-                    <Icon size={17} />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="text-[13px] font-medium flex items-center gap-2 flex-wrap">
-                      <span>{r.title}</span>
-                      <Badge tone="brand" className="text-[10px]">{r.no}</Badge>
-                    </div>
-                    <div className="text-[11.5px] text-muted mt-0.5 truncate">
-                      {new Date(r.at).toLocaleString('ru-RU', {
-                        day: '2-digit',
-                        month: '2-digit',
-                        year: '2-digit',
-                        hour: '2-digit',
-                        minute: '2-digit',
-                      })}
-                      {r.by && ` · ${nameOf(r.by)}`}
-                      {partyName(r) && ` · ${partyName(r)}`}
-                    </div>
-                  </div>
-                  {r.qty != null && (
-                    <div className="text-[13px] tabular-nums shrink-0 text-muted">
-                      {num(r.qty)} ед.
-                    </div>
-                  )}
-                  {r.sum != null && (
-                    <div
-                      className={cx(
-                        'text-[15px] font-semibold tabular-nums shrink-0',
-                        tone === 'ok'
-                          ? 'text-ok'
-                          : tone === 'bad'
-                            ? 'text-bad'
-                            : 'text-info',
-                      )}
-                    >
-                      {money(r.sum)}
-                    </div>
-                  )}
-                </a>
-              )
-            })}
+          <div className="overflow-x-auto">
+            <table className="w-full text-[13px]">
+              <thead className="bg-surface-2/60 text-muted text-[11.5px] uppercase tracking-wide">
+                <tr>
+                  <th className="w-8 pl-3 py-2"></th>
+                  <th className="text-left py-2 pr-3">Документ</th>
+                  <th className="text-left py-2 pr-3 w-16">Время</th>
+                  <th className="text-right py-2 pr-3 w-16">Поз.</th>
+                  <th className="text-right py-2 pr-3 w-28">Сумма</th>
+                  <th className="text-right py-2 pr-3 w-28">Оплачено</th>
+                  <th className="text-left py-2 pr-3">Отправитель</th>
+                  <th className="text-left py-2 pr-3">Получатель</th>
+                  <th className="text-left py-2 pr-3 w-32">Автор</th>
+                </tr>
+              </thead>
+              <tbody>
+                {groups.map((g) => (
+                  <FragmentGroup
+                    key={g.label}
+                    label={g.label}
+                    rows={g.rows}
+                    nameOf={nameOf}
+                    fmtTime={fmtTime}
+                  />
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
         {filtered.length > 500 && (
@@ -387,6 +444,81 @@ export default function Movements() {
         )}
       </Card>
     </div>
+  )
+}
+
+// Одна группа-день: строка-заголовок (sticky) + строки-документы.
+function FragmentGroup({ label, rows, nameOf, fmtTime }) {
+  return (
+    <>
+      <tr className="sticky top-0 z-10 bg-surface-3 text-ink">
+        <td colSpan={9} className="px-3 py-1.5 text-[12px] font-semibold">
+          {label} · {rows.length}
+        </td>
+      </tr>
+      {rows.map((r, i) => {
+        const dot = statusDot(r)
+        const cancelled = r.status === 'cancelled'
+        const draft = r.status === 'draft'
+        return (
+          <tr
+            key={`${r.kind}-${r.no}-${i}`}
+            className={cx(
+              'border-t border-line hover:bg-surface-2/60 transition cursor-pointer',
+              cancelled && 'opacity-50 line-through',
+            )}
+            onClick={() => (window.location.hash = r.href.replace(/^#/, ''))}
+          >
+            <td className="pl-3 py-2 align-middle">
+              <span
+                className={cx('inline-block w-2.5 h-2.5 rounded-full', dot.color)}
+                title={dot.title}
+              />
+            </td>
+            <td className="py-2 pr-3 align-middle">
+              <div className="flex items-center gap-1.5">
+                {draft && (
+                  <AlertTriangle size={13} className="text-warn shrink-0" title="Черновик" />
+                )}
+                <span className="font-medium truncate">{r.title}</span>
+                <Badge tone="brand" className="text-[10px] shrink-0">{r.no}</Badge>
+              </div>
+            </td>
+            <td className="py-2 pr-3 align-middle tabular-nums text-muted">
+              {fmtTime(r.at)}
+            </td>
+            <td className="py-2 pr-3 align-middle text-right tabular-nums">
+              {r.qty != null ? num(r.qty) : ''}
+            </td>
+            <td className="py-2 pr-3 align-middle text-right tabular-nums font-medium">
+              {r.sum != null ? money(r.sum) : ''}
+            </td>
+            <td className="py-2 pr-3 align-middle text-right tabular-nums">
+              {r.paid != null && r.paid > 0 ? (
+                <span
+                  className={cx(
+                    r.sum && r.paid >= r.sum ? 'text-ok' : 'text-warn',
+                  )}
+                >
+                  {money(r.paid)}
+                </span>
+              ) : (
+                <span className="text-muted">—</span>
+              )}
+            </td>
+            <td className="py-2 pr-3 align-middle truncate max-w-[180px]">
+              {r.from || '—'}
+            </td>
+            <td className="py-2 pr-3 align-middle truncate max-w-[180px]">
+              {r.to || '—'}
+            </td>
+            <td className="py-2 pr-3 align-middle truncate max-w-[140px] text-muted">
+              {r.by ? nameOf(r.by) : ''}
+            </td>
+          </tr>
+        )
+      })}
+    </>
   )
 }
 

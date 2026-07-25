@@ -174,6 +174,16 @@ export function persistMigrate(state, version) {
     state.purchaseOrders = state.purchaseOrders || []
   }
 
+  if (version < 15) {
+    // Габариты и фактический вес товара. product.dimensions = { h, w, d,
+    // weight } — новые поля из карточки товара (CloudShop-стиль).
+    // Для существующих БД просто досыпаем пустой объект.
+    state.products = (state.products || []).map((p) => ({
+      ...p,
+      dimensions: p.dimensions || {},
+    }))
+  }
+
   return state
 }
 

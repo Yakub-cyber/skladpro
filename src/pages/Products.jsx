@@ -1098,18 +1098,49 @@ function ProductModal({ product, onClose }) {
         {!isServiceForm && !isKitForm && (
           <BarcodeField value={f.barcode} onChange={(v) => set('barcode', v)} />
         )}
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-3 gap-3">
           <Field label="Ед. изм.">
             <Input value={f.unit} onChange={(e) => set('unit', e.target.value)} />
           </Field>
-          {/* Себестоимость: у услуги обычно 0/оценка, у комплекта — сумма
-              cost составляющих (посчитается при проведении FIFO). Оставляем
-              поле для ручного ориентира. */}
+          {/* Себестоимость + наценка: связаны с ценой продажи по-умолчанию
+              (defType). Пользователь меняет любое из трёх — остальные
+              пересчитываются. Похоже на CloudShop-модалку товара. */}
           <Field label={isServiceForm ? 'Себестоимость, ₽' : 'Закупка, ₽'}>
             <Input
               type="number"
               value={f.cost}
-              onChange={(e) => set('cost', +e.target.value)}
+              onChange={(e) => {
+                const cost = +e.target.value
+                setF((s) => {
+                  const price = Number(s.prices?.[defType] ?? s.price) || 0
+                  // Если задана цена продажи > 0 — держим её, пересчитываем %
+                  // при отсутствующей цене — не трогаем prices, ждём отдельной правки.
+                  return { ...s, cost }
+                })
+              }}
+            />
+          </Field>
+          <Field label="Наценка, %" hint="изменяет цену продажи (базовую)">
+            <Input
+              type="number"
+              value={(() => {
+                const price = Number(f.prices?.[defType] ?? f.price) || 0
+                const cost = Number(f.cost) || 0
+                if (!cost) return ''
+                // Округление до 0.1%: (price-cost)/cost * 100 = %.
+                return Math.round(((price - cost) / cost) * 1000) / 10
+              })()}
+              onChange={(e) => {
+                const margin = +e.target.value
+                const cost = Number(f.cost) || 0
+                if (!cost) return
+                const price = Math.round(cost * (1 + margin / 100))
+                setF((s) => ({
+                  ...s,
+                  price,
+                  prices: { ...s.prices, [defType]: price },
+                }))
+              }}
             />
           </Field>
         </div>
@@ -1223,6 +1254,57 @@ function ProductModal({ product, onClose }) {
                 />
               </Field>
             )}
+          </div>
+        )}
+
+        {/* Характеристики: габариты и вес — для доставки, паллетирования,
+            расчёта веса упаковки. Услуги/комплекты не имеют физических
+            размеров. Хранится в product.dimensions = { h, w, d, weight }. */}
+        {!isServiceForm && !isKitForm && (
+          <div className="pt-1 space-y-2">
+            <span className="block text-[13px] font-medium text-muted">Характеристики</span>
+            <div className="grid grid-cols-4 gap-2">
+              <Field label="Высота, см">
+                <Input
+                  type="number"
+                  value={f.dimensions?.h ?? ''}
+                  onChange={(e) =>
+                    set('dimensions', { ...(f.dimensions || {}), h: +e.target.value })
+                  }
+                />
+              </Field>
+              <Field label="Ширина, см">
+                <Input
+                  type="number"
+                  value={f.dimensions?.w ?? ''}
+                  onChange={(e) =>
+                    set('dimensions', { ...(f.dimensions || {}), w: +e.target.value })
+                  }
+                />
+              </Field>
+              <Field label="Глубина, см">
+                <Input
+                  type="number"
+                  value={f.dimensions?.d ?? ''}
+                  onChange={(e) =>
+                    set('dimensions', { ...(f.dimensions || {}), d: +e.target.value })
+                  }
+                />
+              </Field>
+              <Field label="Факт. вес, кг">
+                <Input
+                  type="number"
+                  step="0.01"
+                  value={f.dimensions?.weight ?? ''}
+                  onChange={(e) =>
+                    set('dimensions', {
+                      ...(f.dimensions || {}),
+                      weight: +e.target.value,
+                    })
+                  }
+                />
+              </Field>
+            </div>
           </div>
         )}
       </div>
