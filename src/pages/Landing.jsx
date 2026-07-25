@@ -155,7 +155,12 @@ const PLANS = [
   },
 ]
 
-export default function Landing({ onStart, onConnect }) {
+export default function Landing({ onStart, onConnect, onRegister }) {
+  // onStart — «Войти» (вкладка signin); onRegister — «Создать аккаунт»
+  // (вкладка signup). Разделяем, чтобы кнопка «Регистрация» на всех
+  // трёх местах Landing (header/hero/bottom CTA) вела ровно в signup —
+  // раньше и «Войти», и «Создать аккаунт» вели в одну signin-вкладку.
+  const onReg = onRegister || onStart
   return (
     <div className="min-h-screen bg-bg text-ink overflow-x-hidden">
       {/* Шапка */}
@@ -175,6 +180,9 @@ export default function Landing({ onStart, onConnect }) {
           <Button variant="soft" size="sm" onClick={onStart}>
             Войти
           </Button>
+          <Button size="sm" onClick={onReg}>
+            Регистрация
+          </Button>
         </div>
       </header>
 
@@ -190,7 +198,7 @@ export default function Landing({ onStart, onConnect }) {
           Товары, заказы, доставка, касса и аналитика — в одном месте. Накладные из текста, карта склада, маршруты по реальным дорогам. Работает из браузера, данные в облаке.
         </p>
         <div className="flex flex-wrap items-center justify-center gap-3 mt-8">
-          <Button size="lg" icon={ArrowRight} onClick={onStart}>
+          <Button size="lg" icon={ArrowRight} onClick={onReg}>
             Начать бесплатно
           </Button>
           <Button size="lg" variant="outline" onClick={onStart}>
@@ -251,7 +259,7 @@ export default function Landing({ onStart, onConnect }) {
               <Button
                 variant={p.featured ? 'primary' : 'soft'}
                 className="w-full mt-5"
-                onClick={onStart}
+                onClick={onReg}
               >
                 {p.cta}
               </Button>
@@ -280,7 +288,7 @@ export default function Landing({ onStart, onConnect }) {
           <div className="relative z-10">
             <h2 className="text-2xl sm:text-3xl font-semibold">Запустите свой склад за минуту</h2>
             <p className="text-white/85 mt-2">Зарегистрируйтесь — демо-данные уже внутри, можно сразу пробовать.</p>
-            <Button size="lg" variant="soft" className="mt-6 !bg-white !text-brand" icon={ArrowRight} onClick={onStart}>
+            <Button size="lg" variant="soft" className="mt-6 !bg-white !text-brand" icon={ArrowRight} onClick={onReg}>
               Создать аккаунт
             </Button>
           </div>

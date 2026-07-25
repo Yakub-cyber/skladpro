@@ -136,3 +136,51 @@ export const fmtDuration = (min) => {
   const m = min % 60
   return h ? `${h} ч ${m} мин` : `${m} мин`
 }
+
+// Геокодирование адреса через Nominatim (OpenStreetMap, публичный,
+// без ключа). Простой in-memory кэш + троттлинг 1 запрос в секунду
+// (условие честного использования). Возвращает { lat, lng } или null.
+//
+// Реальная работа: юзер вводит адрес в NewOrder → debounce 800 мс →
+// вызывает geocodeAddress → сохраняем в order.geo. На Delivery.jsx
+// geoLatLng сразу подхватывает order.geo первым делом.
+const _geoCache = new Map()
+let _geoLastAt = 0
+
+export async function geocodeAddress(query) {
+  const q = String(query || '').trim()
+  if (q.length < 4) return null
+  if (_geoCache.has(q)) return _geoCache.get(q)
+
+  // Троттлинг: не чаще 1 запроса в секунду (Nominatim usage policy).
+  const now = Date.now()
+  const wait = Math.max(0, _geoLastAt + 1000 - now)
+  if (wait) await new Promise((r) => setTimeout(r, wait))
+  _geoLastAt = Date.now()
+
+  const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=1&accept-language=ru`
+  try {
+    const ctrl = new AbortController()
+    const t = setTimeout(() => ctrl.abort(), 5000)
+    const res = await fetch(url, {
+      signal: ctrl.signal,
+      headers: { Accept: 'application/json' },
+    })
+    clearTimeout(t)
+    const arr = await res.json()
+    const hit = arr?.[0]
+    if (!hit?.lat || !hit?.lon) {
+      _geoCache.set(q, null)
+      return null
+    }
+    const geo = {
+      lat: +Number(hit.lat).toFixed(5),
+      lng: +Number(hit.lon).toFixed(5),
+      displayName: hit.display_name || q,
+    }
+    _geoCache.set(q, geo)
+    return geo
+  } catch {
+    return null
+  }
+}

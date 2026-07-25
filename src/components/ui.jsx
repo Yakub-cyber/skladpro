@@ -106,9 +106,14 @@ export function StatusBadge({ status }) {
 }
 
 // ── Stat (KPI) ──────────────────────────────────────────────────────────
-export function Stat({ label, value, sub, icon: Icon, tone = 'brand', trend }) {
-  return (
-    <Card className="p-4 flex items-center gap-4">
+// Stat принимает опциональный `to` — тогда карточка становится
+// react-router Link'ом с hover-подсветкой, и по клику ведёт на соот-
+// ветствующий раздел. Раньше плитки Dashboard были глухими <div> —
+// операторы жаловались, что «Ниже минимума 8» видно, а куда нажать
+// чтоб посмотреть эти 8 — не понятно.
+export function Stat({ label, value, sub, icon: Icon, tone = 'brand', trend, to }) {
+  const body = (
+    <>
       <div
         className={cx(
           'h-11 w-11 rounded-xl grid place-items-center shrink-0',
@@ -133,8 +138,21 @@ export function Stat({ label, value, sub, icon: Icon, tone = 'brand', trend }) {
           </div>
         )}
       </div>
-    </Card>
+    </>
   )
+  if (to) {
+    // Проект использует HashRouter, поэтому именно `#/path` — при клике
+    // React Router увидит новый hash и отрендерит нужный экран.
+    return (
+      <a
+        href={'#' + to}
+        className="card p-4 flex items-center gap-4 no-underline text-inherit hover:border-brand/40 hover:shadow-md transition cursor-pointer"
+      >
+        {body}
+      </a>
+    )
+  }
+  return <Card className="p-4 flex items-center gap-4">{body}</Card>
 }
 
 // ── Поля ввода ──────────────────────────────────────────────────────────

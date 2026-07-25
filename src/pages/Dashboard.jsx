@@ -134,6 +134,7 @@ function DashboardManager() {
           icon={Wallet}
           tone="brand"
           trend={chart.trend}
+          to="/analytics"
         />
         <Stat
           label="Активные заказы"
@@ -141,6 +142,7 @@ function DashboardManager() {
           sub={`в работе на ${money(m.active.reduce((a, o) => a + o.total, 0))}`}
           icon={ClipboardList}
           tone="info"
+          to="/orders?filter=active"
         />
         <Stat
           label="Ниже минимума"
@@ -148,6 +150,7 @@ function DashboardManager() {
           sub="требуют закупки"
           icon={AlertTriangle}
           tone={m.low.length ? 'bad' : 'ok'}
+          to="/products?stockStatus=low"
         />
         <Stat
           label="Клиентов"
@@ -155,6 +158,7 @@ function DashboardManager() {
           sub={debt > 0 ? `дебиторка ${money(debt)}` : `средний чек ${money(m.avg)}`}
           icon={Users}
           tone={debt > 0 ? 'warn' : 'ok'}
+          to="/customers"
         />
       </div>
 

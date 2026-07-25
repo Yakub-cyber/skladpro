@@ -7,28 +7,50 @@ import { requestPasswordReset } from '../lib/cloud'
 import Landing from './Landing'
 import Connect from './Connect'
 
-export default function Login() {
-  const cloud = useStore((s) => s.cloud)
-  const [showAuth, setShowAuth] = useState(false)
-  const [showConnect, setShowConnect] = useState(false)
-  // И для облачного, и для локального режима стартовый экран после
-  // выхода — Landing, чтобы «Выйти» действительно уводило на главную,
-  // а не на выбор сотрудника. Локальному режиму «Начать» показывает
-  // PIN-pad, облачному — экран входа Supabase.
-  if (showAuth) {
-    return cloud
-      ? <CloudLogin onBack={() => setShowAuth(false)} />
-      : <PinLogin onBack={() => setShowAuth(false)} />
-  }
-  if (showConnect)
-    return <Connect onStart={() => setShowAuth(true)} onBack={() => setShowConnect(false)} />
-  return <Landing onStart={() => setShowAuth(true)} onConnect={() => setShowConnect(true)} />
+// Чтение параметра из hash-URL (у нас HashRouter, поэтому query после #/).
+// `?invite=xxx&email=y@z` → { invite: 'xxx', email: 'y@z' }.
+function readHashParam(key) {
+  if (typeof window === 'undefined') return ''
+  const h = window.location.hash || ''
+  const qi = h.indexOf('?')
+  if (qi < 0) return ''
+  const params = new URLSearchParams(h.slice(qi + 1))
+  return params.get(key) || ''
 }
 
-// Онбординг: вошёл, но компании ещё нет → создаём (тенант)
+export default function Login() {
+  const cloud = useStore((s) => s.cloud)
+  // authMode: null → показываем Landing, 'signin' → форма входа,
+  // 'signup' → форма регистрации (в облаке — CloudLogin с открытой
+  // вкладкой «Регистрация»; в локальном PIN-pad всё то же).
+  const [authMode, setAuthMode] = useState(null)
+  const [showConnect, setShowConnect] = useState(false)
+  if (authMode) {
+    return cloud
+      ? <CloudLogin initialMode={authMode} onBack={() => setAuthMode(null)} />
+      : <PinLogin onBack={() => setAuthMode(null)} />
+  }
+  if (showConnect)
+    return <Connect onStart={() => setAuthMode('signin')} onBack={() => setShowConnect(false)} />
+  return (
+    <Landing
+      onStart={() => setAuthMode('signin')}
+      onRegister={() => setAuthMode('signup')}
+      onConnect={() => setShowConnect(true)}
+    />
+  )
+}
+
+// Онбординг: вошёл, но компании ещё нет.
+//   Если inviteError — показываем ошибку инвайта, чтобы приглашённый
+//     сотрудник НЕ создал случайно свою компанию (это раньше было
+//     основной жалобой: сотрудник заходил через регистрацию, попадал
+//     в форму «Создать компанию» и жал OK — становился владельцем).
+//   Если инвайта не было — обычная форма создания.
 export function Onboarding() {
   const createCompany = useStore((s) => s.createCompany)
   const cloudLogout = useStore((s) => s.cloudLogout)
+  const inviteError = useStore((s) => s.inviteError)
   const [name, setName] = useState('')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
@@ -43,6 +65,38 @@ export function Onboarding() {
       setErr(r.error)
       setBusy(false)
     }
+  }
+
+  if (inviteError) {
+    return (
+      <div className="min-h-screen grid place-items-center bg-bg p-5">
+        <div className="w-full max-w-sm">
+          <div className="flex flex-col items-center mb-7">
+            <div className="h-14 w-14 rounded-2xl bg-warn-soft text-warn grid place-items-center mb-3">
+              <ShieldCheck size={28} strokeWidth={2.2} />
+            </div>
+            <div className="text-xl font-semibold tracking-tight text-center">
+              Приглашение не найдено
+            </div>
+          </div>
+          <div className="card p-5 space-y-3 text-[13px]">
+            <p>{inviteError}</p>
+            <p className="text-muted leading-relaxed">
+              Попросите администратора выслать вам новую ссылку из раздела
+              «Сотрудники → Пригласить». Регистрация по email работает
+              только если он вас уже пригласил — иначе создастся новая
+              отдельная компания вместо присоединения к существующей.
+            </p>
+            <button
+              onClick={cloudLogout}
+              className="w-full h-10 flex items-center justify-center gap-2 text-[13px] text-muted hover:text-ink border border-line rounded-lg"
+            >
+              <LogOut size={14} /> Выйти и войти под другим email
+            </button>
+          </div>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -317,10 +371,17 @@ function PadBtn({ children, onClick, className }) {
   )
 }
 
-function CloudLogin({ onBack }) {
+function CloudLogin({ onBack, initialMode = 'signin' }) {
   const { signIn, signUp } = useStore()
-  const [mode, setMode] = useState('signin') // signin | signup
-  const [email, setEmail] = useState('')
+  // При открытии из Landing-«Регистрация» мы должны сразу видеть вкладку
+  // «Регистрация», а не «Вход». initialMode пробрасывается родителем.
+  // Также поддерживаем ?invite=<token>&email=<email> в hash-URL — если
+  // параметр есть, форсируем signup (юзер по инвайт-ссылке пришёл
+  // зарегистрироваться) и подставляем email из ссылки (нельзя менять).
+  const inviteToken = readHashParam('invite')
+  const inviteEmail = readHashParam('email')
+  const [mode, setMode] = useState(inviteToken ? 'signup' : initialMode)
+  const [email, setEmail] = useState(inviteEmail)
   const [pass, setPass] = useState('')
   const [name, setName] = useState('')
   const [busy, setBusy] = useState(false)
@@ -346,7 +407,7 @@ function CloudLogin({ onBack }) {
     const r =
       mode === 'signin'
         ? await signIn(email, pass)
-        : await signUp(email, pass, name)
+        : await signUp(email, pass, name, inviteToken || null)
     if (!r.ok) {
       setErr(r.error)
       setBusy(false)
@@ -408,12 +469,27 @@ function CloudLogin({ onBack }) {
                 <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Ваше имя" />
               </Field>
             )}
-            <Field label="Email">
+            <Field label="Email" hint={inviteEmail && mode === 'signup' ? 'Email из приглашения — изменить нельзя' : undefined}>
               <div className="relative">
                 <Mail size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
-                <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="mail@example.ru" className="pl-9" autoComplete="email" />
+                <Input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="mail@example.ru"
+                  className="pl-9"
+                  autoComplete="email"
+                  readOnly={!!(inviteEmail && mode === 'signup')}
+                />
               </div>
             </Field>
+            {inviteToken && mode === 'signup' && (
+              <div className="text-[12px] text-info bg-info-soft/50 rounded-lg px-3 py-2">
+                Вы принимаете приглашение в существующую компанию — своя
+                компания создаваться не будет, вы сразу станете её
+                сотрудником.
+              </div>
+            )}
             {mode !== 'forgot' && (
               <Field label="Пароль" hint={mode === 'signup' ? 'Минимум 8 символов' : undefined}>
                 <div className="relative">

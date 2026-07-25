@@ -670,6 +670,12 @@ export const useStore = create(
       // ── Поставщики ───────────────────────────────────────────
       addSupplier: (sup) =>
         set((s) => ({ suppliers: [{ id: uid('s'), ...sup }, ...s.suppliers] })),
+      updateSupplier: (id, patch) =>
+        set((s) => ({
+          suppliers: s.suppliers.map((sp) => (sp.id === id ? { ...sp, ...patch } : sp)),
+        })),
+      removeSupplier: (id) =>
+        set((s) => ({ suppliers: s.suppliers.filter((sp) => sp.id !== id) })),
 
       // ── Категории цен ────────────────────────────────────────
       addPriceType: (pt) => {

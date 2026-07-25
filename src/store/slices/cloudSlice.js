@@ -58,6 +58,7 @@ export const cloudInitialState = {
   syncError: null,
   _authInited: false,
   needOnboarding: false,
+  inviteError: null, // текст ошибки accept_invitation (например «не найдено»)
   recoveryMode: false,
   resetToken: null,
   companyId: null,
@@ -129,14 +130,31 @@ export const createCloudSlice = (set, get) => ({
         return
       }
       let membership = await getMembership()
+      let inviteAttempted = false
+      let inviteError = null
       if (!membership) {
         // вдруг пользователь приглашён в компанию → привязать
-        const invitedCompany = await acceptInvitation()
-        if (invitedCompany) membership = await getMembership()
+        inviteAttempted = true
+        try {
+          const invitedCompany = await acceptInvitation()
+          if (invitedCompany) membership = await getMembership()
+        } catch (e) {
+          // Сохраняем ошибку — Onboarding покажет её вместо
+          // «создайте компанию», чтобы приглашённый не создал
+          // случайно свою компанию поверх приглашения.
+          inviteError = String(e?.message || e)
+        }
       }
       if (!membership) {
-        // пользователь без компании → онбординг (создать свою)
-        set({ authUserId: null, needOnboarding: true, cloudReady: false })
+        // Пользователь без компании. Если пришёл по инвайту и accept
+        // не сработал — показываем ошибку и НЕ ведём в онбординг,
+        // иначе он создаст свою компанию и не станет сотрудником.
+        set({
+          authUserId: null,
+          needOnboarding: !inviteAttempted, // онбординг только если инвайта не было
+          inviteError: inviteError || (inviteAttempted ? 'Приглашение не найдено — попросите администратора выслать новую ссылку.' : null),
+          cloudReady: false,
+        })
         return
       }
       const companyId = membership.company_id

@@ -27,6 +27,7 @@ import { money, num } from '../lib/format'
 import { CATEGORIES, catInfo, priceFor } from '../lib/constants'
 import { resolveScan } from '../lib/barcode'
 import { reservedByProduct } from '../lib/orders'
+import { geocodeAddress } from '../lib/geo'
 import { computeKitStock } from '../lib/kit'
 
 const CAT_ICON = { Wrench, Hammer, Zap, Droplets, PaintBucket, Package }
@@ -444,6 +445,9 @@ function CartBody({
   onSetPrice,
   onSubmit,
   round3,
+  address,
+  setAddress,
+  geoStatus,
   compact = false,
 }) {
   return (
@@ -465,6 +469,26 @@ function CartBody({
           </Select>
         </Field>
       </div>
+      {setAddress && (
+        <Field
+          label="Адрес доставки"
+          hint={
+            geoStatus === 'found'
+              ? '📍 адрес распознан, пин на карте будет точным'
+              : geoStatus === 'searching'
+                ? '…ищу координаты'
+                : geoStatus === 'nohit'
+                  ? 'не нашли координаты — Delivery покажет город без точного пина'
+                  : 'необязательно; используется на карте доставки'
+          }
+        >
+          <Input
+            value={address}
+            onChange={(e) => setAddress(e.target.value)}
+            placeholder="г. Казань, ул. Мира, 5"
+          />
+        </Field>
+      )}
 
       <div className={cx('flex-1 min-h-[80px]', !compact && 'overflow-y-auto no-scrollbar -mx-1 px-1')}>
         {rows.length === 0 ? (
@@ -609,6 +633,12 @@ export default function NewOrder() {
   const [mobileCart, setMobileCart] = useState(false) // bottom-sheet чека
   const [payOpen, setPayOpen] = useState(false) // модалка выбора способа оплаты
   const [savedAt, setSavedAt] = useState(0) // время последнего автосейва (для UI-статуса)
+  // Адрес доставки: раньше сохранялся только city клиента (плоско, без
+  // геокода) — при построении маршрута в Delivery получали случайные
+  // пины. Теперь адрес редактируемый, а на blur / debounce мы гоняем
+  // Nominatim → сохраняем order.geo при создании.
+  const [address, setAddress] = useState('')
+  const [geo, setGeo] = useState(null) // { lat, lng, displayName } или null
 
   // ── Автосейв корзины ─────────────────────────────────────────────────
   // На /orders/new частая ситуация: кассир пробивает 100 позиций опт-клиенту,
@@ -726,7 +756,27 @@ export default function NewOrder() {
     setCustomerId(id)
     const c = customers.find((x) => x.id === id)
     if (c?.priceTypeId) changeType(c.priceTypeId)
+    // Префилл адреса из клиента: сначала сохранённый address, иначе city.
+    // Юзер может тут же отредактировать в поле «Адрес доставки».
+    if (c?.address) setAddress(c.address)
+    else if (c?.city) setAddress(c.city)
+    setGeo(null) // адрес поменялся — сбрасываем гео, догеокодим в effect
   }
+  // Debounce геокодинга: как только адрес перестал меняться на 800 мс,
+  // спрашиваем Nominatim и сохраняем { lat, lng } — они уедут в
+  // order.geo при создании заказа (см. finalSubmit → addOrder).
+  useEffect(() => {
+    const q = (address || '').trim()
+    if (q.length < 4) {
+      setGeo(null)
+      return
+    }
+    const t = setTimeout(async () => {
+      const hit = await geocodeAddress(q)
+      if (hit) setGeo(hit)
+    }, 800)
+    return () => clearTimeout(t)
+  }, [address])
   const changeType = (ptId) => {
     setPriceTypeId(ptId)
     setOnCredit(isCreditType(ptId))
@@ -787,7 +837,10 @@ export default function NewOrder() {
       // с существующей логикой резервов/долгов клиента в сторе).
       onCredit: payment.method === 'credit',
       payment,
-      address: cust?.city || 'Самовывоз',
+      address: address || cust?.city || 'Самовывоз',
+      // Гео из Nominatim, чтобы Delivery.jsx нарисовал пин на реальном
+      // месте, а не в хешированной точке рядом с центром города.
+      geo: geo ? { lat: geo.lat, lng: geo.lng } : undefined,
       courier: 'Самовывоз',
     })
     const fresh = useStore.getState().orders[0]
@@ -837,6 +890,13 @@ export default function NewOrder() {
     onSetPrice: setPrice,
     onSubmit: openPay,
     round3,
+    address,
+    setAddress,
+    geoStatus: geo
+      ? 'found'
+      : address.trim().length >= 4
+        ? 'searching'
+        : 'idle',
   }
 
   return (

@@ -100,44 +100,42 @@ export default function Customers() {
       </div>
 
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
-        {list.map((c) => {
-          const tier = tierFor(c.totalSpent)
-          return (
-            <button
-              key={c.id}
-              onClick={() => setParams({ id: c.id })}
-              className="card p-4 text-left hover:border-brand/40 transition"
-            >
-              <div className="flex items-center gap-3">
-                <Avatar name={c.name} color={tier.color} />
-                <div className="min-w-0 flex-1">
-                  <div className="font-medium truncate">{c.name}</div>
-                  <div className="text-[12px] text-muted flex items-center gap-1">
-                    <MapPin size={11} /> {c.city} · {c.type}
-                  </div>
+        {list.map((c) => (
+          // Плашка тира (Платина/Золото/…) временно скрыта — TIERS остаётся
+          // в модели для Analytics, но в карточке клиента не выводится
+          // (пользователь просил убрать до отдельной итерации по лояльности).
+          <button
+            key={c.id}
+            onClick={() => setParams({ id: c.id })}
+            className="card p-4 text-left hover:border-brand/40 transition"
+          >
+            <div className="flex items-center gap-3">
+              <Avatar name={c.name} color="#7c6cff" />
+              <div className="min-w-0 flex-1">
+                <div className="font-medium truncate">{c.name}</div>
+                <div className="text-[12px] text-muted flex items-center gap-1">
+                  <MapPin size={11} /> {c.city} · {c.type}
                 </div>
               </div>
-              <div className="flex items-center justify-between mt-3 pt-3 border-t border-line">
-                <div>
-                  <div className="text-[11px] text-muted">Оборот</div>
-                  <div className="font-semibold text-sm tabular-nums">
-                    {money(c.totalSpent)}
-                  </div>
+            </div>
+            <div className="flex items-center justify-between mt-3 pt-3 border-t border-line">
+              <div>
+                <div className="text-[11px] text-muted">Оборот</div>
+                <div className="font-semibold text-sm tabular-nums">
+                  {money(c.totalSpent)}
                 </div>
+              </div>
+              {c.balance > 0 && (
                 <div className="text-right">
-                  <Badge tone={tier.key === 'base' ? 'muted' : 'brand'}>
-                    <Crown size={11} /> {tier.label}
-                  </Badge>
-                  {c.balance > 0 && (
-                    <div className="text-[11px] text-bad mt-1 font-medium">
-                      долг {money(c.balance)}
-                    </div>
-                  )}
+                  <div className="text-[11px] text-muted">Долг</div>
+                  <div className="text-sm text-bad font-semibold tabular-nums">
+                    {money(c.balance)}
+                  </div>
                 </div>
-              </div>
-            </button>
-          )
-        })}
+              )}
+            </div>
+          </button>
+        ))}
         {list.length === 0 && (
           <div className="col-span-full">
             <Empty icon={Search} title="Клиенты не найдены" />
@@ -161,26 +159,30 @@ function CustomerModal({ customer, orders, onClose }) {
   const addPayment = useStore((s) => s.addPayment)
   const c = useStore((s) => s.customers.find((x) => x.id === customer.id)) || customer
   const [pay, setPay] = useState('')
-  const tier = tierFor(c.totalSpent)
-  const idx = TIERS.findIndex((t) => t.key === tier.key)
-  const next = TIERS[idx + 1]
-  const progress = next
-    ? ((c.totalSpent - tier.min) / (next.min - tier.min)) * 100
-    : 100
+  const [editing, setEditing] = useState(false)
+
+  if (editing) {
+    return (
+      <EditCustomerModal
+        customer={c}
+        onClose={() => setEditing(false)}
+      />
+    )
+  }
 
   return (
     <Modal open onClose={onClose} title="Карточка клиента" wide>
       <div className="flex items-center gap-4 mb-5">
-        <Avatar name={c.name} color={tier.color} size={56} />
-        <div>
-          <h3 className="text-lg font-semibold">{c.name}</h3>
+        <Avatar name={c.name} color="#7c6cff" size={56} />
+        <div className="flex-1 min-w-0">
+          <h3 className="text-lg font-semibold truncate">{c.name}</h3>
           <p className="text-sm text-muted">
             {c.type} · с {dateFull(c.since)}
           </p>
         </div>
-        <Badge tone="brand" className="ml-auto">
-          <Crown size={12} /> {tier.label} · скидка {tier.discount}%
-        </Badge>
+        <Button variant="soft" size="sm" onClick={() => setEditing(true)}>
+          Изменить
+        </Button>
       </div>
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
@@ -230,15 +232,8 @@ function CustomerModal({ customer, orders, onClose }) {
         </div>
       </div>
 
-      {next && (
-        <div className="mb-5 p-3 rounded-xl bg-surface-2">
-          <div className="flex justify-between text-[13px] mb-1.5">
-            <span className="text-muted">До уровня «{next.label}»</span>
-            <span className="font-medium">{money(next.min - c.totalSpent)}</span>
-          </div>
-          <Progress value={progress} tone="brand" />
-        </div>
-      )}
+      {/* Плашка «до следующего уровня» скрыта до отдельной итерации по
+          лояльности; тарифная сетка Платина/Золото/Серебро — Phase 2. */}
 
       <div className="flex items-center gap-4 mb-3 text-sm">
         <a href={`tel:${c.phone}`} className="flex items-center gap-2 text-brand">
@@ -337,6 +332,83 @@ function AddCustomerModal({ open, onClose }) {
         </div>
         {/* Реквизиты — показываем только для юрлиц (ООО/ИП); попадают в
             печатные формы ТОРГ-12 / УПД / Счёт как «покупатель». */}
+        {isLegal && (
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="ИНН">
+              <Input value={f.inn} onChange={(e) => set('inn', e.target.value)} placeholder="1650000000" />
+            </Field>
+            <Field label="КПП">
+              <Input value={f.kpp} onChange={(e) => set('kpp', e.target.value)} placeholder="165001001" />
+            </Field>
+            <Field label="Юридический адрес" className="col-span-2">
+              <Input value={f.address} onChange={(e) => set('address', e.target.value)} placeholder="г. Казань, ул. …" />
+            </Field>
+          </div>
+        )}
+      </div>
+    </Modal>
+  )
+}
+
+// Редактирование существующего клиента. Использует уже готовый action
+// updateCustomer(id, patch). Форма — те же поля что и AddCustomerModal
+// + address (у юрлиц), prefilled из текущего клиента.
+function EditCustomerModal({ customer, onClose }) {
+  const updateCustomer = useStore((s) => s.updateCustomer)
+  const [f, setF] = useState({
+    name: customer.name || '',
+    type: customer.type || 'ООО',
+    city: customer.city || '',
+    contact: customer.contact || '',
+    phone: customer.phone || '',
+    inn: customer.inn || '',
+    kpp: customer.kpp || '',
+    address: customer.address || '',
+  })
+  const set = (k, v) => setF((s) => ({ ...s, [k]: v }))
+  const save = () => {
+    if (!f.name.trim()) return
+    updateCustomer(customer.id, f)
+    onClose()
+  }
+  const isLegal = f.type === 'ООО' || f.type === 'ИП'
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={`Изменить клиента · ${customer.name}`}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>Отмена</Button>
+          <Button onClick={save} disabled={!f.name.trim()}>Сохранить</Button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        <Field label="Название / ФИО">
+          <Input value={f.name} onChange={(e) => set('name', e.target.value)} />
+        </Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Тип">
+            <Select value={f.type} onChange={(e) => set('type', e.target.value)}>
+              <option>ООО</option>
+              <option>ИП</option>
+              <option>Бригада</option>
+              <option>Розница</option>
+            </Select>
+          </Field>
+          <Field label="Город">
+            <Input value={f.city} onChange={(e) => set('city', e.target.value)} />
+          </Field>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Контактное лицо">
+            <Input value={f.contact} onChange={(e) => set('contact', e.target.value)} />
+          </Field>
+          <Field label="Телефон">
+            <Input value={f.phone} onChange={(e) => set('phone', e.target.value)} placeholder="+7" />
+          </Field>
+        </div>
         {isLegal && (
           <div className="grid grid-cols-2 gap-3">
             <Field label="ИНН">

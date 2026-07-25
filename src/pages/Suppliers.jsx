@@ -40,7 +40,11 @@ function supplierFor(category, suppliers) {
 export default function Suppliers() {
   const { suppliers, products, orders, addInvoice, addSupplier } = useStore()
   const [adding, setAdding] = useState(false)
+  const [editing, setEditing] = useState(null) // объект поставщика или null
   const [done, setDone] = useState(null)
+  // «Рекомендованные закупки» сворачиваются до 4 групп, чтобы блок
+  // не занимал пол-экрана и не закрывал список поставщиков ниже.
+  const [recExpanded, setRecExpanded] = useState(false)
 
   // Рекомендованные закупки: всё ниже минимума по ДОСТУПНОМУ (остаток − резерв
   // открытых заказов), сгруппировано по поставщику. Зарезервированное вот-вот
@@ -103,7 +107,7 @@ export default function Suppliers() {
           </p>
         ) : (
           <div className="grid md:grid-cols-2 gap-4">
-            {purchaseGroups.map((g) => {
+            {(recExpanded ? purchaseGroups : purchaseGroups.slice(0, 4)).map((g) => {
               const total = g.items.reduce((a, it) => a + it.qty * it.price, 0)
               return (
                 <div key={g.supplier.id} className="rounded-xl border border-line p-4">
@@ -150,12 +154,24 @@ export default function Suppliers() {
             })}
           </div>
         )}
+        {purchaseGroups.length > 4 && (
+          <button
+            onClick={() => setRecExpanded((v) => !v)}
+            className="mt-3 text-sm text-brand hover:underline"
+          >
+            {recExpanded ? '↑ Свернуть' : `↓ Показать все ${purchaseGroups.length} поставщиков`}
+          </button>
+        )}
       </Section>
 
       {/* Поставщики */}
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
         {suppliers.map((s) => (
-          <Card key={s.id} className="p-4">
+          <button
+            key={s.id}
+            onClick={() => setEditing(s)}
+            className="card p-4 text-left hover:border-brand/40 transition"
+          >
             <div className="flex items-center gap-3">
               <Avatar name={s.name} color="#38bdf8" />
               <div className="min-w-0 flex-1">
@@ -166,19 +182,86 @@ export default function Suppliers() {
               </div>
             </div>
             <div className="mt-3 pt-3 border-t border-line space-y-1.5 text-[13px] text-muted">
-              <a href={`tel:${s.phone}`} className="flex items-center gap-2 hover:text-brand">
-                <Phone size={13} /> {s.phone}
-              </a>
               <div className="flex items-center gap-2">
-                <MapPin size={13} /> {s.city}
+                <Phone size={13} /> {s.phone || '—'}
+              </div>
+              <div className="flex items-center gap-2">
+                <MapPin size={13} /> {s.city || '—'}
               </div>
             </div>
-          </Card>
+          </button>
         ))}
       </div>
 
       <AddSupplierModal open={adding} onClose={() => setAdding(false)} />
+      {editing && (
+        <EditSupplierModal
+          supplier={editing}
+          onClose={() => setEditing(null)}
+        />
+      )}
     </div>
+  )
+}
+
+function EditSupplierModal({ supplier, onClose }) {
+  const updateSupplier = useStore((s) => s.updateSupplier)
+  const removeSupplier = useStore((s) => s.removeSupplier)
+  const [f, setF] = useState({
+    name: supplier.name || '',
+    category: supplier.category || '',
+    phone: supplier.phone || '',
+    city: supplier.city || '',
+  })
+  const set = (k, v) => setF((s) => ({ ...s, [k]: v }))
+  const save = () => {
+    if (!f.name.trim()) return
+    updateSupplier(supplier.id, f)
+    onClose()
+  }
+  const remove = () => {
+    if (confirm(`Удалить поставщика «${supplier.name}»? Отменить нельзя.`)) {
+      removeSupplier(supplier.id)
+      onClose()
+    }
+  }
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={`Изменить поставщика · ${supplier.name}`}
+      footer={
+        <>
+          <Button variant="ghost" onClick={remove} className="!text-bad">
+            Удалить
+          </Button>
+          <div className="flex-1" />
+          <Button variant="ghost" onClick={onClose}>Отмена</Button>
+          <Button onClick={save} disabled={!f.name.trim()}>Сохранить</Button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        <Field label="Название">
+          <Input value={f.name} onChange={(e) => set('name', e.target.value)} />
+        </Field>
+        <Field label="Категория">
+          <Input
+            value={f.category}
+            onChange={(e) => set('category', e.target.value)}
+            placeholder="Крепёж, Инструмент…"
+          />
+        </Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Телефон">
+            <Input value={f.phone} onChange={(e) => set('phone', e.target.value)} />
+          </Field>
+          <Field label="Город">
+            <Input value={f.city} onChange={(e) => set('city', e.target.value)} />
+          </Field>
+        </div>
+      </div>
+    </Modal>
   )
 }
 

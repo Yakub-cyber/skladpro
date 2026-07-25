@@ -92,8 +92,19 @@ export default function Products() {
   const [edit, setEdit] = useState(null) // product | 'new' | null
   const [showImport, setShowImport] = useState(false)
   const [showLabels, setShowLabels] = useState(false)
-  const [filters, setFilters] = useState(EMPTY_FILTERS)
-  const [filtersOpen, setFiltersOpen] = useState(false)
+  // Инициализация фильтров: подхватываем `stockStatus` из URL (кликом
+  // с Dashboard «Ниже минимума» приходим сюда с ?stockStatus=low и
+  // сразу видим товары с низким остатком, а не общий каталог).
+  const [filters, setFilters] = useState(() => {
+    const stockStatus = params.get('stockStatus')
+    if (['low', 'out', 'in'].includes(stockStatus)) {
+      return { ...EMPTY_FILTERS, stockStatus }
+    }
+    return EMPTY_FILTERS
+  })
+  const [filtersOpen, setFiltersOpen] = useState(() =>
+    ['low', 'out', 'in'].includes(params.get('stockStatus')),
+  )
   // Bulk-select: множество id выбранных товаров. При выборе появляется
   // sticky-тулбар с массовыми действиями (печать этикеток, удалить).
   const [selected, setSelected] = useState(() => new Set())

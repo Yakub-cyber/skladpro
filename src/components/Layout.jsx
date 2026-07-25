@@ -1,4 +1,4 @@
-import { useState, useEffect, Suspense } from 'react'
+import { useState, useEffect, useRef, Suspense } from 'react'
 import { Link, NavLink, Outlet, useLocation, useMatch, useNavigate } from 'react-router-dom'
 import {
   LayoutDashboard,
@@ -62,8 +62,17 @@ function useCurrentUser() {
 // (в её `items` есть текущий роут) раскрывается автоматически.
 // В NAV_ITEMS хранится «расплющенный» список всех пунктов — для расчёта
 // заголовка страницы и других вычислений, где группировка не важна.
+// Порядок NAV по образцу CloudShop: сначала Дашборд, затем ЧАСТЫЕ
+// одиночные пункты — Документы (сюда идёт основная работа) и Товары.
+// Потом сгруппированные разделы. Убран пункт «Заказы поставщикам» из
+// «Партнёров» — по решению пользователя (не увидел смысла); сама
+// страница /purchase-orders остаётся, вход через будущую карточку
+// поставщика.
 export const NAV = [
   { to: '/', label: 'Дашборд', icon: LayoutDashboard, end: true, perm: 'dashboard' },
+  // ── Одиночные быстрые пункты вверху — по частоте использования.
+  { to: '/operations', label: 'Документы', icon: ClipboardCheck, perm: 'operations', highlight: true },
+  { to: '/products', label: 'Товары', icon: Package, perm: 'products' },
   {
     label: 'Продажи',
     icon: ShoppingCart,
@@ -71,8 +80,6 @@ export const NAV = [
     items: [
       { to: '/orders', label: 'Заказы', icon: ClipboardList, perm: 'orders' },
       // «Заявки клиентов» = преднастроенный фильтр на Orders (status='new').
-      // Отдельный NAV-пункт, чтобы менеджер сразу видел, что просят
-      // подтвердить/собрать.
       { to: '/orders?filter=new', label: 'Заявки клиентов', icon: ClipboardList, perm: 'orders' },
       { to: '/delivery', label: 'Доставка', icon: Navigation, perm: 'delivery' },
     ],
@@ -82,9 +89,6 @@ export const NAV = [
     icon: WarehouseIcon,
     key: 'stock',
     items: [
-      // «Документы» — самый частый экран оператора, отмечен highlight.
-      { to: '/operations', label: 'Документы', icon: ClipboardCheck, perm: 'operations', highlight: true },
-      { to: '/products', label: 'Товары', icon: Package, perm: 'products' },
       { to: '/warehouse', label: 'Карта склада', icon: WarehouseIcon, perm: 'warehouse' },
       { to: '/invoices', label: 'Накладные', icon: FileText, ai: true, perm: 'invoices' },
     ],
@@ -96,7 +100,6 @@ export const NAV = [
     items: [
       { to: '/customers', label: 'Клиенты', icon: Users, perm: 'customers' },
       { to: '/suppliers', label: 'Поставщики', icon: Truck, perm: 'suppliers' },
-      { to: '/purchase-orders', label: 'Заказы поставщикам', icon: Truck, perm: 'purchase-orders' },
     ],
   },
   {
@@ -105,6 +108,7 @@ export const NAV = [
     key: 'finance',
     items: [
       { to: '/money', label: 'Деньги', icon: Wallet, perm: 'money' },
+      { to: '/movements', label: 'Движение товара', icon: BarChart3, perm: 'analytics' },
     ],
   },
   {
@@ -123,6 +127,7 @@ export const NAV = [
     items: [
       { to: '/journal', label: 'Смены и журнал', icon: History, perm: 'journal' },
       { to: '/employees', label: 'Сотрудники', icon: UserCog, perm: 'employees' },
+      { to: '/subscription', label: 'Подписка', icon: Sparkles, perm: 'settings' },
       { to: '/settings', label: 'Настройки', icon: SettingsIcon, perm: 'settings' },
     ],
   },
@@ -555,6 +560,7 @@ function Topbar({ onMenu, onSearch }) {
 
 function ProfileMenu() {
   const [open, setOpen] = useState(false)
+  const menuRef = useRef(null)
   const me = useCurrentUser()
   const cloud = useStore((s) => s.cloud)
   const logout = useStore((s) => s.logout)
@@ -562,8 +568,27 @@ function ProfileMenu() {
   const doLogout = () => (cloud ? cloudLogout() : logout())
   const role = roleInfo(me.role)
 
+  // Click-outside через слушатель, а не через fixed-backdrop:
+  // раньше `<div fixed inset-0 z-30>` перекрывал всю шапку — клик по
+  // любой другой кнопке (Касса, тема, sync) съедался бэкдропом, и
+  // требовалось два клика подряд. Теперь бэкдропа нет, а меню
+  // закрывается mousedown-ом вне menuRef. Esc тоже закрывает.
+  useEffect(() => {
+    if (!open) return
+    const onDown = (e) => {
+      if (menuRef.current && !menuRef.current.contains(e.target)) setOpen(false)
+    }
+    const onEsc = (e) => e.key === 'Escape' && setOpen(false)
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onEsc)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onEsc)
+    }
+  }, [open])
+
   return (
-    <div className="relative shrink-0">
+    <div className="relative shrink-0" ref={menuRef}>
       <button
         onClick={() => setOpen((v) => !v)}
         className="flex items-center gap-2 h-10 pl-1 pr-2 rounded-xl hover:bg-surface-2"
@@ -577,7 +602,6 @@ function ProfileMenu() {
       </button>
       {open && (
         <>
-          <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
           <div className="absolute right-0 mt-1 w-60 card p-1.5 z-40 animate-fadeUp">
             <div className="flex items-center gap-2.5 px-2.5 py-2 mb-1 border-b border-line">
               <Avatar name={me.name} color={role.color} size={36} />

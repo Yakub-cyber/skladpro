@@ -101,11 +101,15 @@ export default function Orders() {
       const okF =
         filter === 'all'
           ? true
-          : filter === 'new'
-            ? ['new', 'confirmed'].includes(o.status)
-            : filter === 'shipped'
-              ? ['packed', 'shipped'].includes(o.status)
-              : o.status === filter
+          : filter === 'active'
+            // «Активные» — с Dashboard «Активные заказы» кликом:
+            // всё, что ещё в работе (не доставлено и не отменено).
+            ? !['delivered', 'cancelled'].includes(o.status)
+            : filter === 'new'
+              ? ['new', 'confirmed'].includes(o.status)
+              : filter === 'shipped'
+                ? ['packed', 'shipped'].includes(o.status)
+                : o.status === filter
       const okQ =
         !q ||
         o.no.toLowerCase().includes(q.toLowerCase()) ||
