@@ -38,6 +38,13 @@ export default [
       // setState в эффекте встречается в существующих компонентах — пока warning,
       // отдельной задачей: пересмотреть эти эффекты (см. Дорожную карту, Фаза 0).
       'react-hooks/set-state-in-effect': 'warn',
+      // react-hooks/purity (v6+) ругается на Date.now/Math.random в
+      // рендере/useMemo. У нас пара мест: расчёт длительности смены и
+      // «сколько прошло с логина». Обёртывать в useState+useEffect ради
+      // pure — избыточно (пересчёт не критичен), поэтому downgrade до
+      // warn. Reminder: заменить эти места на useState + setInterval,
+      // когда будет отдельная итерация по гигиене эффектов.
+      'react-hooks/purity': 'warn',
     },
   },
   {

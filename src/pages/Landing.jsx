@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import {
   Boxes,
   Sparkles,
@@ -10,8 +11,73 @@ import {
   Check,
   ArrowRight,
   Cloud,
+  Download,
+  Smartphone,
+  ShoppingCart,
+  MonitorSmartphone,
 } from 'lucide-react'
 import { Button, cx } from '../components/ui'
+
+// Секция «Скачать»: подтягивает /downloads/latest.json (публикуется release.sh).
+// Формат: { mobile: {version, size, url}, pos: {...}, desktop: {...} } — любой
+// ключ может отсутствовать (билд ещё не выложен). Fallback: если сам json 404,
+// секция скрывается — иначе на лендинге болталась бы неработающая ссылка.
+const DOWNLOAD_TARGETS = [
+  { key: 'mobile', title: 'Мобильное приложение', hint: 'Android · склад + продажи', Icon: Smartphone },
+  { key: 'pos', title: 'Касса для Android', hint: 'POS для планшета/телефона', Icon: ShoppingCart },
+  { key: 'desktop', title: 'Касса для Windows', hint: 'ПК с фискальником и весами', Icon: MonitorSmartphone },
+]
+
+function formatSize(bytes) {
+  if (!bytes || typeof bytes !== 'number') return null
+  const mb = bytes / 1024 / 1024
+  return mb >= 1 ? `${mb.toFixed(1)} МБ` : `${Math.round(bytes / 1024)} КБ`
+}
+
+function DownloadsSection() {
+  const [meta, setMeta] = useState(null)
+  const [state, setState] = useState('loading') // 'loading' | 'ready' | 'missing'
+  useEffect(() => {
+    let alive = true
+    fetch('/downloads/latest.json', { cache: 'no-cache' })
+      .then((r) => (r.ok ? r.json() : Promise.reject()))
+      .then((j) => { if (alive) { setMeta(j); setState('ready') } })
+      .catch(() => { if (alive) setState('missing') })
+    return () => { alive = false }
+  }, [])
+  if (state !== 'ready') return null
+  const items = DOWNLOAD_TARGETS.map((t) => ({ ...t, data: meta?.[t.key] })).filter((t) => t.data?.url)
+  if (!items.length) return null
+  return (
+    <section className="px-5 lg:px-10 max-w-6xl mx-auto py-12">
+      <h2 className="text-2xl font-semibold text-center mb-2">Скачать приложения</h2>
+      <p className="text-muted text-center mb-8">Ставится напрямую с сайта. Обновления — тоже отсюда.</p>
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {items.map(({ key, title, hint, Icon, data }) => (
+          <a
+            key={key}
+            href={data.url}
+            className="group flex items-start gap-3 p-5 rounded-2xl border border-line bg-card hover:border-brand transition"
+            download
+          >
+            <div className="h-10 w-10 rounded-xl bg-brand-soft grid place-items-center text-brand shrink-0">
+              <Icon size={20} />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="font-medium truncate">{title}</div>
+              <div className="text-[13px] text-muted mt-0.5">{hint}</div>
+              <div className="text-[12px] text-muted mt-2">
+                {data.version ? `v${data.version}` : 'последняя'}
+                {formatSize(data.size) ? ` · ${formatSize(data.size)}` : ''}
+              </div>
+            </div>
+            <Download size={18} className="text-muted group-hover:text-brand mt-1 shrink-0" />
+          </a>
+        ))}
+      </div>
+    </section>
+  )
+}
 
 const FEATURES = [
   { icon: Sparkles, title: 'ИИ-накладные', text: 'Пишете состав текстом — получаете готовый документ с ценами' },
@@ -204,6 +270,9 @@ export default function Landing({ onStart, onConnect }) {
           </button>
         </p>
       </section>
+
+      {/* Скачать (скрывается, если /downloads/latest.json ещё не выложен) */}
+      <DownloadsSection />
 
       {/* CTA-низ */}
       <section className="px-5 lg:px-10 max-w-6xl mx-auto py-12">

@@ -162,7 +162,7 @@ describe('purchase-шаблоны', () => {
     expect(html).toContain('Приёмный акт')
     expect(html).toContain('Гвозди 3×70')
     // Итого = 50*60 + 10*120 = 4200
-    expect(html).toMatch(/4[\s ]200/)
+    expect(html).toMatch(/4[\s\u00a0\u202f]200/)
   })
   it('receiveAct для stockin — заголовок «Акт оприходования»', () => {
     const html = receiveAct({ ...PURCHASE_DOC, type: 'stockin', supplierId: null }, {
