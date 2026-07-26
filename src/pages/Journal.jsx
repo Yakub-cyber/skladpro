@@ -65,6 +65,18 @@ function ShiftTab() {
     useStore()
   const [openCash, setOpenCash] = useState('5000')
   const [closeCash, setCloseCash] = useState('')
+  // Касса-контекст открываемой смены. Дефолт — первая cash-касса.
+  // Значение уходит в `openShift(cash, accountId)`, сохраняется в shift
+  // и потом используется в `addOrder → moneyTx.accountId` (T1-A).
+  const cashAccounts = (accounts || []).filter((a) => a.kind === 'cash')
+  const [openAccountId, setOpenAccountId] = useState(cashAccounts[0]?.id || '')
+  const [openErr, setOpenErr] = useState('')
+
+  const doOpen = () => {
+    setOpenErr('')
+    const r = openShift(openCash, openAccountId || null)
+    if (r && r.ok === false) setOpenErr(r.error || 'Не удалось открыть смену')
+  }
 
   const active = shifts.find((s) => s.id === activeShiftId)
   const nameOf = (id) => employees.find((e) => e.id === id)?.name || 'Система'
@@ -122,6 +134,21 @@ function ShiftTab() {
             Откройте смену, чтобы продажи и операции учитывались по кассе.
           </p>
           <div className="flex flex-wrap items-end gap-3">
+            <Field label="Касса" className="w-56">
+              <select
+                value={openAccountId}
+                onChange={(e) => setOpenAccountId(e.target.value)}
+                className="w-full h-10 px-3 rounded-xl bg-surface-2 border border-line text-sm outline-none focus:border-brand"
+                disabled={!cashAccounts.length}
+              >
+                {cashAccounts.length === 0 && (
+                  <option value="">Нет касс — добавьте в разделе «Кассы»</option>
+                )}
+                {cashAccounts.map((a) => (
+                  <option key={a.id} value={a.id}>{a.name}</option>
+                ))}
+              </select>
+            </Field>
             <Field label="Наличные в кассе на начало" className="w-56">
               <input
                 type="number"
@@ -130,10 +157,13 @@ function ShiftTab() {
                 className="w-full h-10 px-3 rounded-xl bg-surface-2 border border-line text-sm outline-none focus:border-brand"
               />
             </Field>
-            <Button icon={PlayCircle} onClick={() => openShift(openCash)}>
+            <Button icon={PlayCircle} onClick={doOpen} disabled={!cashAccounts.length}>
               Открыть смену
             </Button>
           </div>
+          {openErr && (
+            <div className="mt-3 text-[13px] text-bad">{openErr}</div>
+          )}
         </Card>
       )}
 

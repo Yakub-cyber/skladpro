@@ -76,6 +76,15 @@ export const ROLES = [
     access: ['dashboard', 'orders', 'delivery', 'products', 'warehouse', 'invoices', 'operations', 'customers', 'suppliers', 'analytics', 'assistant', 'storefront', 'journal', 'money', 'purchase-orders'],
   },
   {
+    key: 'cashier',
+    label: 'Кассир',
+    color: '#f97316',
+    // Кассир работает только со своим POS-сценарием: пробить чек,
+    // открыть/закрыть смену, посмотреть свои движения денег.
+    // Всё остальное (склад, товары, отчёты) — вне доступа.
+    access: ['dashboard', 'orders', 'money', 'journal'],
+  },
+  {
     key: 'stock',
     label: 'Кладовщик',
     color: '#10b981',

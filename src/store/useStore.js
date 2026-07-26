@@ -39,23 +39,40 @@ export const useStore = create(
         })),
 
       // ── Кассовые смены ───────────────────────────────────────
-      openShift: (openingCash = 0) => {
-        if (get().activeShiftId) return
+      // `accountId` — касса, которую открывает кассир. Если у этой кассы
+      // непустой `cashierIds` (см. Cashiers.jsx) и текущий сотрудник не
+      // в списке — возвращаем `{ok:false}`. Иначе `cashAccountId` летит
+      // в shift, а затем — в `addOrder → moneyTx.accountId` (T1-A).
+      // Обратная совместимость: старый вызов `openShift(1000)` без
+      // accountId по-прежнему работает.
+      openShift: (openingCash = 0, accountId = null) => {
+        if (get().activeShiftId) return { ok: false, error: 'Смена уже открыта' }
+        const s = get()
+        if (accountId) {
+          const acc = (s.accounts || []).find((a) => a.id === accountId)
+          if (acc && Array.isArray(acc.cashierIds) && acc.cashierIds.length > 0) {
+            if (!acc.cashierIds.includes(s.authUserId)) {
+              return { ok: false, error: 'Кассир не назначен на эту кассу' }
+            }
+          }
+        }
         const id = uid('sh')
-        set((s) => ({
+        set((st) => ({
           shifts: [
             {
               id,
-              userId: s.authUserId,
+              userId: st.authUserId,
               openedAt: new Date().toISOString(),
               closedAt: null,
               openingCash: Number(openingCash) || 0,
+              cashAccountId: accountId || null,
             },
-            ...s.shifts,
+            ...st.shifts,
           ],
           activeShiftId: id,
         }))
         get().logAction('Открыта смена', { section: 'Касса', type: 'shift' })
+        return { ok: true, id }
       },
       closeShift: (closingCash = 0) => {
         const s = get()
@@ -460,6 +477,44 @@ export const useStore = create(
           return { orders: [o, ...s.orders], customers }
         })
         const o = get().orders.find((x) => x.id === id)
+        // Автоматическое создание moneyTx для non-credit платежей.
+        // Раньше `/money` не видел выручку от кассы (POS писал только
+        // `order.payment`), теперь при cash/card/mixed балансы касс
+        // растут сразу же. Для «в долг» — деньги не пришли, tx не
+        // создаём (customer.balance уже прирос выше).
+        const p = order.payment || {}
+        if (p.method && p.method !== 'credit') {
+          const st = get()
+          const shift = st.activeShiftId
+            ? st.shifts.find((sh) => sh.id === st.activeShiftId)
+            : null
+          const cashAccountId =
+            shift?.cashAccountId ||
+            st.accounts.find((a) => a.kind === 'cash')?.id
+          const bankAccountId = st.accounts.find((a) => a.kind === 'bank')?.id
+          const cashPaid = Number(p.cashPaid) || 0
+          const cardPaid = Number(p.cardPaid) || 0
+          if (cashPaid > 0 && cashAccountId) {
+            get().addMoneyTx({
+              type: 'in',
+              accountId: cashAccountId,
+              amount: cashPaid,
+              purpose: 'sale-cash',
+              orderId: id,
+              note: `Продажа ${o?.no}`,
+            })
+          }
+          if (cardPaid > 0 && bankAccountId) {
+            get().addMoneyTx({
+              type: 'in',
+              accountId: bankAccountId,
+              amount: cardPaid,
+              purpose: 'sale-card',
+              orderId: id,
+              note: `Продажа ${o?.no}`,
+            })
+          }
+        }
         get().logAction(`Создан заказ ${o?.no} на ${order.total || 0} ₽ (резерв)`, {
           section: 'Заказы',
           type: 'create',
@@ -566,6 +621,13 @@ export const useStore = create(
             ),
           }
         })
+        // Отменяем парные moneyTx (созданные автоматически при addOrder).
+        // Через public API — cancelMoneyTx корректно откатит балансы
+        // счетов (они на лету считаются из moneyTx с status!='cancelled').
+        const linkedTx = (get().moneyTx || []).filter(
+          (t) => t.orderId === id && t.status !== 'cancelled',
+        )
+        linkedTx.forEach((t) => get().cancelMoneyTx(t.id))
         get().logAction(
           `Отменён заказ ${o.no} · ${o.stockConsumed ? 'остатки возвращены' : 'резерв снят'}`,
           { section: 'Заказы', type: 'delete' },
@@ -860,6 +922,10 @@ export const useStore = create(
             purpose: tx.purpose || 'other',
             customerId: tx.customerId || null,
             supplierId: tx.supplierId || null,
+            // orderId — связь с заказом-источником, если tx создана
+            // автоматически при `addOrder`. Позволяет `cancelOrder`
+            // найти и отменить парную транзакцию.
+            orderId: tx.orderId || null,
             note: tx.note || '',
             at: new Date().toISOString(),
             by: s.authUserId,

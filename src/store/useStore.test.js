@@ -310,6 +310,170 @@ describe('cancelOrder — возврат резерва и остатков', ()
   })
 })
 
+describe('addOrder → moneyTx (T1-A)', () => {
+  // Раньше `/money` не видел выручку от POS-кассы: `addOrder` писал только
+  // `order.payment`, но не создавал `moneyTx`. Теперь баланс кассы растёт
+  // сразу при пробитии чека; отмена заказа автоматически откатывает
+  // связанные транзакции.
+  const cashAcc = () => state().accounts.find((a) => a.kind === 'cash')?.id
+  const bankAcc = () => state().accounts.find((a) => a.kind === 'bank')?.id
+
+  it('cash-платёж создаёт одну moneyTx на cash-счёт с orderId', () => {
+    const p = state().products[0]
+    state().addOrder({
+      customerId: state().customers[0].id,
+      items: [{ productId: p.id, name: p.name, qty: 1, price: 1000 }],
+      total: 1000,
+      payment: { method: 'cash', cashPaid: 1000, cardPaid: 0 },
+    })
+    const orderId = state().orders[0].id
+    const linked = state().moneyTx.filter((t) => t.orderId === orderId)
+    expect(linked).toHaveLength(1)
+    expect(linked[0].type).toBe('in')
+    expect(linked[0].accountId).toBe(cashAcc())
+    expect(linked[0].amount).toBe(1000)
+    expect(linked[0].purpose).toBe('sale-cash')
+    expect(linked[0].status).toBe('posted')
+  })
+
+  it('mixed-платёж создаёт две moneyTx (cash + bank)', () => {
+    const p = state().products[0]
+    state().addOrder({
+      customerId: state().customers[0].id,
+      items: [{ productId: p.id, name: p.name, qty: 1, price: 1000 }],
+      total: 1000,
+      payment: { method: 'mixed', cashPaid: 400, cardPaid: 600 },
+    })
+    const orderId = state().orders[0].id
+    const linked = state().moneyTx.filter((t) => t.orderId === orderId)
+    expect(linked).toHaveLength(2)
+    const cashTx = linked.find((t) => t.accountId === cashAcc())
+    const bankTx = linked.find((t) => t.accountId === bankAcc())
+    expect(cashTx?.amount).toBe(400)
+    expect(cashTx?.purpose).toBe('sale-cash')
+    expect(bankTx?.amount).toBe(600)
+    expect(bankTx?.purpose).toBe('sale-card')
+  })
+
+  it('card-платёж создаёт одну moneyTx на bank-счёт', () => {
+    const p = state().products[0]
+    state().addOrder({
+      customerId: state().customers[0].id,
+      items: [{ productId: p.id, name: p.name, qty: 1, price: 500 }],
+      total: 500,
+      payment: { method: 'card', cashPaid: 0, cardPaid: 500 },
+    })
+    const orderId = state().orders[0].id
+    const linked = state().moneyTx.filter((t) => t.orderId === orderId)
+    expect(linked).toHaveLength(1)
+    expect(linked[0].accountId).toBe(bankAcc())
+    expect(linked[0].purpose).toBe('sale-card')
+  })
+
+  it('credit-платёж НЕ создаёт moneyTx, но balance клиента растёт', () => {
+    const cust = state().customers[0]
+    const before = cust.balance || 0
+    state().addOrder({
+      customerId: cust.id,
+      items: [{ productId: state().products[0].id, name: 'X', qty: 1, price: 700 }],
+      total: 700,
+      onCredit: true,
+      payment: { method: 'credit', cashPaid: 0, cardPaid: 0 },
+    })
+    const orderId = state().orders[0].id
+    const linked = state().moneyTx.filter((t) => t.orderId === orderId)
+    expect(linked).toHaveLength(0)
+    expect(state().customers.find((c) => c.id === cust.id).balance).toBe(before + 700)
+  })
+
+  it('cancelOrder отменяет все парные moneyTx', () => {
+    state().addOrder({
+      customerId: state().customers[0].id,
+      items: [{ productId: state().products[0].id, name: 'X', qty: 1, price: 1000 }],
+      total: 1000,
+      payment: { method: 'cash', cashPaid: 1000, cardPaid: 0 },
+    })
+    const orderId = state().orders[0].id
+    expect(
+      state().moneyTx.filter((t) => t.orderId === orderId && t.status === 'posted'),
+    ).toHaveLength(1)
+    state().cancelOrder(orderId)
+    const linked = state().moneyTx.filter((t) => t.orderId === orderId)
+    expect(linked).toHaveLength(1)
+    expect(linked[0].status).toBe('cancelled')
+  })
+})
+
+describe('openShift — accountId + gate по cashierIds (T1-B)', () => {
+  // Раньше `openShift(cash)` не знал ни про какую кассу — все продажи
+  // складывались в «нулевую» кассу. Теперь shift несёт `cashAccountId`,
+  // а `cashierIds` из Cashiers становится реальным замком, а не витриной.
+  const cashAcc = () => state().accounts.find((a) => a.kind === 'cash')?.id
+
+  it('открытие смены с accountId кладёт cashAccountId в shift', async () => {
+    await state().login('e1', '1111')
+    const r = state().openShift(1000, cashAcc())
+    expect(r.ok).toBe(true)
+    const active = state().shifts.find((sh) => sh.id === state().activeShiftId)
+    expect(active.cashAccountId).toBe(cashAcc())
+  })
+
+  it('cashierIds непустой + user не в списке → ok=false, смена не открывается', async () => {
+    await state().login('e1', '1111')
+    useStore.setState((s) => ({
+      accounts: s.accounts.map((a) =>
+        a.id === cashAcc() ? { ...a, cashierIds: ['e-other'] } : a,
+      ),
+    }))
+    const r = state().openShift(1000, cashAcc())
+    expect(r.ok).toBe(false)
+    expect(r.error).toMatch(/не назначен/i)
+    expect(state().activeShiftId).toBeNull()
+  })
+
+  it('cashierIds содержит текущего user → смена открывается', async () => {
+    await state().login('e1', '1111')
+    useStore.setState((s) => ({
+      accounts: s.accounts.map((a) =>
+        a.id === cashAcc() ? { ...a, cashierIds: ['e1', 'e2'] } : a,
+      ),
+    }))
+    const r = state().openShift(1000, cashAcc())
+    expect(r.ok).toBe(true)
+    expect(state().activeShiftId).toBeTruthy()
+  })
+
+  it('обратная совместимость: openShift(cash) без accountId работает', async () => {
+    await state().login('e1', '1111')
+    const r = state().openShift(500)
+    expect(r.ok).toBe(true)
+    const active = state().shifts.find((sh) => sh.id === state().activeShiftId)
+    expect(active.cashAccountId).toBeNull()
+  })
+
+  it('cash-продажа после openShift(…, accountId) идёт на указанный счёт', async () => {
+    await state().login('e1', '1111')
+    // Возьмём второй cash-счёт, если он есть; иначе создадим.
+    const secondCashId = 'acc_cash2'
+    useStore.setState((s) => ({
+      accounts: [
+        ...s.accounts,
+        { id: secondCashId, name: 'Касса #2', kind: 'cash', currency: '₽', cashierIds: [], createdAt: new Date().toISOString() },
+      ],
+    }))
+    state().openShift(0, secondCashId)
+    state().addOrder({
+      customerId: state().customers[0].id,
+      items: [{ productId: state().products[0].id, name: 'X', qty: 1, price: 250 }],
+      total: 250,
+      payment: { method: 'cash', cashPaid: 250, cardPaid: 0 },
+    })
+    const orderId = state().orders[0].id
+    const tx = state().moneyTx.find((t) => t.orderId === orderId)
+    expect(tx.accountId).toBe(secondCashId)
+  })
+})
+
 describe('addPayment — оплата гасит долг', () => {
   it('баланс уменьшается на сумму оплаты (не уходит в отрицательное)', () => {
     const cust = state().customers[0]

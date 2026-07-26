@@ -64,14 +64,24 @@ export const relTime = (iso) => {
   return `${d} дн назад`
 }
 
-// Склонение: plural(5, 'товар','товара','товаров')
+// Склонение: `plural(5, 'товар','товара','товаров')` или
+// `plural(5, ['товар','товара','товаров'])` — обе сигнатуры валидны.
+// Раньше вторая (массивная) вызывалась в Layout/DashboardCourier/
+// DashboardStock, но реализация игнорировала массив → `many` был
+// `undefined` и на UI рисовалось «Осталось 3 undefined». T1-C.
 export const plural = (n, one, few, many) => {
+  let f1 = one
+  let f2 = few
+  let f3 = many
+  if (Array.isArray(one)) {
+    ;[f1, f2, f3] = one
+  }
   const a = Math.abs(n) % 100
   const b = a % 10
-  if (a > 10 && a < 20) return many
-  if (b > 1 && b < 5) return few
-  if (b === 1) return one
-  return many
+  if (a > 10 && a < 20) return f3
+  if (b > 1 && b < 5) return f2
+  if (b === 1) return f1
+  return f3
 }
 
 export const initials = (name = '') =>

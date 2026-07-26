@@ -208,11 +208,23 @@ export const NAV_COURIER = [
   { to: '/orders', label: 'Мои заказы', icon: ClipboardList, perm: 'orders' },
 ]
 
+// Кассир: 4 пункта под POS-сценарий. Касса выделена как «highlight» —
+// это его основной экран. Смены — чтобы открыть/закрыть смену. Деньги —
+// видеть выручку и балансы своей кассы.
+export const NAV_CASHIER = [
+  { to: '/', label: 'Дашборд', icon: LayoutDashboard, end: true, perm: 'dashboard' },
+  { to: '/orders/new', label: 'Касса', icon: ShoppingCart, perm: 'orders', highlight: true },
+  { to: '/journal', label: 'Смены', icon: History, perm: 'journal' },
+  { to: '/money', label: 'Деньги', icon: Wallet, perm: 'money' },
+]
+
 // Выбор набора по роли. admin/manager видят полное дерево NAV;
-// stock/courier — свои плоские наборы, оптимизированные под задачу.
+// cashier/stock/courier — свои плоские наборы, оптимизированные под
+// задачу конкретной роли.
 export function navFor(role) {
   if (role === 'courier') return NAV_COURIER
   if (role === 'stock') return NAV_STOCK
+  if (role === 'cashier') return NAV_CASHIER
   return NAV
 }
 

@@ -38,9 +38,13 @@ export function accountBalances(accounts = [], moneyTx = []) {
 }
 
 // Каталог целей платежа/прихода. Метки — для UI и лога.
+// `sale-cash`/`sale-card` создаются автоматически в `addOrder` (POS) —
+// см. useStore.js. Пользователь их вручную не выбирает, но они мелькают
+// в /money и /movements, поэтому лейблы нужны.
 export const MONEY_PURPOSES = {
   in: [
-    { key: 'sale-cash', label: 'Приход за продажу' },
+    { key: 'sale-cash', label: 'Продажа (наличные)' },
+    { key: 'sale-card', label: 'Продажа (карта)' },
     { key: 'debt-in', label: 'Погашение долга клиентом' },
     { key: 'initial', label: 'Начальный остаток' },
     { key: 'investment', label: 'Внесение владельца' },
