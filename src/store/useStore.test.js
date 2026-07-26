@@ -404,6 +404,70 @@ describe('addOrder → moneyTx (T1-A)', () => {
   })
 })
 
+describe('addOrder — kind retail vs order (POS-2)', () => {
+  // Чек из кассы закрывается мгновенно: товар отдан покупателю, гонять
+  // его по воронке «подтверждён → сборка → в пути» бессмысленно.
+  // Заказ с доставкой — наоборот, идёт по обычной воронке.
+  it('kind=retail: заказ сразу delivered + stockConsumed, остаток списан', () => {
+    const p = state().products.find((x) => x.stock >= 10)
+    const before = productById(p.id).stock
+    state().addOrder({
+      kind: 'retail',
+      customerId: state().customers[0].id,
+      items: [{ productId: p.id, name: p.name, unit: p.unit, qty: 2, price: 100 }],
+      total: 200,
+      payment: { method: 'cash', cashPaid: 200, cardPaid: 0 },
+    })
+    const o = state().orders[0]
+    expect(o.kind).toBe('retail')
+    expect(o.status).toBe('delivered')
+    expect(o.stockConsumed).toBe(true)
+    expect(productById(p.id).stock).toBe(before - 2)
+  })
+
+  it('kind=retail: номер с префиксом ЧК, а не ЗК', () => {
+    state().addOrder({
+      kind: 'retail',
+      customerId: state().customers[0].id,
+      items: [{ productId: state().products[0].id, name: 'X', qty: 1, price: 50 }],
+      total: 50,
+      payment: { method: 'cash', cashPaid: 50, cardPaid: 0 },
+    })
+    expect(state().orders[0].no).toMatch(/^ЧК-/)
+  })
+
+  it('kind=order (по умолчанию): статус new, остаток только в резерве', () => {
+    const p = state().products.find((x) => x.stock >= 10)
+    const before = productById(p.id).stock
+    state().addOrder({
+      customerId: state().customers[0].id,
+      items: [{ productId: p.id, name: p.name, qty: 2, price: 100 }],
+      total: 200,
+    })
+    const o = state().orders[0]
+    expect(o.kind).toBe('order')
+    expect(o.status).toBe('new')
+    expect(o.stockConsumed).toBe(false)
+    expect(productById(p.id).stock).toBe(before)
+    expect(o.no).toMatch(/^ЗК-/)
+  })
+
+  it('отмена retail-чека возвращает остаток на склад', () => {
+    const p = state().products.find((x) => x.stock >= 10)
+    const before = productById(p.id).stock
+    state().addOrder({
+      kind: 'retail',
+      customerId: state().customers[0].id,
+      items: [{ productId: p.id, name: p.name, unit: p.unit, qty: 3, price: 100 }],
+      total: 300,
+      payment: { method: 'cash', cashPaid: 300, cardPaid: 0 },
+    })
+    expect(productById(p.id).stock).toBe(before - 3)
+    state().cancelOrder(state().orders[0].id)
+    expect(productById(p.id).stock).toBe(before)
+  })
+})
+
 describe('openShift — accountId + gate по cashierIds (T1-B)', () => {
   // Раньше `openShift(cash)` не знал ни про какую кассу — все продажи
   // складывались в «нулевую» кассу. Теперь shift несёт `cashAccountId`,

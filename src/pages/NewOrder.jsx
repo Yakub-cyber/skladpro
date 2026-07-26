@@ -23,8 +23,12 @@ import {
   Sparkles,
   Loader2,
   AlertTriangle,
+  Settings2,
+  Printer,
+  Truck,
 } from 'lucide-react'
 import { Card, Button, Badge, Field, Select, Input, Textarea, Modal, Empty, cx } from '../components/ui'
+import DocPreviewModal from '../components/DocPreviewModal'
 import { useStore } from '../store/useStore'
 import { money, num } from '../lib/format'
 import { CATEGORIES, catInfo, priceFor } from '../lib/constants'
@@ -34,19 +38,57 @@ import { geocodeAddress } from '../lib/geo'
 import { computeKitStock } from '../lib/kit'
 import { aiParseInvoice, aiConfig, aiEnabled } from '../lib/ai'
 
+// Настройки кассового оборудования по умолчанию. Живут в
+// settings.pos — то есть общие для компании, но применяются только
+// в POS-окне (/pos). Печать чека реализована через существующий
+// DocPreviewModal (шаблон 'sale').
+const DEFAULT_POS = {
+  autoPrint: false, // печатать чек сразу после оплаты
+  receiptWidth: 80, // 58 | 80 мм — ширина ленты термопринтера
+  scanSound: true, // звуковой сигнал при успешном сканировании
+  scanMode: 'keyboard', // 'keyboard' (USB-сканер) | 'camera'
+}
+
+// Короткий «бип» после успешного сканирования. WebAudio вместо <audio>,
+// чтобы не тащить бинарник в бандл и не упираться в autoplay-политику
+// (звук инициируется пользовательским действием — сканом).
+function beep() {
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext
+    if (!Ctx) return
+    const ctx = new Ctx()
+    const osc = ctx.createOscillator()
+    const gain = ctx.createGain()
+    osc.type = 'square'
+    osc.frequency.value = 1200
+    gain.gain.value = 0.06
+    osc.connect(gain).connect(ctx.destination)
+    osc.start()
+    osc.stop(ctx.currentTime + 0.07)
+    osc.onended = () => ctx.close()
+  } catch {}
+}
+
 const CAT_ICON = { Wrench, Hammer, Zap, Droplets, PaintBucket, Package }
 
 // Единое поле «Поиск / штрихкод» + иконка камеры справа. Убирает вторую
 // строку с большим ScannerInput наверху страницы — а весь ввод (текст /
 // USB-сканер / камера) идёт в одно место. Автосабмит по Enter: если строка
 // похожа на штрихкод (8+ цифр) — идёт в onScan, иначе просто поиск.
-function SmartFind({ query, setQuery, onScan, msg }) {
+function SmartFind({ query, setQuery, onScan, msg, scanMode = 'camera' }) {
   const [cam, setCam] = useState(false)
   const [camErr, setCamErr] = useState('')
   const inputRef = useRef(null)
   const videoRef = useRef(null)
   const streamRef = useRef(null)
-  const hasDetector = typeof window !== 'undefined' && 'BarcodeDetector' in window
+  // Кнопку камеры показываем, только если она реально нужна: браузер
+  // умеет BarcodeDetector И в настройках кассы выбран режим 'camera'.
+  // При USB-сканере (keyboard) кнопка только мешает — сканер и так
+  // «печатает» код в это поле.
+  const hasDetector =
+    typeof window !== 'undefined' &&
+    'BarcodeDetector' in window &&
+    scanMode === 'camera'
 
   const trySubmit = () => {
     const v = query.trim()
@@ -452,6 +494,8 @@ function CartBody({
   address,
   setAddress,
   geoStatus,
+  asOrder,
+  setAsOrder,
   compact = false,
 }) {
   return (
@@ -473,7 +517,37 @@ function CartBody({
           </Select>
         </Field>
       </div>
-      {setAddress && (
+      {/* Переключатель «чек ↔ заказ». Выключено (по умолчанию) — товар
+          уходит с покупателем прямо сейчас, чек закрывается мгновенно.
+          Включено — оформляем заказ с доставкой: попадает в /orders и
+          идёт по воронке «подтверждён → сборка → в пути → доставлен». */}
+      {setAsOrder && (
+        <label
+          className={cx(
+            'flex items-center gap-2.5 px-3 py-2.5 rounded-xl border cursor-pointer transition',
+            asOrder
+              ? 'bg-brand-soft border-brand/40'
+              : 'bg-surface-2 border-line hover:border-brand/25',
+          )}
+        >
+          <input
+            type="checkbox"
+            checked={!!asOrder}
+            onChange={(e) => setAsOrder(e.target.checked)}
+            className="h-4 w-4 accent-brand"
+          />
+          <Truck size={16} className={asOrder ? 'text-brand' : 'text-muted'} />
+          <div className="min-w-0 flex-1">
+            <div className="text-[13px] font-medium">Оформить как заказ</div>
+            <div className="text-[11.5px] text-muted leading-snug">
+              {asOrder
+                ? 'Попадёт в «Заказы», пойдёт по воронке: сборка → в пути → доставлен'
+                : 'Обычный чек — товар отдаём сразу, продажа закрывается'}
+            </div>
+          </div>
+        </label>
+      )}
+      {setAddress && asOrder && (
         <Field
           label="Адрес доставки"
           hint={
@@ -648,6 +722,16 @@ export default function NewOrder({ fullscreen = false }) {
   // Раньше требовалось уходить на /invoices; теперь весь цикл без смены
   // экрана.
   const [aiOpen, setAiOpen] = useState(false)
+  // Галочка «Доставка»: по умолчанию выключена — касса пробивает
+  // розничный чек (kind='retail', закрывается сразу). Включённая
+  // превращает продажу в заказ с воронкой статусов (kind='order').
+  const [asOrder, setAsOrder] = useState(false)
+  // POS-режим: настройки оборудования + тост последнего чека.
+  const [posOpen, setPosOpen] = useState(false)
+  const [lastReceipt, setLastReceipt] = useState(null)
+  const [printOrder, setPrintOrder] = useState(null)
+  const settings = useStore((s) => s.settings) || {}
+  const posSettings = settings.pos || DEFAULT_POS
 
   // ── Автосейв корзины ─────────────────────────────────────────────────
   // На /orders/new частая ситуация: кассир пробивает 100 позиций опт-клиенту,
@@ -812,6 +896,7 @@ export default function NewOrder({ fullscreen = false }) {
       setMsg(`Штрихкод «${code}» не найден`)
       return
     }
+    if (posSettings.scanSound) beep()
     add(r.product, r.weighed ? r.weightKg : 1)
   }
 
@@ -835,6 +920,10 @@ export default function NewOrder({ fullscreen = false }) {
   const finalSubmit = (payment) => {
     const cust = customers.find((c) => c.id === customerId)
     addOrder({
+      // Без галочки «Доставка» — обычный розничный чек: закрывается
+      // сразу, товар физически ушёл, воронка статусов не нужна.
+      // С галочкой — заказ с доставкой, идёт по воронке.
+      kind: asOrder ? 'order' : 'retail',
       customerId: cust?.id || 'retail',
       customerName: cust?.name || 'Розничный покупатель',
       items: rows,
@@ -858,6 +947,21 @@ export default function NewOrder({ fullscreen = false }) {
     try { localStorage.removeItem(DRAFT_KEY) } catch {}
     setPayOpen(false)
     setMobileCart(false)
+    // В fullscreen (окно кассира) остаёмся на месте — кассир пробивает
+    // чеки один за другим и не должен «улетать» в админку. Показываем
+    // короткий тост с номером чека и чистим корзину.
+    if (fullscreen) {
+      setRows([])
+      setDiscount(0)
+      setCustomerId('')
+      setAddress('')
+      setGeo(null)
+      setAsOrder(false)
+      setLastReceipt(fresh)
+      if (posSettings.autoPrint) setPrintOrder(fresh)
+      setTimeout(() => setLastReceipt(null), 6000)
+      return
+    }
     nav(`/orders?id=${fresh.id}`)
   }
 
@@ -901,6 +1005,8 @@ export default function NewOrder({ fullscreen = false }) {
     round3,
     address,
     setAddress,
+    asOrder,
+    setAsOrder,
     geoStatus: geo
       ? 'found'
       : address.trim().length >= 4
@@ -963,12 +1069,59 @@ export default function NewOrder({ fullscreen = false }) {
         >
           <span className="hidden sm:inline">ИИ-накладная</span>
         </Button>
+        {fullscreen && (
+          <Button
+            variant="soft"
+            size="icon"
+            icon={Settings2}
+            onClick={() => setPosOpen(true)}
+            title="Настройки оборудования"
+          />
+        )}
       </div>
+
+      {/* Тост после пробития чека — кассир остаётся на месте и сразу
+          видит подтверждение + может допечатать чек. */}
+      {lastReceipt && (
+        <div className="mb-4 flex items-center gap-3 rounded-xl bg-ok-soft border border-ok/25 px-4 py-3 animate-fadeUp">
+          <Check size={18} className="text-ok shrink-0" />
+          <div className="min-w-0 flex-1">
+            <div className="text-[13px] font-semibold text-ok">
+              {lastReceipt.kind === 'retail' ? 'Чек пробит' : 'Заказ оформлен'} · {lastReceipt.no}
+            </div>
+            <div className="text-[12px] text-muted">
+              {money(lastReceipt.total)}
+              {lastReceipt.payment?.change > 0 && ` · сдача ${money(lastReceipt.payment.change)}`}
+            </div>
+          </div>
+          <Button
+            size="sm"
+            variant="soft"
+            icon={Printer}
+            onClick={() => setPrintOrder(lastReceipt)}
+          >
+            Печать
+          </Button>
+          <button
+            onClick={() => setLastReceipt(null)}
+            className="text-muted hover:text-ink p-1"
+            title="Скрыть"
+          >
+            <X size={16} />
+          </button>
+        </div>
+      )}
 
       <div className="grid lg:grid-cols-[1fr_380px] gap-5 items-start">
         {/* Каталог */}
         <div className="space-y-4 min-w-0">
-          <SmartFind query={q} setQuery={setQ} onScan={onScan} msg={msg} />
+          <SmartFind
+            query={q}
+            setQuery={setQ}
+            onScan={onScan}
+            msg={msg}
+            scanMode={posSettings.scanMode}
+          />
 
           <div className="flex gap-1.5 overflow-x-auto no-scrollbar -mx-1 px-1">
             <Chip active={cat === 'all'} onClick={() => setCat('all')}>Все</Chip>
@@ -1081,7 +1234,107 @@ export default function NewOrder({ fullscreen = false }) {
           setAiOpen(false)
         }}
       />
+
+      {/* Настройки кассового оборудования — только в POS-окне. */}
+      {posOpen && <PosSettingsModal onClose={() => setPosOpen(false)} />}
+
+      {/* Печать чека: тот же движок, что и в /orders (шаблон 'sale'). */}
+      {printOrder && (
+        <DocPreviewModal
+          doc={printOrder}
+          category="sale"
+          onClose={() => setPrintOrder(null)}
+        />
+      )}
     </div>
+  )
+}
+
+// Настройки кассового оборудования. Живут в settings.pos, поэтому
+// применяются на всех рабочих местах компании. Хранит: автопечать,
+// ширину чековой ленты, звук сканера и режим сканера.
+function PosSettingsModal({ onClose }) {
+  const settings = useStore((s) => s.settings) || {}
+  const updateSettings = useStore((s) => s.updateSettings)
+  const cur = settings.pos || DEFAULT_POS
+  const [f, setF] = useState(cur)
+
+  const patch = (k, v) => setF((s) => ({ ...s, [k]: v }))
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={
+        <span className="flex items-center gap-2">
+          <Settings2 size={18} className="text-brand" /> Оборудование кассы
+        </span>
+      }
+    >
+      <div className="space-y-3">
+        <Field
+          label="Принтер чеков"
+          hint="Печать открывается в отдельном окне браузера — выберите там свой термопринтер."
+        >
+          <label className="flex items-center gap-2.5 px-3 py-2.5 rounded-xl bg-surface-2 border border-line cursor-pointer">
+            <input
+              type="checkbox"
+              checked={!!f.autoPrint}
+              onChange={(e) => patch('autoPrint', e.target.checked)}
+              className="h-4 w-4 accent-brand"
+            />
+            <Printer size={16} className="text-muted" />
+            <span className="text-[13px]">Печатать чек сразу после оплаты</span>
+          </label>
+        </Field>
+
+        <Field label="Ширина чековой ленты">
+          <Select
+            value={String(f.receiptWidth)}
+            onChange={(e) => patch('receiptWidth', Number(e.target.value))}
+          >
+            <option value="58">58 мм — компактный принтер</option>
+            <option value="80">80 мм — стандартный</option>
+          </Select>
+        </Field>
+
+        <Field
+          label="Сканер штрихкодов"
+          hint="USB-сканер работает как клавиатура — просто наведите фокус на поле поиска и сканируйте. Камера — резервный вариант для планшета."
+        >
+          <Select value={f.scanMode} onChange={(e) => patch('scanMode', e.target.value)}>
+            <option value="keyboard">USB-сканер (клавиатурный ввод)</option>
+            <option value="camera">Камера устройства</option>
+          </Select>
+        </Field>
+
+        <label className="flex items-center gap-2.5 px-3 py-2.5 rounded-xl bg-surface-2 border border-line cursor-pointer">
+          <input
+            type="checkbox"
+            checked={!!f.scanSound}
+            onChange={(e) => patch('scanSound', e.target.checked)}
+            className="h-4 w-4 accent-brand"
+          />
+          <span className="text-[13px]">Звуковой сигнал при сканировании</span>
+        </label>
+
+        <div className="flex gap-2 pt-1">
+          <Button
+            icon={Check}
+            className="flex-1"
+            onClick={() => {
+              updateSettings({ pos: f })
+              onClose()
+            }}
+          >
+            Сохранить
+          </Button>
+          <Button variant="soft" onClick={onClose}>
+            Отмена
+          </Button>
+        </div>
+      </div>
+    </Modal>
   )
 }
 

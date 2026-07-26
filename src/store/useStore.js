@@ -450,13 +450,21 @@ export const useStore = create(
       },
 
       // ── Заказы ───────────────────────────────────────────────
+      // `kind` разделяет два принципиально разных сценария:
+      //   'retail' — розничный чек из кассы. Товар отдан покупателю
+      //              прямо сейчас: заказ создаётся и СРАЗУ закрывается
+      //              (delivered + физическое списание). Воронка
+      //              «подтверждён → сборка → в пути» для него не нужна.
+      //   'order'  — заказ с доставкой/самовывозом (по умолчанию).
+      //              Идёт по обычной воронке статусов.
       addOrder: (order) => {
         const id = uid('o')
+        const kind = order.kind || 'order'
         set((s) => {
           const seq = s.orders.length + 101
           const o = {
             id,
-            no: docNo('ЗК', seq),
+            no: docNo(kind === 'retail' ? 'ЧК' : 'ЗК', seq),
             status: 'new',
             createdAt: new Date().toISOString(),
             track: [{ status: 'new', at: new Date().toISOString() }],
@@ -464,6 +472,7 @@ export const useStore = create(
             shiftId: s.activeShiftId || null,
             stockConsumed: false, // физически спишется при отгрузке
             ...order,
+            kind,
           }
           // Заказ резервирует остаток (через открытый статус), физически со
           // склада не списывает — это произойдёт при отгрузке. Долг «в долг»
@@ -476,6 +485,10 @@ export const useStore = create(
           }
           return { orders: [o, ...s.orders], customers }
         })
+        // Розничный чек закрываем сразу: товар физически ушёл с покупателем,
+        // держать его в «резерве» и гонять по воронке бессмысленно.
+        // setOrderStatus сам применит applyOrderStock (FIFO + маркировка).
+        if (kind === 'retail') get().setOrderStatus(id, 'delivered')
         const o = get().orders.find((x) => x.id === id)
         // Автоматическое создание moneyTx для non-credit платежей.
         // Раньше `/money` не видел выручку от кассы (POS писал только

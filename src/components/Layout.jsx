@@ -169,10 +169,12 @@ export const CREATE_DOC_ITEMS = [
   {
     section: 'Документы',
     items: [
-      // «Продажа» открывает POS в отдельном окне (кассир-терминал), а не
-      // роутит внутри Layout — потому action:'pos' обрабатывается в
-      // CreateDocMenu через openPosWindow().
-      { label: 'Продажа', icon: ShoppingCart, action: 'pos', perm: 'orders' },
+      // «Продажа» = ДОКУМЕНТ опта (SaleTab): выбор клиента, ручные цены,
+      // скидка, «в долг», проводится через addDocument(type='sale') и
+      // ложится в реестр документов. В «Заказы» не попадает.
+      // Розничный чек — это отдельная сущность, вход через кнопку
+      // «Касса» в шапке (POS-окно).
+      { label: 'Продажа', icon: ShoppingCart, to: '/operations?new=sale', perm: 'operations' },
       { label: 'Закупка', icon: ArrowDownToLine, to: '/operations?new=receive', perm: 'operations' },
       { label: 'Возврат продажи', icon: RotateCcw, to: '/operations?new=sreturn', perm: 'operations' },
       { label: 'Возврат закупки', icon: RotateCcw, to: '/operations?new=preturn', perm: 'operations' },
@@ -463,40 +465,20 @@ function CreateDocMenu({ role, onNavigate }) {
               <div className="px-3 pt-2 pb-1 text-[11px] font-semibold uppercase tracking-wide text-muted">
                 {s.section}
               </div>
-              {s.items.map((it) => {
-                const close = () => {
-                  setOpen(false)
-                  onNavigate?.()
-                }
-                // action:'pos' — не роут, а открытие POS в новом окне.
-                if (it.action === 'pos') {
-                  return (
-                    <button
-                      key={it.label}
-                      type="button"
-                      onClick={() => {
-                        openPosWindow()
-                        close()
-                      }}
-                      className="w-full flex items-center gap-2.5 px-3 h-9 text-[13px] text-ink hover:bg-brand-soft hover:text-brand transition text-left"
-                    >
-                      <it.icon size={15} className="text-muted" />
-                      <span className="truncate">{it.label}</span>
-                    </button>
-                  )
-                }
-                return (
-                  <Link
-                    key={it.to}
-                    to={it.to}
-                    onClick={close}
-                    className="flex items-center gap-2.5 px-3 h-9 text-[13px] text-ink hover:bg-brand-soft hover:text-brand transition"
-                  >
-                    <it.icon size={15} className="text-muted" />
-                    <span className="truncate">{it.label}</span>
-                  </Link>
-                )
-              })}
+              {s.items.map((it) => (
+                <Link
+                  key={it.to}
+                  to={it.to}
+                  onClick={() => {
+                    setOpen(false)
+                    onNavigate?.()
+                  }}
+                  className="flex items-center gap-2.5 px-3 h-9 text-[13px] text-ink hover:bg-brand-soft hover:text-brand transition"
+                >
+                  <it.icon size={15} className="text-muted" />
+                  <span className="truncate">{it.label}</span>
+                </Link>
+              ))}
             </div>
           ))}
         </div>

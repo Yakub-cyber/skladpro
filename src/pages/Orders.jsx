@@ -44,13 +44,21 @@ import { buildPickRoute } from '../lib/ai'
 import DocPreviewModal from '../components/DocPreviewModal'
 import { cellById } from '../store/seed'
 
+// «Чеки» и «Заказы» — две разные сущности в одном списке:
+//   kind='retail' — розничный чек из кассы, закрыт сразу, без воронки
+//   kind='order'  — заказ с доставкой, идёт по статусам
+// Старые записи без `kind` считаем заказами (обратная совместимость).
 const FILTERS = [
   { key: 'all', label: 'Все' },
+  { key: 'orders', label: 'Заказы' },
+  { key: 'receipts', label: 'Чеки' },
   { key: 'new', label: 'Новые' },
   { key: 'picking', label: 'Сборка' },
   { key: 'shipped', label: 'В пути' },
   { key: 'delivered', label: 'Доставлены' },
 ]
+
+const isReceipt = (o) => o.kind === 'retail'
 
 export default function Orders() {
   const allOrders = useStore((s) => s.orders)
@@ -101,15 +109,20 @@ export default function Orders() {
       const okF =
         filter === 'all'
           ? true
-          : filter === 'active'
-            // «Активные» — с Dashboard «Активные заказы» кликом:
-            // всё, что ещё в работе (не доставлено и не отменено).
-            ? !['delivered', 'cancelled'].includes(o.status)
-            : filter === 'new'
-              ? ['new', 'confirmed'].includes(o.status)
-              : filter === 'shipped'
-                ? ['packed', 'shipped'].includes(o.status)
-                : o.status === filter
+          : filter === 'orders'
+            ? !isReceipt(o)
+            : filter === 'receipts'
+              ? isReceipt(o)
+              : filter === 'active'
+                // «Активные» — с Dashboard «Активные заказы» кликом:
+                // всё, что ещё в работе. Чеки сюда не попадают — они
+                // закрыты в момент пробития.
+                ? !isReceipt(o) && !['delivered', 'cancelled'].includes(o.status)
+                : filter === 'new'
+                  ? !isReceipt(o) && ['new', 'confirmed'].includes(o.status)
+                  : filter === 'shipped'
+                    ? ['packed', 'shipped'].includes(o.status)
+                    : o.status === filter
       const okQ =
         !q ||
         o.no.toLowerCase().includes(q.toLowerCase()) ||
@@ -130,7 +143,9 @@ export default function Orders() {
           <h2 className="text-xl font-semibold tracking-tight">Заказы</h2>
           <p className="text-sm text-muted">
             {orders.length} всего ·{' '}
-            {orders.filter((o) => ['new', 'confirmed', 'picking'].includes(o.status)).length} в обработке
+            {orders.filter((o) => !isReceipt(o) && ['new', 'confirmed', 'picking'].includes(o.status)).length} в обработке
+            {' · '}
+            {orders.filter(isReceipt).length} чеков
           </p>
         </div>
         <Button icon={Plus} onClick={() => nav('/orders/new')}>
@@ -186,7 +201,11 @@ export default function Orders() {
                     {o.priority && <Flag size={13} className="text-bad" />}
                     {o.no}
                   </span>
-                  <StatusBadge status={o.status} />
+                  {isReceipt(o) ? (
+                    <Badge tone="ok" className="text-[11px]">Чек</Badge>
+                  ) : (
+                    <StatusBadge status={o.status} />
+                  )}
                 </div>
                 <div className="text-sm mt-1.5 truncate">{o.customerName}</div>
                 <div className="flex items-center justify-between mt-1 text-[12px] text-muted">
@@ -306,8 +325,26 @@ function OrderDetail({ order }) {
           <StatusBadge status={order.status} />
         </div>
 
-        {/* Воронка статусов */}
-        {order.status !== 'cancelled' ? (
+        {/* Воронка статусов — только для заказов. Розничный чек закрыт
+            в момент пробития: товар отдан, деньги получены, статусы
+            «подтверждён → сборка → в пути» для него бессмысленны. */}
+        {isReceipt(order) ? (
+          <div className="mt-4 flex items-center gap-2.5 p-3 rounded-xl bg-ok-soft text-ok text-sm font-medium">
+            <Check size={16} className="shrink-0" />
+            Розничный чек · продажа закрыта
+            {order.payment?.method && (
+              <span className="ml-auto text-[12px] font-normal opacity-80">
+                {order.payment.method === 'cash'
+                  ? 'наличные'
+                  : order.payment.method === 'card'
+                    ? 'карта'
+                    : order.payment.method === 'mixed'
+                      ? 'смешанная'
+                      : 'в долг'}
+              </span>
+            )}
+          </div>
+        ) : order.status !== 'cancelled' ? (
           <div className="mt-5 flex items-center">
             {TRACK_FLOW.map((s, i) => {
               const done = s.step < cur.step
@@ -352,39 +389,44 @@ function OrderDetail({ order }) {
           </div>
         )}
 
-        {/* Действия */}
+        {/* Действия. Для чека остаются только «Печать» и «Отменить» —
+            сборка/маршрут/ссылка клиенту к розничной продаже неприменимы. */}
         <div className="flex flex-wrap gap-2 mt-5">
-          {nx && (
+          {!isReceipt(order) && nx && (
             <Button icon={ChevronRight} onClick={() => advance(order.id)}>
               {cur.step === 1 ? 'Начать сборку' : `В статус «${nxInfo.label}»`}
             </Button>
           )}
-          <Button
-            variant="soft"
-            icon={RouteIcon}
-            onClick={() => setShowRoute((v) => !v)}
-          >
-            {showRoute ? 'Скрыть маршрут' : 'Маршрут сборки'}
-          </Button>
-          <Button variant="soft" icon={copied ? Check : Link2} onClick={copyLink}>
-            {copied ? 'Скопировано' : 'Ссылка клиенту'}
-          </Button>
+          {!isReceipt(order) && (
+            <>
+              <Button
+                variant="soft"
+                icon={RouteIcon}
+                onClick={() => setShowRoute((v) => !v)}
+              >
+                {showRoute ? 'Скрыть маршрут' : 'Маршрут сборки'}
+              </Button>
+              <Button variant="soft" icon={copied ? Check : Link2} onClick={copyLink}>
+                {copied ? 'Скопировано' : 'Ссылка клиенту'}
+              </Button>
+            </>
+          )}
           <Button variant="soft" icon={Printer} onClick={() => setPrintOrder(order)}>
-            Печать
+            {isReceipt(order) ? 'Печать чека' : 'Печать'}
           </Button>
-          {canEdit && (
+          {!isReceipt(order) && canEdit && (
             <Button variant="soft" icon={Pencil} onClick={() => nav(`/orders/${order.id}/edit`)}>
               Изменить
             </Button>
           )}
-          {order.status !== 'cancelled' && order.status !== 'delivered' && (
+          {order.status !== 'cancelled' && (!isReceipt(order) ? order.status !== 'delivered' : true) && (
             <Button
               variant="ghost"
               icon={X}
               className="text-bad"
               onClick={handleCancel}
             >
-              Отменить
+              {isReceipt(order) ? 'Аннулировать чек' : 'Отменить'}
             </Button>
           )}
         </div>
