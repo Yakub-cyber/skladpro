@@ -614,7 +614,7 @@ function CartBody({
   )
 }
 
-export default function NewOrder() {
+export default function NewOrder({ fullscreen = false }) {
   const nav = useNavigate()
   const { customers, products, priceTypes, addOrder, addCustomer, orders } = useStore()
   const defType = priceTypes.find((t) => t.default)?.id || priceTypes[0]?.id
@@ -908,14 +908,42 @@ export default function NewOrder() {
         : 'idle',
   }
 
+  // Fullscreen-режим = отдельное окно (`/pos`), Layout вокруг не рисуется.
+  // Даём странице заполнить всё окно и добавляем padding+фон, которых
+  // обычно давал Layout.jsx (main.p-4 lg:p-6).
+  const outerCls = fullscreen
+    ? 'animate-fadeUp p-4 lg:p-6 max-w-[1400px] w-full mx-auto min-h-screen bg-bg'
+    : 'animate-fadeUp pb-24 lg:pb-0'
+
+  // «Назад» — если окно открыто как терминал (fullscreen), логичнее его
+  // закрыть, а не тащить внутрь /orders. Если window.close() блокируется
+  // (окно открыто не через window.open) — фолбэк на переход в /orders.
+  const goBack = () => {
+    if (fullscreen) {
+      try {
+        window.close()
+        // Задержка на случай блокировки — если окно ещё открыто, идём в /orders
+        setTimeout(() => nav('/orders'), 200)
+      } catch {
+        nav('/orders')
+      }
+    } else {
+      nav('/orders')
+    }
+  }
+
   return (
-    <div className="animate-fadeUp pb-24 lg:pb-0">
+    <div className={outerCls}>
       <div className="flex items-center gap-3 mb-4">
-        <Button variant="ghost" size="icon" icon={ArrowLeft} onClick={() => nav('/orders')} />
+        <Button variant="ghost" size="icon" icon={fullscreen ? X : ArrowLeft} onClick={goBack} title={fullscreen ? 'Закрыть кассу' : 'К заказам'} />
         <div className="min-w-0 flex-1">
-          <h2 className="text-xl font-semibold tracking-tight">Новый заказ</h2>
+          <h2 className="text-xl font-semibold tracking-tight">
+            {fullscreen ? 'Касса' : 'Новый заказ'}
+          </h2>
           <p className="text-sm text-muted hidden sm:block">
-            Касса: ищите или сканируйте товар — он попадёт в чек.
+            {fullscreen
+              ? 'Ищите или сканируйте товар — он попадёт в чек. F9 — оплата.'
+              : 'Касса: ищите или сканируйте товар — он попадёт в чек.'}
           </p>
         </div>
         {savedAt > 0 && rows.length > 0 && (

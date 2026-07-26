@@ -169,7 +169,10 @@ export const CREATE_DOC_ITEMS = [
   {
     section: 'Документы',
     items: [
-      { label: 'Продажа', icon: ShoppingCart, to: '/orders/new', perm: 'orders' },
+      // «Продажа» открывает POS в отдельном окне (кассир-терминал), а не
+      // роутит внутри Layout — потому action:'pos' обрабатывается в
+      // CreateDocMenu через openPosWindow().
+      { label: 'Продажа', icon: ShoppingCart, action: 'pos', perm: 'orders' },
       { label: 'Закупка', icon: ArrowDownToLine, to: '/operations?new=receive', perm: 'operations' },
       { label: 'Возврат продажи', icon: RotateCcw, to: '/operations?new=sreturn', perm: 'operations' },
       { label: 'Возврат закупки', icon: RotateCcw, to: '/operations?new=preturn', perm: 'operations' },
@@ -460,20 +463,40 @@ function CreateDocMenu({ role, onNavigate }) {
               <div className="px-3 pt-2 pb-1 text-[11px] font-semibold uppercase tracking-wide text-muted">
                 {s.section}
               </div>
-              {s.items.map((it) => (
-                <Link
-                  key={it.to}
-                  to={it.to}
-                  onClick={() => {
-                    setOpen(false)
-                    onNavigate?.()
-                  }}
-                  className="flex items-center gap-2.5 px-3 h-9 text-[13px] text-ink hover:bg-brand-soft hover:text-brand transition"
-                >
-                  <it.icon size={15} className="text-muted" />
-                  <span className="truncate">{it.label}</span>
-                </Link>
-              ))}
+              {s.items.map((it) => {
+                const close = () => {
+                  setOpen(false)
+                  onNavigate?.()
+                }
+                // action:'pos' — не роут, а открытие POS в новом окне.
+                if (it.action === 'pos') {
+                  return (
+                    <button
+                      key={it.label}
+                      type="button"
+                      onClick={() => {
+                        openPosWindow()
+                        close()
+                      }}
+                      className="w-full flex items-center gap-2.5 px-3 h-9 text-[13px] text-ink hover:bg-brand-soft hover:text-brand transition text-left"
+                    >
+                      <it.icon size={15} className="text-muted" />
+                      <span className="truncate">{it.label}</span>
+                    </button>
+                  )
+                }
+                return (
+                  <Link
+                    key={it.to}
+                    to={it.to}
+                    onClick={close}
+                    className="flex items-center gap-2.5 px-3 h-9 text-[13px] text-ink hover:bg-brand-soft hover:text-brand transition"
+                  >
+                    <it.icon size={15} className="text-muted" />
+                    <span className="truncate">{it.label}</span>
+                  </Link>
+                )
+              })}
             </div>
           ))}
         </div>
@@ -596,17 +619,35 @@ function SyncBadge() {
   )
 }
 
+// Открыть POS в отдельном окне. Пробуем window.open с фиксированным
+// размером — так браузер (Chrome/Edge/Firefox) действительно откроет
+// popup-окно без табов, а не новую вкладку в основной. Если pop-up
+// заблокирован — фолбэк на переход в /pos в текущей вкладке.
+export function openPosWindow() {
+  const url = window.location.origin + window.location.pathname + '#/pos'
+  const w = window.open(
+    url,
+    'skladpro-pos',
+    'width=1280,height=860,resizable=yes,scrollbars=yes,noopener=no',
+  )
+  if (!w) {
+    // блокировщик popup-ов сработал
+    window.location.hash = '#/pos'
+  }
+}
+
 // Кнопка «Касса» в шапке — всегда под рукой независимо от текущей страницы.
 // На десктопе — полноценная кнопка с текстом; на мобиле — только иконка.
 // Скрываем, если у текущей роли нет прав на заказы (курьер и т.п.).
+// Клик = открытие POS в ОТДЕЛЬНОМ окне — так админ может продолжать
+// работу в основной вкладке, а кассир видит только чек.
 function CashierButton() {
   const me = useCurrentUser()
-  const nav = useNavigate()
   if (!canAccess(me.role, 'orders')) return null
   return (
     <button
-      onClick={() => nav('/orders/new')}
-      title="Открыть кассу"
+      onClick={openPosWindow}
+      title="Открыть кассу в новом окне"
       className="h-10 px-3 rounded-xl bg-brand text-brand-ink font-medium text-sm inline-flex items-center gap-2 shrink-0 hover:opacity-90 transition shadow-sm shadow-brand/25"
     >
       <ShoppingCart size={17} />

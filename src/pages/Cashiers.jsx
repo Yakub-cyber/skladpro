@@ -4,7 +4,6 @@
 // редактирование. POS открывается через большую кнопку «Касса» в шапке
 // или через «Продажа» в CTA-меню.
 import { useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
 import {
   Wallet,
   Landmark,
@@ -22,9 +21,9 @@ import { useStore } from '../store/useStore'
 import { money } from '../lib/format'
 import { accountBalances } from '../lib/money'
 import { roleInfo } from '../lib/constants'
+import { openPosWindow } from '../components/Layout'
 
 export default function Cashiers() {
-  const nav = useNavigate()
   const accounts = useStore((s) => s.accounts) || []
   const moneyTx = useStore((s) => s.moneyTx) || []
   const employees = useStore((s) => s.employees) || []
@@ -164,7 +163,8 @@ export default function Cashiers() {
                   variant="soft"
                   icon={ShoppingCart}
                   className="flex-1"
-                  onClick={() => nav('/orders/new')}
+                  onClick={openPosWindow}
+                  title="Открыть POS в новом окне"
                 >
                   Открыть POS
                 </Button>

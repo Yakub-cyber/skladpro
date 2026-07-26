@@ -77,6 +77,22 @@ export default function App() {
         }
       />
 
+      {/* Полноэкранный POS-режим: та же NewOrder-страница, но БЕЗ Layout
+          (сайдбара/шапки/breadcrumbs). Открывается кнопкой «Касса» через
+          window.open в новом окне — это отдельный «терминал кассира», не
+          мешающий работе админа в основной вкладке. Тот же localStorage-
+          стор → синхронно виден остальным вкладкам. */}
+      <Route
+        path="/pos"
+        element={
+          <AuthGate>
+            <Suspense fallback={<PageLoader />}>
+              <NewOrder fullscreen />
+            </Suspense>
+          </AuthGate>
+        }
+      />
+
       <Route
         element={
           <AuthGate>
