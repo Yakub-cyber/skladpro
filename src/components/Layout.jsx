@@ -82,7 +82,10 @@ function useCurrentUser() {
 export const NAV = [
   { to: '/', label: 'Дашборд', icon: LayoutDashboard, end: true, perm: 'dashboard' },
   { to: '/products', label: 'Товары', icon: Package, perm: 'products' },
-  { to: '/operations', label: 'Документы', icon: ClipboardCheck, perm: 'operations', highlight: true },
+  // Пункт «Документы» из главного NAV убран — эту роль полностью взяла
+  // CTA-кнопка «Создать документ» вверху сайдбара. Реестр документов
+  // остался как отдельная страница /operations, доступ через CTA-меню
+  // (для кладовщика она остаётся в NAV_STOCK).
   {
     label: 'Кассы и смены',
     icon: ShoppingCart,

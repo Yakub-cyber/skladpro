@@ -11,15 +11,9 @@
 import { useMemo, useState } from 'react'
 import {
   BarChart3,
-  Check,
   AlertTriangle,
   Search,
-  ArrowDownToLine,
-  ArrowUpFromLine,
-  ArrowLeftRight,
-  ClipboardCheck,
   Filter as FilterIcon,
-  X,
 } from 'lucide-react'
 import { Card, Badge, Field, Input, Select, Empty, cx } from '../components/ui'
 import { useStore } from '../store/useStore'
@@ -303,22 +297,6 @@ export default function Movements() {
     })
   }, [timeline, range, kind, empId, partyId, accId, q, docStatus, paymentStatus, fromParty, toParty])
 
-  // Сводки за фильтр — 4 плитки.
-  const summary = useMemo(() => {
-    let goodsIn = 0, goodsOut = 0, moneyIn = 0, moneyOut = 0
-    for (const r of filtered) {
-      const c = classify(r)
-      if (r.kind === 'money') {
-        if (c === 'money-in') moneyIn += r.sum || 0
-        else if (c === 'money-out') moneyOut += r.sum || 0
-      } else {
-        if (c === 'goods-in') goodsIn += r.qty || 0
-        else if (c === 'goods-out') goodsOut += r.qty || 0
-      }
-    }
-    return { goodsIn, goodsOut, moneyIn, moneyOut }
-  }, [filtered])
-
   // Группировка по дням для sticky-заголовков.
   const groups = useMemo(() => {
     const g = []
@@ -340,21 +318,6 @@ export default function Movements() {
 
   return (
     <div className="animate-fadeUp space-y-4">
-      <div>
-        <h2 className="text-xl font-semibold tracking-tight">Движение товара</h2>
-        <p className="text-sm text-muted">
-          Все документы, заказы, накладные и деньги — в одной ленте.
-        </p>
-      </div>
-
-      {/* Сводки */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <Mini label="Приход товара" value={`${num(summary.goodsIn)} ед.`} tone="ok" />
-        <Mini label="Расход товара" value={`${num(summary.goodsOut)} ед.`} tone="bad" />
-        <Mini label="Приход денег" value={money(summary.moneyIn)} tone="ok" />
-        <Mini label="Расход денег" value={money(summary.moneyOut)} tone="bad" />
-      </div>
-
       {/* CloudShop-стайл фильтров: узкая верхняя полоска (5 полей) +
           справа кнопка «Фильтр», раскрывающая панель с расширенными
           параметрами (Автор, Отправитель, Получатель, Касса/счёт). */}
@@ -592,17 +555,3 @@ function FragmentGroup({ label, rows, nameOf, fmtTime }) {
   )
 }
 
-function Mini({ label, value, tone = 'brand' }) {
-  const cls =
-    tone === 'ok'
-      ? 'text-ok bg-ok-soft/40'
-      : tone === 'bad'
-        ? 'text-bad bg-bad-soft/40'
-        : 'text-brand bg-brand-soft/40'
-  return (
-    <div className={cx('rounded-xl p-3', cls)}>
-      <div className="text-[11.5px] text-muted">{label}</div>
-      <div className="text-xl font-bold tabular-nums">{value}</div>
-    </div>
-  )
-}

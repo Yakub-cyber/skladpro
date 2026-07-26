@@ -61,7 +61,7 @@ export default function Journal() {
 
 // ── Смены ───────────────────────────────────────────────────────────────────
 function ShiftTab() {
-  const { shifts, activeShiftId, orders, employees, authUserId, openShift, closeShift } =
+  const { shifts, activeShiftId, orders, employees, warehouses, accounts, openShift, closeShift } =
     useStore()
   const [openCash, setOpenCash] = useState('5000')
   const [closeCash, setCloseCash] = useState('')
@@ -137,19 +137,32 @@ function ShiftTab() {
         </Card>
       )}
 
-      <ShiftHistoryTable history={history} nameOf={nameOf} />
+      <ShiftHistoryTable
+        history={history}
+        nameOf={nameOf}
+        orders={orders}
+        employees={employees}
+        warehouses={warehouses || []}
+        accounts={accounts || []}
+      />
     </div>
   )
 }
 
 // История смен в табличном виде — как в CloudShop. Колонки настраиваются
 // шестерёнкой (localStorage), скрытая — просто не рендерится в <th>/<td>.
+// Наличные/безналичные/возвраты считаются по orders этой смены.
 const HISTORY_COLS = [
   { key: 'opened', label: 'Открыта' },
   { key: 'closed', label: 'Закрыта' },
   { key: 'cashier', label: 'Кассир' },
+  { key: 'shop', label: 'Магазин' },
+  { key: 'cashbox', label: 'Касса' },
   { key: 'orders', label: 'Продажи' },
   { key: 'revenue', label: 'Выручка, ₽' },
+  { key: 'cashPaid', label: 'Наличные, ₽' },
+  { key: 'cardPaid', label: 'Безналичные, ₽' },
+  { key: 'returns', label: 'Возвраты, ₽' },
   { key: 'openingCash', label: 'Начало смены, ₽' },
   { key: 'closingCash', label: 'Конец смены, ₽' },
   { key: 'diff', label: 'Расхождение' },
@@ -158,15 +171,63 @@ const HISTORY_DEFAULT = {
   opened: true,
   closed: true,
   cashier: true,
+  shop: false,
+  cashbox: false,
   orders: true,
   revenue: true,
+  cashPaid: false,
+  cardPaid: false,
+  returns: false,
   openingCash: false,
   closingCash: true,
   diff: true,
 }
 const LS_HISTORY_COLS = 'sklad.journal.historyCols'
 
-function ShiftHistoryTable({ history, nameOf }) {
+const HISTORY_PERIODS = [
+  { key: 'all', label: 'Всё время' },
+  { key: 'today', label: 'Сегодня' },
+  { key: 'week', label: '7 дней' },
+  { key: 'month', label: '30 дней' },
+]
+
+// Диапазон дат [from, to] в ISO по ключу периода.
+function periodRange(key) {
+  const now = new Date()
+  const to = now.toISOString()
+  if (key === 'today') {
+    const d = new Date(now)
+    d.setHours(0, 0, 0, 0)
+    return { from: d.toISOString(), to }
+  }
+  if (key === 'week') {
+    const d = new Date(now)
+    d.setDate(d.getDate() - 7)
+    return { from: d.toISOString(), to }
+  }
+  if (key === 'month') {
+    const d = new Date(now)
+    d.setDate(d.getDate() - 30)
+    return { from: d.toISOString(), to }
+  }
+  return { from: null, to: null }
+}
+
+// Метрики смены — сумма наличных/карт/возвратов по её заказам. Всё, что
+// пришло с закрытых чеков, включая долг (в чек попал, стал revenue).
+function shiftMetrics(shift, orders) {
+  const os = (orders || []).filter((o) => o.shiftId === shift.id && o.status !== 'cancelled')
+  let cash = 0, card = 0, ret = 0
+  for (const o of os) {
+    const p = o.payment || {}
+    cash += Number(p.cashPaid) || 0
+    card += Number(p.cardPaid) || 0
+    if (o.type === 'return') ret += Number(o.total) || 0
+  }
+  return { cash, card, ret }
+}
+
+function ShiftHistoryTable({ history, nameOf, orders, employees, warehouses, accounts }) {
   const [cols, setCols] = useState(() => {
     try {
       const raw = localStorage.getItem(LS_HISTORY_COLS)
@@ -192,12 +253,88 @@ function ShiftHistoryTable({ history, nameOf }) {
     return () => document.removeEventListener('mousedown', onDown)
   }, [menuOpen])
 
+  // Фильтры сверху таблицы — как на скриншоте CloudShop
+  // (Дата открытия / Кассир / Магазин / Касса). Магазин у смены не
+  // хранится — берём активный склад (у нас в MVP один); для полноты
+  // селект показывает все склады и позволит отфильтровать когда данные
+  // появятся.
+  const [period, setPeriod] = useState('all')
+  const [cashierId, setCashierId] = useState('all')
+  const [shopId, setShopId] = useState('all')
+  const [cashboxId, setCashboxId] = useState('all')
+  const cashiers = employees.filter((e) => e.active !== false)
+  const cashAccounts = accounts.filter((a) => a.kind === 'cash')
+  const range = useMemo(() => periodRange(period), [period])
+
+  const filtered = useMemo(
+    () =>
+      history.filter((s) => {
+        if (range.from && s.openedAt < range.from) return false
+        if (range.to && s.openedAt > range.to) return false
+        if (cashierId !== 'all' && s.userId !== cashierId) return false
+        if (shopId !== 'all' && s.warehouseId !== shopId) return false
+        if (cashboxId !== 'all' && s.cashAccountId !== cashboxId) return false
+        return true
+      }),
+    [history, range, cashierId, shopId, cashboxId],
+  )
+
   return (
     <Card className="p-4">
+      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 mb-4">
+        <Field label="Дата открытия">
+          <select
+            value={period}
+            onChange={(e) => setPeriod(e.target.value)}
+            className="w-full h-10 px-3 rounded-xl bg-surface-2 border border-line text-sm outline-none focus:border-brand"
+          >
+            {HISTORY_PERIODS.map((p) => (
+              <option key={p.key} value={p.key}>{p.label}</option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Кассир">
+          <select
+            value={cashierId}
+            onChange={(e) => setCashierId(e.target.value)}
+            className="w-full h-10 px-3 rounded-xl bg-surface-2 border border-line text-sm outline-none focus:border-brand"
+          >
+            <option value="all">Все</option>
+            {cashiers.map((e) => (
+              <option key={e.id} value={e.id}>{e.name}</option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Магазин">
+          <select
+            value={shopId}
+            onChange={(e) => setShopId(e.target.value)}
+            className="w-full h-10 px-3 rounded-xl bg-surface-2 border border-line text-sm outline-none focus:border-brand"
+          >
+            <option value="all">Все</option>
+            {warehouses.map((w) => (
+              <option key={w.id} value={w.id}>{w.name}</option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Касса">
+          <select
+            value={cashboxId}
+            onChange={(e) => setCashboxId(e.target.value)}
+            className="w-full h-10 px-3 rounded-xl bg-surface-2 border border-line text-sm outline-none focus:border-brand"
+          >
+            <option value="all">Все</option>
+            {cashAccounts.map((a) => (
+              <option key={a.id} value={a.id}>{a.name}</option>
+            ))}
+          </select>
+        </Field>
+      </div>
+
       <div className="flex items-center gap-2 mb-3">
         <h3 className="font-semibold text-[15px]">История смен</h3>
         <span className="text-[12px] text-muted">
-          {history.length ? `${history.length} закрытых` : ''}
+          {filtered.length ? `${filtered.length} из ${history.length}` : ''}
         </span>
         <div className="ml-auto relative" ref={menuRef}>
           <button
@@ -237,8 +374,12 @@ function ShiftHistoryTable({ history, nameOf }) {
         </div>
       </div>
 
-      {history.length === 0 ? (
-        <Empty icon={History} title="Закрытых смен пока нет" />
+      {filtered.length === 0 ? (
+        <Empty
+          icon={History}
+          title="Смен не найдено"
+          text={history.length ? 'Смените фильтры, чтобы увидеть больше.' : 'Закрытых смен пока нет.'}
+        />
       ) : (
         <div className="overflow-x-auto -mx-1">
           <table className="w-full text-[13px]">
@@ -247,8 +388,13 @@ function ShiftHistoryTable({ history, nameOf }) {
                 {cols.opened && <th className="text-left py-2 px-2">Открыта</th>}
                 {cols.closed && <th className="text-left py-2 px-2">Закрыта</th>}
                 {cols.cashier && <th className="text-left py-2 px-2">Кассир</th>}
+                {cols.shop && <th className="text-left py-2 px-2">Магазин</th>}
+                {cols.cashbox && <th className="text-left py-2 px-2">Касса</th>}
                 {cols.orders && <th className="text-right py-2 px-2">Продажи</th>}
                 {cols.revenue && <th className="text-right py-2 px-2">Выручка, ₽</th>}
+                {cols.cashPaid && <th className="text-right py-2 px-2">Наличные</th>}
+                {cols.cardPaid && <th className="text-right py-2 px-2">Безнал.</th>}
+                {cols.returns && <th className="text-right py-2 px-2">Возвраты</th>}
                 {cols.openingCash && <th className="text-right py-2 px-2">Начало, ₽</th>}
                 {cols.closingCash && <th className="text-right py-2 px-2">Конец, ₽</th>}
                 {cols.diff && <th className="text-right py-2 px-2">Расхожд.</th>}
@@ -256,8 +402,11 @@ function ShiftHistoryTable({ history, nameOf }) {
               </tr>
             </thead>
             <tbody>
-              {history.map((s) => {
+              {filtered.map((s) => {
                 const diff = (s.closingCash || 0) - (s.openingCash + (s.revenue || 0))
+                const m = shiftMetrics(s, orders)
+                const wh = warehouses.find((w) => w.id === s.warehouseId)?.name
+                const acc = accounts.find((a) => a.id === s.cashAccountId)?.name
                 return (
                   <tr key={s.id} className="border-t border-line hover:bg-surface-2/60">
                     {cols.opened && (
@@ -267,6 +416,8 @@ function ShiftHistoryTable({ history, nameOf }) {
                       <td className="py-2 px-2 tabular-nums">{dateTime(s.closedAt)}</td>
                     )}
                     {cols.cashier && <td className="py-2 px-2 truncate">{nameOf(s.userId)}</td>}
+                    {cols.shop && <td className="py-2 px-2 truncate text-muted">{wh || '—'}</td>}
+                    {cols.cashbox && <td className="py-2 px-2 truncate text-muted">{acc || '—'}</td>}
                     {cols.orders && (
                       <td className="py-2 px-2 text-right tabular-nums">
                         {num(s.ordersCount || 0)}
@@ -275,6 +426,21 @@ function ShiftHistoryTable({ history, nameOf }) {
                     {cols.revenue && (
                       <td className="py-2 px-2 text-right tabular-nums font-medium">
                         {money(s.revenue || 0)}
+                      </td>
+                    )}
+                    {cols.cashPaid && (
+                      <td className="py-2 px-2 text-right tabular-nums text-muted">
+                        {num(m.cash)}
+                      </td>
+                    )}
+                    {cols.cardPaid && (
+                      <td className="py-2 px-2 text-right tabular-nums text-muted">
+                        {num(m.card)}
+                      </td>
+                    )}
+                    {cols.returns && (
+                      <td className="py-2 px-2 text-right tabular-nums text-muted">
+                        {num(m.ret)}
                       </td>
                     )}
                     {cols.openingCash && (

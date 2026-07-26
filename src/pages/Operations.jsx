@@ -8,7 +8,7 @@
 // «Продажа-документ» здесь ≠ пробить чек на /orders/new и это путает.
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { Info, ShoppingCart } from 'lucide-react'
+import { ShoppingCart, ArrowLeft } from 'lucide-react'
 import { cx } from '../components/ui'
 import { TABS } from './operations/_shared'
 import SaleTab from './operations/SaleTab'
@@ -85,10 +85,12 @@ export default function Operations() {
     if (next) setTab(next.tabs[0])
   }
 
-  // ?new=<tab> из CTA «Создать документ». Находим категорию, содержащую
-  // такой tab, переключаемся и стираем параметр, чтобы возврат к странице
-  // не гонял переключение снова.
+  // ?new=<tab> из CTA «Создать документ». Флаг single-mode: показываем
+  // только эту вкладку без CATEGORIES/tab-list — юзер попал сюда, чтобы
+  // сделать конкретный документ, лишний UX его отвлекал бы. Возврат — в
+  // реестр документов (кнопкой «Назад») или через CTA.
   const [params, setParams] = useSearchParams()
+  const [singleMode, setSingleMode] = useState(false)
   useEffect(() => {
     const n = params.get('new')
     if (!n) return
@@ -96,6 +98,7 @@ export default function Operations() {
     if (c) {
       setCat(c.key)
       setTab(n)
+      setSingleMode(true)
     }
     const next = new URLSearchParams(params)
     next.delete('new')
@@ -103,10 +106,40 @@ export default function Operations() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params])
 
+  if (singleMode && activeMeta) {
+    // Один документ — ни CATEGORIES, ни списка табов, чтобы юзера не
+    // сбивало «меню документов». Только заголовок конкретной операции,
+    // кнопка «Назад в реестр» и сама форма.
+    return (
+      <div className="animate-fadeUp">
+        <div className="flex items-center gap-3 mb-4">
+          <button
+            onClick={() => {
+              setSingleMode(false)
+              setTab('registry')
+              setCat('util')
+            }}
+            className="h-10 w-10 grid place-items-center rounded-xl hover:bg-surface-2 text-muted hover:text-ink"
+            title="Назад в реестр документов"
+          >
+            <ArrowLeft size={18} />
+          </button>
+          <div className="min-w-0 flex-1">
+            <h2 className="text-xl font-semibold tracking-tight flex items-center gap-2">
+              <activeMeta.icon size={20} className="text-brand" />
+              {activeMeta.label}
+            </h2>
+          </div>
+        </div>
+        <Active />
+      </div>
+    )
+  }
+
   return (
     <div className="animate-fadeUp">
       <div className="mb-4">
-        <h2 className="text-xl font-semibold tracking-tight">Документы</h2>
+        <h2 className="text-xl font-semibold tracking-tight">Реестр документов</h2>
         <p className="text-sm text-muted">{currentCategory.hint}</p>
       </div>
 
