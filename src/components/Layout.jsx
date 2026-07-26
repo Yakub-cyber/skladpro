@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, Suspense } from 'react'
+import { useState, useEffect, useRef, useMemo, Suspense } from 'react'
 import { Link, NavLink, Outlet, useLocation, useMatch, useNavigate } from 'react-router-dom'
 import {
   LayoutDashboard,
@@ -31,6 +31,13 @@ import {
   CloudUpload,
   ShoppingCart,
   Wallet,
+  ArrowDownToLine,
+  ArrowUpFromLine,
+  ArrowLeftRight,
+  RotateCcw,
+  Plus,
+  ClipboardMinus,
+  FilePlus,
 } from 'lucide-react'
 import { cx, Avatar } from './ui'
 import CommandPalette from './CommandPalette'
@@ -81,8 +88,9 @@ export const NAV = [
     icon: ShoppingCart,
     key: 'pos',
     items: [
-      // Прямой заход в POS-кассу — как в CloudShop «Кассы».
-      { to: '/orders/new', label: 'Касса', icon: ShoppingCart, perm: 'orders' },
+      // «Кассы» = управление кассами и назначение кассиров (CloudShop-стиль).
+      // POS открывается через кнопку «Касса» в шапке — она видна везде.
+      { to: '/cashiers', label: 'Кассы', icon: Wallet, perm: 'money' },
       { to: '/journal', label: 'Смены и журнал', icon: History, perm: 'journal' },
     ],
   },
@@ -150,6 +158,34 @@ export const NAV = [
 // где группировка не нужна.
 export const NAV_ITEMS = NAV.flatMap((n) => (n.items ? n.items : [n]))
 
+// «Создать документ» — CTA-меню как в CloudShop (фиолетовая кнопка вверху
+// сайдбара). Клик по пункту ведёт на соответствующий экран с триггером
+// в URL (?new=…), а сама страница подхватывает его и открывает нужную
+// форму/вкладку. Разделено на 2 секции — Документы (склад) и Деньги.
+export const CREATE_DOC_ITEMS = [
+  {
+    section: 'Документы',
+    items: [
+      { label: 'Продажа', icon: ShoppingCart, to: '/orders/new', perm: 'orders' },
+      { label: 'Закупка', icon: ArrowDownToLine, to: '/operations?new=receive', perm: 'operations' },
+      { label: 'Возврат продажи', icon: RotateCcw, to: '/operations?new=sreturn', perm: 'operations' },
+      { label: 'Возврат закупки', icon: RotateCcw, to: '/operations?new=preturn', perm: 'operations' },
+      { label: 'Инвентаризация', icon: ClipboardCheck, to: '/operations?new=inventory', perm: 'operations' },
+      { label: 'Оприходование', icon: Package, to: '/operations?new=stockin', perm: 'operations' },
+      { label: 'Списание', icon: ClipboardMinus, to: '/operations?new=writeoff', perm: 'operations' },
+      { label: 'Перемещение', icon: ArrowLeftRight, to: '/operations?new=transfer', perm: 'operations' },
+    ],
+  },
+  {
+    section: 'Деньги',
+    items: [
+      { label: 'Приход', icon: ArrowDownToLine, to: '/money?new=in', perm: 'money' },
+      { label: 'Расход', icon: ArrowUpFromLine, to: '/money?new=out', perm: 'money' },
+      { label: 'Перевод', icon: ArrowLeftRight, to: '/money?new=transfer', perm: 'money' },
+    ],
+  },
+]
+
 // Кладовщик: приоритет операциям, товарам и складу. Продажи/финансы/аналитика
 // скрыты. «Заказы на сборку» — то, что реально важно для смены.
 export const NAV_STOCK = [
@@ -195,25 +231,41 @@ function Logo() {
   )
 }
 
-// Одиночный NavLink пункта. Отдельно вынесен, чтобы одинаково рендерить
-// прямые пункты NAV (Дашборд) и пункты внутри группы.
+// Учитываем query-string при определении активного пункта. Раньше два
+// пункта, ведущие на один и тот же pathname (/orders и /orders?filter=new),
+// подсвечивались одновременно — NavLink игнорирует ?query. Теперь пункт
+// «Заявки клиентов» активен, только когда ?filter=new совпадает; а «Заказы»
+// без фильтра — только когда фильтра нет.
+function isNavActive(itemTo, pathname, search, end) {
+  const [path, qs] = itemTo.split('?')
+  const pathMatch = end ? pathname === path : path === '/' ? pathname === '/' : pathname === path || pathname.startsWith(path + '/')
+  if (!pathMatch) return false
+  const target = new URLSearchParams(qs || '')
+  const targetFilter = target.get('filter')
+  const curFilter = new URLSearchParams(search).get('filter')
+  if (targetFilter) return curFilter === targetFilter
+  return !curFilter
+}
+
+// Одиночный пункт NAV. Отдельно вынесен, чтобы одинаково рендерить
+// прямые пункты NAV (Дашборд) и пункты внутри группы. Не используем
+// NavLink — нужна поддержка query-string при активности.
 function NavItem({ item, counts, onClose, nested = false }) {
+  const { pathname, search } = useLocation()
+  const isActive = isNavActive(item.to, pathname, search, item.end)
   return (
-    <NavLink
+    <Link
       to={item.to}
-      end={item.end}
       onClick={onClose}
-      className={({ isActive }) =>
-        cx(
-          'flex items-center gap-3 h-10 rounded-xl text-sm font-medium transition-colors relative group',
-          nested ? 'px-3 ml-2' : 'px-3',
-          isActive
-            ? 'bg-brand text-brand-ink'
-            : item.highlight
-              ? 'text-ink bg-brand-soft/60 hover:bg-brand-soft border border-brand/25'
-              : 'text-muted hover:text-ink hover:bg-surface-2',
-        )
-      }
+      className={cx(
+        'flex items-center gap-3 h-10 rounded-xl text-sm font-medium transition-colors relative group',
+        nested ? 'px-3 ml-2' : 'px-3',
+        isActive
+          ? 'bg-brand text-brand-ink'
+          : item.highlight
+            ? 'text-ink bg-brand-soft/60 hover:bg-brand-soft border border-brand/25'
+            : 'text-muted hover:text-ink hover:bg-surface-2',
+      )}
     >
       <item.icon size={item.highlight ? 19 : 18} strokeWidth={item.highlight ? 2.3 : 2.1} />
       <span className="flex-1 truncate">{item.label}</span>
@@ -223,7 +275,7 @@ function NavItem({ item, counts, onClose, nested = false }) {
           {counts[item.to]}
         </span>
       )}
-    </NavLink>
+    </Link>
   )
 }
 
@@ -231,11 +283,9 @@ function NavItem({ item, counts, onClose, nested = false }) {
 // автоматически. Состояние раскрытия других групп персистится в
 // localStorage — иначе клик по любой вкладке снова закрывал бы всё.
 function NavGroup({ node, counts, onClose }) {
-  const { pathname } = useLocation()
+  const { pathname, search } = useLocation()
   const key = 'sklad.nav.' + (node.key || node.label)
-  const hasActive = node.items.some((it) =>
-    it.end ? it.to === pathname : it.to !== '/' && pathname.startsWith(it.to),
-  )
+  const hasActive = node.items.some((it) => isNavActive(it.to, pathname, search, it.end))
   const [open, setOpen] = useState(() => {
     if (hasActive) return true
     try {
@@ -344,6 +394,79 @@ function ShiftContextTile({ me, orders, documents, authAt }) {
   )
 }
 
+// «Создать документ» — большая брендовая CTA как в CloudShop. Клик
+// раскрывает панель со списком типов документов (2 секции), клик по
+// пункту ведёт на нужный экран с ?new=… и панель закрывается. Клик мимо
+// или Esc — тоже закрывает. Кнопка визуально доминирует над NAV, чтобы
+// оператор нашёл её без раздумий.
+function CreateDocMenu({ role, onNavigate }) {
+  const [open, setOpen] = useState(false)
+  const boxRef = useRef(null)
+
+  useEffect(() => {
+    if (!open) return
+    const onDown = (e) => {
+      if (boxRef.current && !boxRef.current.contains(e.target)) setOpen(false)
+    }
+    const onEsc = (e) => e.key === 'Escape' && setOpen(false)
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onEsc)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onEsc)
+    }
+  }, [open])
+
+  const sections = useMemo(
+    () =>
+      CREATE_DOC_ITEMS.map((s) => ({
+        ...s,
+        items: s.items.filter((it) => canAccess(role, it.perm)),
+      })).filter((s) => s.items.length),
+    [role],
+  )
+
+  return (
+    <div ref={boxRef} className="mx-3 mb-3 relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className={cx(
+          'w-full h-11 rounded-xl bg-brand text-brand-ink text-sm font-semibold inline-flex items-center justify-center gap-2 shadow-md shadow-brand/25 hover:brightness-110 transition',
+          open && 'ring-2 ring-brand/40',
+        )}
+      >
+        <Plus size={17} strokeWidth={2.5} /> Создать документ
+      </button>
+      {open && (
+        <div className="absolute left-0 right-0 top-full mt-1 z-30 rounded-xl bg-surface border border-line shadow-xl overflow-hidden animate-fadeUp">
+          {sections.map((s, si) => (
+            <div key={s.section} className={si > 0 ? 'border-t border-line' : ''}>
+              <div className="px-3 pt-2 pb-1 text-[11px] font-semibold uppercase tracking-wide text-muted">
+                {s.section}
+              </div>
+              {s.items.map((it) => (
+                <Link
+                  key={it.to}
+                  to={it.to}
+                  onClick={() => {
+                    setOpen(false)
+                    onNavigate?.()
+                  }}
+                  className="flex items-center gap-2.5 px-3 h-9 text-[13px] text-ink hover:bg-brand-soft hover:text-brand transition"
+                >
+                  <it.icon size={15} className="text-muted" />
+                  <span className="truncate">{it.label}</span>
+                </Link>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function Sidebar({ open, onClose }) {
   const orders = useStore((s) => s.orders)
   const products = useStore((s) => s.products)
@@ -387,6 +510,9 @@ function Sidebar({ open, onClose }) {
       >
         <div className="h-16 flex items-center px-5 border-b border-line">
           <Logo />
+        </div>
+        <div className="pt-3">
+          <CreateDocMenu role={me.role} onNavigate={onClose} />
         </div>
         <ShiftContextTile me={me} orders={orders} documents={documents} authAt={authAt} />
         <nav className="flex-1 overflow-y-auto no-scrollbar p-3 space-y-0.5">

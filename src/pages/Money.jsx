@@ -1,7 +1,8 @@
 // Финансовый модуль «Деньги». По схеме CloudShop: карточки счетов сверху,
 // три кнопки «Приход / Расход / Перевод», ниже — лента транзакций с
 // фильтром по счёту. Балансы вычисляются на лету из moneyTx (см. lib/money.js).
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import {
   Wallet,
   Landmark,
@@ -14,6 +15,8 @@ import {
   Check,
   Building2,
   Printer,
+  Filter as FilterIcon,
+  Search,
 } from 'lucide-react'
 import { Card, Button, Badge, Field, Input, Select, Modal, Empty, cx } from '../components/ui'
 import { useConfirm } from '../components/Confirm'
@@ -40,6 +43,7 @@ export default function Money() {
   const moneyTx = useStore((s) => s.moneyTx) || []
   const customers = useStore((s) => s.customers) || []
   const suppliers = useStore((s) => s.suppliers) || []
+  const employees = useStore((s) => s.employees) || []
   const addMoneyTx = useStore((s) => s.addMoneyTx)
   const cancelMoneyTx = useStore((s) => s.cancelMoneyTx)
   const addAccount = useStore((s) => s.addAccount)
@@ -48,6 +52,29 @@ export default function Money() {
   const [filterAcc, setFilterAcc] = useState('all')
   const [printTx, setPrintTx] = useState(null)
   const [period, setPeriod] = useState('month')
+  // CloudShop-стайл фильтров: верхняя полоска (Поиск/Дата/Статус/Тип) +
+  // кнопка «Фильтр», раскрывающая расширенные (Счёт/Контрагент/Категория/Автор).
+  const [q, setQ] = useState('')
+  const [txStatus, setTxStatus] = useState('all')
+  const [txType, setTxType] = useState('all')
+  const [partyId, setPartyId] = useState('all')
+  const [purposeFilter, setPurposeFilter] = useState('all')
+  const [empId, setEmpId] = useState('all')
+  const [filtersOpen, setFiltersOpen] = useState(false)
+  // ?new=in|out|transfer из CTA «Создать документ» — открывает нужную
+  // модалку и стирает параметр, чтобы возврат стрелкой не открывал её
+  // ещё раз.
+  const [params, setParams] = useSearchParams()
+  useEffect(() => {
+    const n = params.get('new')
+    if (n === 'in' || n === 'out' || n === 'transfer') {
+      setModal(n)
+      const next = new URLSearchParams(params)
+      next.delete('new')
+      setParams(next, { replace: true })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params])
 
   const balances = useMemo(
     () => accountBalances(accounts, moneyTx),
@@ -70,9 +97,36 @@ export default function Money() {
     [moneyTx, range, filterAcc],
   )
 
-  const visibleTx = moneyTx.filter(
-    (t) => filterAcc === 'all' || t.accountId === filterAcc || t.toAccountId === filterAcc,
-  )
+  const visibleTx = useMemo(() => {
+    const s = q.trim().toLowerCase()
+    return moneyTx.filter((t) => {
+      if (filterAcc !== 'all' && t.accountId !== filterAcc && t.toAccountId !== filterAcc) return false
+      if (txStatus !== 'all' && (t.status || 'posted') !== txStatus) return false
+      if (txType !== 'all' && t.type !== txType) return false
+      if (partyId !== 'all' && t.customerId !== partyId && t.supplierId !== partyId) return false
+      if (purposeFilter !== 'all' && (t.purpose || '') !== purposeFilter) return false
+      if (empId !== 'all' && t.by !== empId) return false
+      if (s) {
+        const hay = `${t.no || ''} ${t.note || ''}`.toLowerCase()
+        if (!hay.includes(s)) return false
+      }
+      return true
+    })
+  }, [moneyTx, filterAcc, txStatus, txType, partyId, purposeFilter, empId, q])
+
+  // Все встреченные назначения (для селекта «Категория»). Мержим in/out/transfer
+  // из справочника + фактически использованные ключи из moneyTx (на случай
+  // старых записей с purpose, которого больше нет в справочнике).
+  const purposeOptions = useMemo(() => {
+    const seen = new Map()
+    for (const kind of ['in', 'out', 'transfer']) {
+      for (const p of MONEY_PURPOSES[kind] || []) seen.set(p.key, p.label)
+    }
+    for (const t of moneyTx) {
+      if (t.purpose && !seen.has(t.purpose)) seen.set(t.purpose, t.purpose)
+    }
+    return Array.from(seen.entries()).map(([key, label]) => ({ key, label }))
+  }, [moneyTx])
 
   return (
     <div className="animate-fadeUp space-y-5">
@@ -176,6 +230,105 @@ export default function Money() {
         setPeriod={setPeriod}
         filteredByAccount={filterAcc !== 'all'}
       />
+
+      {/* CloudShop-стайл фильтров: узкая полоска с 4 основными полями и
+          кнопкой «Фильтр», раскрывающей ещё 4 расширенных. */}
+      <Card className="p-3 space-y-3">
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-[minmax(0,1.4fr)_repeat(3,minmax(0,1fr))_auto]">
+          <Field label="Поиск">
+            <div className="relative">
+              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted pointer-events-none" />
+              <Input
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                placeholder="Номер или комментарий…"
+                className="pl-9"
+              />
+            </div>
+          </Field>
+          <Field label="Дата">
+            <Select value={period} onChange={(e) => setPeriod(e.target.value)}>
+              <option value="today">Сегодня</option>
+              <option value="week">7 дней</option>
+              <option value="month">30 дней</option>
+              <option value="all">Всё время</option>
+            </Select>
+          </Field>
+          <Field label="Статус">
+            <Select value={txStatus} onChange={(e) => setTxStatus(e.target.value)}>
+              <option value="all">Все</option>
+              <option value="posted">Проведён</option>
+              <option value="cancelled">Отменён</option>
+            </Select>
+          </Field>
+          <Field label="Тип">
+            <Select value={txType} onChange={(e) => setTxType(e.target.value)}>
+              <option value="all">Все</option>
+              <option value="in">Приход</option>
+              <option value="out">Расход</option>
+              <option value="transfer">Перевод</option>
+            </Select>
+          </Field>
+          <Field label="&nbsp;">
+            <button
+              type="button"
+              onClick={() => setFiltersOpen((v) => !v)}
+              className={cx(
+                'h-10 px-4 rounded-xl border text-sm font-medium inline-flex items-center gap-2 transition',
+                filtersOpen
+                  ? 'bg-brand text-brand-ink border-brand'
+                  : 'bg-surface-2 border-line hover:border-brand/40',
+              )}
+            >
+              <FilterIcon size={15} />
+              Фильтр
+            </button>
+          </Field>
+        </div>
+        {filtersOpen && (
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 pt-3 border-t border-line animate-fadeUp">
+            <Field label="Счёт">
+              <Select value={filterAcc} onChange={(e) => setFilterAcc(e.target.value)}>
+                <option value="all">Все</option>
+                {accounts.map((a) => (
+                  <option key={a.id} value={a.id}>{a.name}</option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Контрагент">
+              <Select value={partyId} onChange={(e) => setPartyId(e.target.value)}>
+                <option value="all">Все</option>
+                <optgroup label="Клиенты">
+                  {customers.map((c) => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </optgroup>
+                <optgroup label="Поставщики">
+                  {suppliers.map((s) => (
+                    <option key={s.id} value={s.id}>{s.name}</option>
+                  ))}
+                </optgroup>
+              </Select>
+            </Field>
+            <Field label="Категория">
+              <Select value={purposeFilter} onChange={(e) => setPurposeFilter(e.target.value)}>
+                <option value="all">Все</option>
+                {purposeOptions.map((p) => (
+                  <option key={p.key} value={p.key}>{p.label}</option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Автор">
+              <Select value={empId} onChange={(e) => setEmpId(e.target.value)}>
+                <option value="all">Все</option>
+                {employees.map((e) => (
+                  <option key={e.id} value={e.id}>{e.name}</option>
+                ))}
+              </Select>
+            </Field>
+          </div>
+        )}
+      </Card>
 
       {/* Лента транзакций */}
       <Card className="overflow-hidden">

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Clock,
   Wallet,
@@ -19,6 +19,7 @@ import {
   Activity,
   Receipt,
   Download,
+  Settings2,
 } from 'lucide-react'
 import { Card, Section, Button, Badge, Field, Empty, cx } from '../components/ui'
 import { useStore } from '../store/useStore'
@@ -136,45 +137,180 @@ function ShiftTab() {
         </Card>
       )}
 
-      <Section title="История смен">
-        {history.length === 0 ? (
-          <Empty icon={History} title="Закрытых смен пока нет" />
-        ) : (
-          <div className="space-y-2">
-            {history.map((s) => {
-              const diff = (s.closingCash || 0) - (s.openingCash + (s.revenue || 0))
-              return (
-                <div key={s.id} className="flex flex-wrap items-center gap-3 p-3 rounded-xl bg-surface-2">
-                  <div className="min-w-0 flex-1">
-                    <div className="font-medium text-sm">{nameOf(s.userId)}</div>
-                    <div className="text-[12px] text-muted">
-                      {dateTime(s.openedAt)} — {dateTime(s.closedAt).slice(-5)}
-                    </div>
-                  </div>
-                  <div className="text-center">
-                    <div className="text-[11px] text-muted">Выручка</div>
-                    <div className="text-sm font-medium tabular-nums">{money(s.revenue || 0)}</div>
-                  </div>
-                  <div className="text-center">
-                    <div className="text-[11px] text-muted">Заказов</div>
-                    <div className="text-sm font-medium tabular-nums">{num(s.ordersCount || 0)}</div>
-                  </div>
-                  <div className="text-center">
-                    <div className="text-[11px] text-muted">Касса</div>
-                    <Badge tone={diff === 0 ? 'ok' : 'warn'}>
-                      {diff === 0 ? 'сходится' : `${diff > 0 ? '+' : ''}${num(diff)} ₽`}
-                    </Badge>
-                  </div>
-                  <Button size="sm" variant="ghost" icon={Printer} onClick={() => printZReport(s, nameOf(s.userId))}>
-                    Z-отчёт
-                  </Button>
-                </div>
-              )
-            })}
-          </div>
-        )}
-      </Section>
+      <ShiftHistoryTable history={history} nameOf={nameOf} />
     </div>
+  )
+}
+
+// История смен в табличном виде — как в CloudShop. Колонки настраиваются
+// шестерёнкой (localStorage), скрытая — просто не рендерится в <th>/<td>.
+const HISTORY_COLS = [
+  { key: 'opened', label: 'Открыта' },
+  { key: 'closed', label: 'Закрыта' },
+  { key: 'cashier', label: 'Кассир' },
+  { key: 'orders', label: 'Продажи' },
+  { key: 'revenue', label: 'Выручка, ₽' },
+  { key: 'openingCash', label: 'Начало смены, ₽' },
+  { key: 'closingCash', label: 'Конец смены, ₽' },
+  { key: 'diff', label: 'Расхождение' },
+]
+const HISTORY_DEFAULT = {
+  opened: true,
+  closed: true,
+  cashier: true,
+  orders: true,
+  revenue: true,
+  openingCash: false,
+  closingCash: true,
+  diff: true,
+}
+const LS_HISTORY_COLS = 'sklad.journal.historyCols'
+
+function ShiftHistoryTable({ history, nameOf }) {
+  const [cols, setCols] = useState(() => {
+    try {
+      const raw = localStorage.getItem(LS_HISTORY_COLS)
+      if (raw) return { ...HISTORY_DEFAULT, ...JSON.parse(raw) }
+    } catch {}
+    return HISTORY_DEFAULT
+  })
+  const [menuOpen, setMenuOpen] = useState(false)
+  const menuRef = useRef(null)
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(LS_HISTORY_COLS, JSON.stringify(cols))
+    } catch {}
+  }, [cols])
+
+  useEffect(() => {
+    if (!menuOpen) return
+    const onDown = (e) => {
+      if (menuRef.current && !menuRef.current.contains(e.target)) setMenuOpen(false)
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [menuOpen])
+
+  return (
+    <Card className="p-4">
+      <div className="flex items-center gap-2 mb-3">
+        <h3 className="font-semibold text-[15px]">История смен</h3>
+        <span className="text-[12px] text-muted">
+          {history.length ? `${history.length} закрытых` : ''}
+        </span>
+        <div className="ml-auto relative" ref={menuRef}>
+          <button
+            type="button"
+            onClick={() => setMenuOpen((v) => !v)}
+            className={cx(
+              'h-9 w-9 grid place-items-center rounded-xl border transition',
+              menuOpen ? 'bg-brand text-brand-ink border-brand' : 'bg-surface-2 border-line hover:border-brand/40 text-muted',
+            )}
+            title="Настройки таблицы"
+          >
+            <Settings2 size={16} />
+          </button>
+          {menuOpen && (
+            <div className="absolute right-0 top-full mt-1 z-30 w-56 rounded-xl bg-surface border border-line shadow-xl p-2 animate-fadeUp">
+              <div className="px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-muted">
+                Настройки таблицы
+              </div>
+              <div className="max-h-72 overflow-y-auto">
+                {HISTORY_COLS.map((c) => (
+                  <label
+                    key={c.key}
+                    className="flex items-center gap-2 px-2 h-9 rounded-lg text-[13px] hover:bg-surface-2 cursor-pointer"
+                  >
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 accent-brand"
+                      checked={!!cols[c.key]}
+                      onChange={() => setCols((s) => ({ ...s, [c.key]: !s[c.key] }))}
+                    />
+                    <span className="truncate">{c.label}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {history.length === 0 ? (
+        <Empty icon={History} title="Закрытых смен пока нет" />
+      ) : (
+        <div className="overflow-x-auto -mx-1">
+          <table className="w-full text-[13px]">
+            <thead className="text-muted text-[11.5px] uppercase tracking-wide">
+              <tr>
+                {cols.opened && <th className="text-left py-2 px-2">Открыта</th>}
+                {cols.closed && <th className="text-left py-2 px-2">Закрыта</th>}
+                {cols.cashier && <th className="text-left py-2 px-2">Кассир</th>}
+                {cols.orders && <th className="text-right py-2 px-2">Продажи</th>}
+                {cols.revenue && <th className="text-right py-2 px-2">Выручка, ₽</th>}
+                {cols.openingCash && <th className="text-right py-2 px-2">Начало, ₽</th>}
+                {cols.closingCash && <th className="text-right py-2 px-2">Конец, ₽</th>}
+                {cols.diff && <th className="text-right py-2 px-2">Расхожд.</th>}
+                <th className="w-10 py-2 px-2"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {history.map((s) => {
+                const diff = (s.closingCash || 0) - (s.openingCash + (s.revenue || 0))
+                return (
+                  <tr key={s.id} className="border-t border-line hover:bg-surface-2/60">
+                    {cols.opened && (
+                      <td className="py-2 px-2 tabular-nums">{dateTime(s.openedAt)}</td>
+                    )}
+                    {cols.closed && (
+                      <td className="py-2 px-2 tabular-nums">{dateTime(s.closedAt)}</td>
+                    )}
+                    {cols.cashier && <td className="py-2 px-2 truncate">{nameOf(s.userId)}</td>}
+                    {cols.orders && (
+                      <td className="py-2 px-2 text-right tabular-nums">
+                        {num(s.ordersCount || 0)}
+                      </td>
+                    )}
+                    {cols.revenue && (
+                      <td className="py-2 px-2 text-right tabular-nums font-medium">
+                        {money(s.revenue || 0)}
+                      </td>
+                    )}
+                    {cols.openingCash && (
+                      <td className="py-2 px-2 text-right tabular-nums text-muted">
+                        {num(s.openingCash || 0)}
+                      </td>
+                    )}
+                    {cols.closingCash && (
+                      <td className="py-2 px-2 text-right tabular-nums text-muted">
+                        {num(s.closingCash || 0)}
+                      </td>
+                    )}
+                    {cols.diff && (
+                      <td className="py-2 px-2 text-right">
+                        <Badge tone={diff === 0 ? 'ok' : 'warn'}>
+                          {diff === 0 ? 'сходится' : `${diff > 0 ? '+' : ''}${num(diff)}`}
+                        </Badge>
+                      </td>
+                    )}
+                    <td className="py-2 px-2 text-right">
+                      <button
+                        onClick={() => printZReport(s, nameOf(s.userId))}
+                        className="h-8 w-8 grid place-items-center rounded-lg text-muted hover:text-ink hover:bg-surface-2"
+                        title="Z-отчёт"
+                      >
+                        <Printer size={14} />
+                      </button>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Card>
   )
 }
 

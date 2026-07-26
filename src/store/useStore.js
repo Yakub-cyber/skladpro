@@ -795,6 +795,7 @@ export const useStore = create(
               id,
               kind: 'cash',
               currency: s.settings?.currency || '₽',
+              cashierIds: [],
               ...a,
               createdAt: new Date().toISOString(),
             },
@@ -1073,7 +1074,7 @@ export const useStore = create(
     }),
     {
       name: 'sklad.db',
-      version: 15,
+      version: 16,
       partialize: persistPartialize,
       merge: persistMerge,
       migrate: persistMigrate,

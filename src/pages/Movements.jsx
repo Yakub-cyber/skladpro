@@ -18,6 +18,8 @@ import {
   ArrowUpFromLine,
   ArrowLeftRight,
   ClipboardCheck,
+  Filter as FilterIcon,
+  X,
 } from 'lucide-react'
 import { Card, Badge, Field, Input, Select, Empty, cx } from '../components/ui'
 import { useStore } from '../store/useStore'
@@ -241,9 +243,26 @@ export default function Movements() {
   const [empId, setEmpId] = useState('all')
   const [partyId, setPartyId] = useState('all')
   const [accId, setAccId] = useState('all')
+  // CloudShop-стайл фильтры: docStatus (all/posted/draft/cancelled),
+  // paymentStatus (all/paid/partial/unpaid), fromParty/toParty (отдельно
+  // отправитель/получатель — вместо единого partyId). Панель «Фильтр»
+  // прячет расширенные поля до клика — как в оригинале.
+  const [docStatus, setDocStatus] = useState('all')
+  const [paymentStatus, setPaymentStatus] = useState('all')
+  const [fromParty, setFromParty] = useState('all')
+  const [toParty, setToParty] = useState('all')
+  const [filtersOpen, setFiltersOpen] = useState(false)
 
   const timeline = useMemo(() => buildTimeline(state), [state])
   const range = useMemo(() => rangeFor(period), [period])
+
+  const nameMatch = (name, id) => {
+    if (id === 'all' || !name) return true
+    const c = customers.find((x) => x.id === id)
+    const s = suppliers.find((x) => x.id === id)
+    const target = c?.name || s?.name
+    return target && name.toLowerCase().includes(target.toLowerCase())
+  }
 
   const filtered = useMemo(() => {
     const s = q.trim().toLowerCase()
@@ -262,6 +281,16 @@ export default function Movements() {
           raw.partyId === partyId
         if (!has) return false
       }
+      if (fromParty !== 'all' && !nameMatch(r.from, fromParty)) return false
+      if (toParty !== 'all' && !nameMatch(r.to, toParty)) return false
+      if (docStatus !== 'all' && r.status !== docStatus) return false
+      if (paymentStatus !== 'all') {
+        const paid = Number(r.paid) || 0
+        const sum = Number(r.sum) || 0
+        const st =
+          sum === 0 ? 'paid' : paid >= sum ? 'paid' : paid > 0 ? 'partial' : 'unpaid'
+        if (st !== paymentStatus) return false
+      }
       if (accId !== 'all') {
         if (r.kind !== 'money') return false
         if (r.raw.accountId !== accId && r.raw.toAccountId !== accId) return false
@@ -272,7 +301,7 @@ export default function Movements() {
       }
       return true
     })
-  }, [timeline, range, kind, empId, partyId, accId, q])
+  }, [timeline, range, kind, empId, partyId, accId, q, docStatus, paymentStatus, fromParty, toParty])
 
   // Сводки за фильтр — 4 плитки.
   const summary = useMemo(() => {
@@ -318,24 +347,6 @@ export default function Movements() {
         </p>
       </div>
 
-      {/* Табы по типу */}
-      <div className="flex gap-1.5 overflow-x-auto no-scrollbar">
-        {KIND_TABS.map((t) => (
-          <button
-            key={t.key}
-            onClick={() => setKind(t.key)}
-            className={cx(
-              'px-3.5 h-9 rounded-xl text-[13px] font-medium whitespace-nowrap transition',
-              kind === t.key
-                ? 'bg-brand text-brand-ink'
-                : 'bg-surface-2 text-muted hover:text-ink',
-            )}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
-
       {/* Сводки */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <Mini label="Приход товара" value={`${num(summary.goodsIn)} ед.`} tone="ok" />
@@ -344,59 +355,118 @@ export default function Movements() {
         <Mini label="Расход денег" value={money(summary.moneyOut)} tone="bad" />
       </div>
 
-      {/* Узкая полоска фильтров — 5 колонок как в CloudShop */}
-      <Card className="p-3">
-        <div className="grid sm:grid-cols-2 lg:grid-cols-5 gap-2">
-          <Field label="Период">
-            <Select value={period} onChange={(e) => setPeriod(e.target.value)}>
-              {PERIODS.map((p) => (
-                <option key={p.key} value={p.key}>{p.label}</option>
-              ))}
-            </Select>
-          </Field>
-          <Field label="Сотрудник">
-            <Select value={empId} onChange={(e) => setEmpId(e.target.value)}>
-              <option value="all">Все</option>
-              {employees.map((e) => (
-                <option key={e.id} value={e.id}>{e.name}</option>
-              ))}
-            </Select>
-          </Field>
-          <Field label="Контрагент">
-            <Select value={partyId} onChange={(e) => setPartyId(e.target.value)}>
-              <option value="all">Все</option>
-              <optgroup label="Клиенты">
-                {customers.map((c) => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
-                ))}
-              </optgroup>
-              <optgroup label="Поставщики">
-                {suppliers.map((s) => (
-                  <option key={s.id} value={s.id}>{s.name}</option>
-                ))}
-              </optgroup>
-            </Select>
-          </Field>
-          <Field label="Касса / счёт">
-            <Select value={accId} onChange={(e) => setAccId(e.target.value)}>
-              <option value="all">Все</option>
-              {accounts.map((a) => (
-                <option key={a.id} value={a.id}>{a.name}</option>
-              ))}
-            </Select>
-          </Field>
+      {/* CloudShop-стайл фильтров: узкая верхняя полоска (5 полей) +
+          справа кнопка «Фильтр», раскрывающая панель с расширенными
+          параметрами (Автор, Отправитель, Получатель, Касса/счёт). */}
+      <Card className="p-3 space-y-3">
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-[minmax(0,1.4fr)_repeat(4,minmax(0,1fr))_auto]">
           <Field label="Поиск">
             <div className="relative">
               <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted pointer-events-none" />
               <Input
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
-                placeholder="Номер, контрагент…"
+                placeholder="Номер или комментарий…"
                 className="pl-9"
               />
             </div>
           </Field>
+          <Field label="Дата">
+            <Select value={period} onChange={(e) => setPeriod(e.target.value)}>
+              {PERIODS.map((p) => (
+                <option key={p.key} value={p.key}>{p.label}</option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="Статус">
+            <Select value={docStatus} onChange={(e) => setDocStatus(e.target.value)}>
+              <option value="all">Все</option>
+              <option value="posted">Проведён</option>
+              <option value="draft">Черновик</option>
+              <option value="cancelled">Отменён</option>
+            </Select>
+          </Field>
+          <Field label="Оплата">
+            <Select value={paymentStatus} onChange={(e) => setPaymentStatus(e.target.value)}>
+              <option value="all">Все</option>
+              <option value="paid">Оплачено</option>
+              <option value="partial">Частично</option>
+              <option value="unpaid">Не оплачено</option>
+            </Select>
+          </Field>
+          <Field label="Тип">
+            <Select value={kind} onChange={(e) => setKind(e.target.value)}>
+              {KIND_TABS.map((t) => (
+                <option key={t.key} value={t.key}>{t.label}</option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="&nbsp;">
+            <button
+              type="button"
+              onClick={() => setFiltersOpen((v) => !v)}
+              className={cx(
+                'h-10 px-4 rounded-xl border text-sm font-medium inline-flex items-center gap-2 transition',
+                filtersOpen
+                  ? 'bg-brand text-brand-ink border-brand'
+                  : 'bg-surface-2 border-line hover:border-brand/40',
+              )}
+            >
+              <FilterIcon size={15} />
+              Фильтр
+            </button>
+          </Field>
         </div>
+        {filtersOpen && (
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 pt-3 border-t border-line animate-fadeUp">
+            <Field label="Автор">
+              <Select value={empId} onChange={(e) => setEmpId(e.target.value)}>
+                <option value="all">Все</option>
+                {employees.map((e) => (
+                  <option key={e.id} value={e.id}>{e.name}</option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Отправитель">
+              <Select value={fromParty} onChange={(e) => setFromParty(e.target.value)}>
+                <option value="all">Все</option>
+                <optgroup label="Клиенты">
+                  {customers.map((c) => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </optgroup>
+                <optgroup label="Поставщики">
+                  {suppliers.map((s) => (
+                    <option key={s.id} value={s.id}>{s.name}</option>
+                  ))}
+                </optgroup>
+              </Select>
+            </Field>
+            <Field label="Получатель">
+              <Select value={toParty} onChange={(e) => setToParty(e.target.value)}>
+                <option value="all">Все</option>
+                <optgroup label="Клиенты">
+                  {customers.map((c) => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </optgroup>
+                <optgroup label="Поставщики">
+                  {suppliers.map((s) => (
+                    <option key={s.id} value={s.id}>{s.name}</option>
+                  ))}
+                </optgroup>
+              </Select>
+            </Field>
+            <Field label="Касса / счёт">
+              <Select value={accId} onChange={(e) => setAccId(e.target.value)}>
+                <option value="all">Все</option>
+                {accounts.map((a) => (
+                  <option key={a.id} value={a.id}>{a.name}</option>
+                ))}
+              </Select>
+            </Field>
+          </div>
+        )}
       </Card>
 
       {/* Таблица движений */}

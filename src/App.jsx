@@ -24,6 +24,7 @@ const Assistant = lazy(() => import('./pages/Assistant'))
 const Storefront = lazy(() => import('./pages/Storefront'))
 const Journal = lazy(() => import('./pages/Journal'))
 const Money = lazy(() => import('./pages/Money'))
+const Cashiers = lazy(() => import('./pages/Cashiers'))
 const Movements = lazy(() => import('./pages/Movements'))
 const Subscription = lazy(() => import('./pages/Subscription'))
 const PurchaseOrders = lazy(() => import('./pages/PurchaseOrders'))
@@ -101,6 +102,7 @@ export default function App() {
         <Route path="storefront" element={<Storefront />} />
         <Route path="journal" element={<Journal />} />
         <Route path="money" element={<Money />} />
+        <Route path="cashiers" element={<Cashiers />} />
         <Route path="movements" element={<Movements />} />
         <Route path="subscription" element={<Subscription />} />
         <Route path="purchase-orders" element={<PurchaseOrders />} />

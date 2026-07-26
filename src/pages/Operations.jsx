@@ -6,8 +6,8 @@
 // категории — «Приход · Расход · Служебное», внутри — короткий список
 // действий. Плюс явная подсказка «Розничная продажа? Открой Кассу», т.к.
 // «Продажа-документ» здесь ≠ пробить чек на /orders/new и это путает.
-import { useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { useEffect, useMemo, useState } from 'react'
+import { Link, useSearchParams } from 'react-router-dom'
 import { Info, ShoppingCart } from 'lucide-react'
 import { cx } from '../components/ui'
 import { TABS } from './operations/_shared'
@@ -84,6 +84,24 @@ export default function Operations() {
     const next = CATEGORIES.find((c) => c.key === nextKey)
     if (next) setTab(next.tabs[0])
   }
+
+  // ?new=<tab> из CTA «Создать документ». Находим категорию, содержащую
+  // такой tab, переключаемся и стираем параметр, чтобы возврат к странице
+  // не гонял переключение снова.
+  const [params, setParams] = useSearchParams()
+  useEffect(() => {
+    const n = params.get('new')
+    if (!n) return
+    const c = CATEGORIES.find((c) => c.tabs.includes(n))
+    if (c) {
+      setCat(c.key)
+      setTab(n)
+    }
+    const next = new URLSearchParams(params)
+    next.delete('new')
+    setParams(next, { replace: true })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params])
 
   return (
     <div className="animate-fadeUp">

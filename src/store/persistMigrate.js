@@ -184,6 +184,16 @@ export function persistMigrate(state, version) {
     }))
   }
 
+  if (version < 16) {
+    // Кассиры на счетах (CloudShop-стиль). У кассы можно закрепить
+    // список сотрудников, которые имеют право её открывать — сейчас
+    // это информационное поле, POS его пока не форсирует.
+    state.accounts = (state.accounts || []).map((a) => ({
+      ...a,
+      cashierIds: a.cashierIds || [],
+    }))
+  }
+
   return state
 }
 
