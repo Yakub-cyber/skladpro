@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import {
   Search,
@@ -26,6 +26,7 @@ import {
   Barcode,
   RefreshCw,
   ScanLine,
+  Star,
   Camera,
   SlidersHorizontal,
   Trash2,
@@ -70,14 +71,46 @@ const stockTone = (p) =>
   p.stock <= p.minStock ? 'bad' : p.stock <= p.minStock * 1.5 ? 'warn' : 'ok'
 
 // Пустой набор фильтров — по нему сбрасываем панель к дефолту.
+// Формат «Цена/Остатки» — оператор + значение (как в CloudShop):
+// priceOp ∈ '>', '<', '=' + priceVal — число или пусто (не фильтруем).
 const EMPTY_FILTERS = {
-  priceMin: '',
-  priceMax: '',
-  stockMin: '',
-  stockMax: '',
+  priceOp: '>',
+  priceVal: '',
+  stockOp: '>',
+  stockVal: '',
   stockStatus: 'any', // any | low (ниже min) | out (0) | in
   weighted: 'any',
   marked: 'any',
+}
+
+// Ключи в localStorage для пресетов фильтров и настроек колонок.
+const LS_PRESETS = 'sklad.products.filterPresets'
+const LS_COLS = 'sklad.products.visibleCols'
+
+// Дефолтный набор видимых колонок (CloudShop-эталон).
+const DEFAULT_COLS = {
+  image: true,      // Фото
+  sku: true,        // Артикул / Код
+  category: true,   // Категория
+  unit: false,      // Ед. изм.
+  minStock: true,   // Мин.
+  reserved: true,   // Резерв
+  available: true,  // Доступно
+  cost: true,       // Себестоимость
+  price: true,      // Цена
+  margin: false,    // Маржа (price − cost)
+  cell: true,       // Ячейка
+  stock: true,      // Остаток
+}
+
+// Применение операторного фильтра. op ∈ '>', '<', '='; val — число или пусто.
+function applyOp(value, op, val) {
+  if (val === '' || val == null) return true
+  const v = Number(value) || 0
+  const t = Number(val)
+  if (op === '>') return v > t
+  if (op === '<') return v < t
+  return v === t
 }
 
 export default function Products() {
@@ -127,19 +160,41 @@ export default function Products() {
   // Число активных фильтров — для бейджа рядом с кнопкой «Фильтр».
   const activeFiltersCount = useMemo(() => {
     let n = 0
-    if (filters.priceMin !== '') n++
-    if (filters.priceMax !== '') n++
-    if (filters.stockMin !== '') n++
-    if (filters.stockMax !== '') n++
+    if (filters.priceVal !== '') n++
+    if (filters.stockVal !== '') n++
     if (filters.stockStatus !== 'any') n++
     if (filters.weighted !== 'any') n++
     if (filters.marked !== 'any') n++
     return n
   }, [filters])
 
+  // Пресеты фильтров — [{name, filters}] в localStorage. Ручное
+  // сохранение/применение/удаление через dropdown рядом с «Фильтр».
+  const [presets, setPresets] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem(LS_PRESETS) || '[]')
+    } catch { return [] }
+  })
+  const savePresets = (next) => {
+    setPresets(next)
+    try { localStorage.setItem(LS_PRESETS, JSON.stringify(next)) } catch {}
+  }
+
+  // Видимость колонок таблицы — {image, sku, ...} в localStorage.
+  // Управляется popover'ом-шестерёнкой.
+  const [cols, setCols] = useState(() => {
+    try {
+      const raw = JSON.parse(localStorage.getItem(LS_COLS) || 'null')
+      return raw ? { ...DEFAULT_COLS, ...raw } : DEFAULT_COLS
+    } catch { return DEFAULT_COLS }
+  })
+  const saveCols = (next) => {
+    setCols(next)
+    try { localStorage.setItem(LS_COLS, JSON.stringify(next)) } catch {}
+  }
+
   const list = useMemo(() => {
     const s = q.trim().toLowerCase()
-    const numOr = (v, fallback) => (v === '' || v == null ? fallback : Number(v))
     return products.filter((p) => {
       // Фильтр по типу позиции (Товар / Услуга / Комплект).
       // Дефолтное значение p.type — 'product', учитываем legacy без type.
@@ -152,15 +207,11 @@ export default function Products() {
         p.sku.toLowerCase().includes(s) ||
         p.tags.some((tag) => tag.includes(s))
       if (!okC || !okQ) return false
-      // Диапазон цены (розничной).
-      const price = Number(p.price) || 0
-      if (price < numOr(filters.priceMin, -Infinity)) return false
-      if (price > numOr(filters.priceMax, Infinity)) return false
-      // Диапазон остатка.
-      const stock = Number(p.stock) || 0
-      if (stock < numOr(filters.stockMin, -Infinity)) return false
-      if (stock > numOr(filters.stockMax, Infinity)) return false
+      // Цена / остатки — операторный фильтр (>, <, =).
+      if (!applyOp(p.price, filters.priceOp, filters.priceVal)) return false
+      if (!applyOp(p.stock, filters.stockOp, filters.stockVal)) return false
       // Статус остатка.
+      const stock = Number(p.stock) || 0
       const min = Number(p.minStock) || 0
       if (filters.stockStatus === 'low' && stock > min) return false
       if (filters.stockStatus === 'out' && stock > 0) return false
@@ -212,6 +263,7 @@ export default function Products() {
           </p>
         </div>
         <div className="flex gap-2">
+          <ColSettingsMenu cols={cols} onChange={saveCols} />
           <Button variant="soft" icon={Tags} onClick={() => setShowLabels(true)}>
             <span className="hidden sm:inline">Этикетки</span>
           </Button>
@@ -260,6 +312,17 @@ export default function Products() {
             </span>
           )}
         </button>
+        <PresetsMenu
+          presets={presets}
+          currentFilters={filters}
+          activeCount={activeFiltersCount}
+          onApply={(f) => setFilters(f)}
+          onSave={(name) => {
+            const next = [...presets.filter((p) => p.name !== name), { name, filters }]
+            savePresets(next)
+          }}
+          onRemove={(name) => savePresets(presets.filter((p) => p.name !== name))}
+        />
         <div className="flex gap-1.5 overflow-x-auto no-scrollbar">
           <Chip active={cat === 'all'} onClick={() => setCat('all')}>
             Все
@@ -467,14 +530,36 @@ export default function Products() {
                   />
                 </th>
                 <th className="font-medium py-3 px-4">Товар</th>
-                <th className="font-medium py-3 px-3 hidden xl:table-cell">Категория</th>
-                <th className="font-medium py-3 px-3 hidden xl:table-cell">Ячейка</th>
-                <th className="font-medium py-3 px-3 text-right">Себест.</th>
-                <th className="font-medium py-3 px-3 text-right">Цена</th>
-                <th className="font-medium py-3 px-3 text-right">Мин.</th>
-                <th className="font-medium py-3 px-3 text-right">Резерв</th>
-                <th className="font-medium py-3 px-3 text-right">Доступно</th>
-                <th className="font-medium py-3 px-4 text-right">Остаток</th>
+                {cols.category && (
+                  <th className="font-medium py-3 px-3 hidden xl:table-cell">Категория</th>
+                )}
+                {cols.unit && (
+                  <th className="font-medium py-3 px-3 text-center">Ед.</th>
+                )}
+                {cols.cell && (
+                  <th className="font-medium py-3 px-3 hidden xl:table-cell">Ячейка</th>
+                )}
+                {cols.cost && (
+                  <th className="font-medium py-3 px-3 text-right">Себест.</th>
+                )}
+                {cols.price && (
+                  <th className="font-medium py-3 px-3 text-right">Цена</th>
+                )}
+                {cols.margin && (
+                  <th className="font-medium py-3 px-3 text-right">Маржа</th>
+                )}
+                {cols.minStock && (
+                  <th className="font-medium py-3 px-3 text-right">Мин.</th>
+                )}
+                {cols.reserved && (
+                  <th className="font-medium py-3 px-3 text-right">Резерв</th>
+                )}
+                {cols.available && (
+                  <th className="font-medium py-3 px-3 text-right">Доступно</th>
+                )}
+                {cols.stock && (
+                  <th className="font-medium py-3 px-4 text-right">Остаток</th>
+                )}
                 <th className="w-10"></th>
               </tr>
             </thead>
@@ -533,46 +618,74 @@ export default function Products() {
                         </div>
                       </div>
                     </td>
-                    <td className="py-2.5 px-3 hidden xl:table-cell">
-                      <span className="text-[13px]" style={{ color: c.color }}>
-                        {p.category}
-                      </span>
-                    </td>
-                    <td className="py-2.5 px-3 hidden xl:table-cell">
-                      <Badge tone="muted">
-                        <MapPin size={11} /> {p.cell}
-                      </Badge>
-                    </td>
-                    <td className="py-2.5 px-3 text-right tabular-nums text-muted">
-                      {money(p.cost)}
-                    </td>
-                    <td className="py-2.5 px-3 text-right tabular-nums font-medium">
-                      {money(p.price)}
-                    </td>
-                    <td className="py-2.5 px-3 text-right tabular-nums text-muted">
-                      {num(p.minStock || 0)}
-                    </td>
-                    <td className="py-2.5 px-3 text-right tabular-nums">
-                      {reserved[p.id] > 0 ? (
-                        <span className="text-warn">{num(reserved[p.id])}</span>
-                      ) : (
-                        <span className="text-muted">—</span>
-                      )}
-                    </td>
-                    <td className="py-2.5 px-3 text-right tabular-nums font-medium">
-                      {num(Math.max(0, p.stock - (reserved[p.id] || 0)))}
-                    </td>
-                    <td className="py-2.5 px-4 text-right">
-                      {isKit(p) ? (
-                        <Badge tone="brand">
-                          {num(computeKitStock(p, products))} {p.unit}
+                    {cols.category && (
+                      <td className="py-2.5 px-3 hidden xl:table-cell">
+                        <span className="text-[13px]" style={{ color: c.color }}>
+                          {p.category}
+                        </span>
+                      </td>
+                    )}
+                    {cols.unit && (
+                      <td className="py-2.5 px-3 text-center text-muted">
+                        {p.unit}
+                      </td>
+                    )}
+                    {cols.cell && (
+                      <td className="py-2.5 px-3 hidden xl:table-cell">
+                        <Badge tone="muted">
+                          <MapPin size={11} /> {p.cell}
                         </Badge>
-                      ) : (
-                        <Badge tone={stockTone(p)}>
-                          {num(p.stock)} {p.unit}
-                        </Badge>
-                      )}
-                    </td>
+                      </td>
+                    )}
+                    {cols.cost && (
+                      <td className="py-2.5 px-3 text-right tabular-nums text-muted">
+                        {money(p.cost)}
+                      </td>
+                    )}
+                    {cols.price && (
+                      <td className="py-2.5 px-3 text-right tabular-nums font-medium">
+                        {money(p.price)}
+                      </td>
+                    )}
+                    {cols.margin && (
+                      <td className="py-2.5 px-3 text-right tabular-nums">
+                        <span className={cx(p.price - p.cost > 0 ? 'text-ok' : 'text-muted')}>
+                          {money((p.price || 0) - (p.cost || 0))}
+                        </span>
+                      </td>
+                    )}
+                    {cols.minStock && (
+                      <td className="py-2.5 px-3 text-right tabular-nums text-muted">
+                        {num(p.minStock || 0)}
+                      </td>
+                    )}
+                    {cols.reserved && (
+                      <td className="py-2.5 px-3 text-right tabular-nums">
+                        {reserved[p.id] > 0 ? (
+                          <span className="text-warn">{num(reserved[p.id])}</span>
+                        ) : (
+                          <span className="text-muted">—</span>
+                        )}
+                      </td>
+                    )}
+                    {cols.available && (
+                      <td className="py-2.5 px-3 text-right tabular-nums font-medium">
+                        {num(Math.max(0, p.stock - (reserved[p.id] || 0)))}
+                      </td>
+                    )}
+                    {cols.stock && (
+                      <td className="py-2.5 px-4 text-right">
+                        {isKit(p) ? (
+                          <Badge tone="brand">
+                            {num(computeKitStock(p, products))} {p.unit}
+                          </Badge>
+                        ) : (
+                          <Badge tone={stockTone(p)}>
+                            {num(p.stock)} {p.unit}
+                          </Badge>
+                        )}
+                      </td>
+                    )}
                     <td className="py-2.5 pr-3 text-muted">
                       <Pencil size={15} />
                     </td>
@@ -809,19 +922,19 @@ function FiltersPanel({ filters, setFilters, onReset, activeCount, onClose }) {
         </div>
       </div>
       <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
-        <RangeField
+        <OperatorField
           label="Цена, ₽"
-          min={filters.priceMin}
-          max={filters.priceMax}
-          onMin={(v) => set('priceMin', v)}
-          onMax={(v) => set('priceMax', v)}
+          op={filters.priceOp}
+          val={filters.priceVal}
+          onOp={(v) => set('priceOp', v)}
+          onVal={(v) => set('priceVal', v)}
         />
-        <RangeField
+        <OperatorField
           label="Остаток"
-          min={filters.stockMin}
-          max={filters.stockMax}
-          onMin={(v) => set('stockMin', v)}
-          onMax={(v) => set('stockMax', v)}
+          op={filters.stockOp}
+          val={filters.stockVal}
+          onOp={(v) => set('stockOp', v)}
+          onVal={(v) => set('stockVal', v)}
         />
         <SelectField
           label="Статус остатка"
@@ -861,24 +974,27 @@ function FiltersPanel({ filters, setFilters, onReset, activeCount, onClose }) {
   )
 }
 
-function RangeField({ label, min, max, onMin, onMax }) {
+// Оператор + значение (как в CloudShop): [Select >/<=/=] [Input число].
+// Пустое значение выключает фильтр.
+function OperatorField({ label, op, val, onOp, onVal }) {
   return (
     <div>
       <div className="text-[12px] text-muted mb-1.5">{label}</div>
       <div className="flex items-center gap-1.5">
+        <select
+          value={op}
+          onChange={(e) => onOp(e.target.value)}
+          className="h-9 px-2 rounded-lg bg-surface-2 border border-line text-sm outline-none focus:border-brand shrink-0"
+        >
+          <option value=">">больше</option>
+          <option value="<">меньше</option>
+          <option value="=">равно</option>
+        </select>
         <input
           type="number"
-          value={min}
-          onChange={(e) => onMin(e.target.value)}
-          placeholder="от"
-          className="w-full h-9 px-2 rounded-lg bg-surface-2 border border-line text-sm outline-none focus:border-brand"
-        />
-        <span className="text-muted text-xs">–</span>
-        <input
-          type="number"
-          value={max}
-          onChange={(e) => onMax(e.target.value)}
-          placeholder="до"
+          value={val}
+          onChange={(e) => onVal(e.target.value)}
+          placeholder="значение"
           className="w-full h-9 px-2 rounded-lg bg-surface-2 border border-line text-sm outline-none focus:border-brand"
         />
       </div>
@@ -901,6 +1017,172 @@ function SelectField({ label, value, onChange, options }) {
           </option>
         ))}
       </select>
+    </div>
+  )
+}
+
+// Меню пресетов: выпадашка с сохранёнными наборами фильтров + кнопки
+// «Сохранить как…» и «Удалить». Хранится в localStorage
+// LS_PRESETS = 'sklad.products.filterPresets'.
+function PresetsMenu({ presets, currentFilters, activeCount, onApply, onSave, onRemove }) {
+  const [open, setOpen] = useState(false)
+  const [naming, setNaming] = useState(false)
+  const [name, setName] = useState('')
+  const menuRef = useRef(null)
+  useEffect(() => {
+    if (!open) return
+    const onDown = (e) => {
+      if (menuRef.current && !menuRef.current.contains(e.target)) {
+        setOpen(false); setNaming(false); setName('')
+      }
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [open])
+  const save = () => {
+    const n = name.trim()
+    if (!n) return
+    onSave(n)
+    setNaming(false)
+    setName('')
+    setOpen(false)
+  }
+  return (
+    <div className="relative shrink-0" ref={menuRef}>
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="h-10 px-3 rounded-xl inline-flex items-center gap-2 text-sm font-medium border border-line bg-surface-2 text-muted hover:text-ink transition"
+        title="Пресеты фильтров"
+      >
+        <Star size={16} />
+        <span className="hidden sm:inline">Пресеты</span>
+        {presets.length > 0 && (
+          <span className="text-[11px] font-semibold text-muted">
+            {presets.length}
+          </span>
+        )}
+      </button>
+      {open && (
+        <div className="absolute right-0 mt-1 w-72 card p-2 z-30 animate-fadeUp">
+          {presets.length === 0 && !naming && (
+            <div className="text-[12px] text-muted p-2">
+              Пресетов пока нет. Настройте фильтр и «Сохранить как…».
+            </div>
+          )}
+          {presets.map((p) => (
+            <div
+              key={p.name}
+              className="flex items-center gap-1 p-1 rounded-lg hover:bg-surface-2"
+            >
+              <button
+                onClick={() => { onApply(p.filters); setOpen(false) }}
+                className="flex-1 text-left text-[13px] px-2 py-1.5 rounded-md hover:text-brand truncate"
+              >
+                {p.name}
+              </button>
+              <button
+                onClick={() => onRemove(p.name)}
+                className="h-7 w-7 rounded-md text-muted hover:text-bad grid place-items-center"
+                title="Удалить пресет"
+              >
+                <X size={13} />
+              </button>
+            </div>
+          ))}
+          <div className="border-t border-line mt-1 pt-1">
+            {naming ? (
+              <div className="flex items-center gap-1 p-1">
+                <input
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && save()}
+                  placeholder="Название пресета"
+                  autoFocus
+                  className="flex-1 h-8 px-2 rounded-md bg-surface-2 border border-line text-sm outline-none focus:border-brand"
+                />
+                <button
+                  onClick={save}
+                  disabled={!name.trim()}
+                  className="h-8 px-2 rounded-md bg-brand text-brand-ink text-[12px] font-medium disabled:opacity-50"
+                >
+                  OK
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => setNaming(true)}
+                disabled={activeCount === 0}
+                className="w-full text-left text-[13px] px-2 py-1.5 rounded-md hover:bg-surface-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                title={activeCount === 0 ? 'Задайте фильтры сначала' : ''}
+              >
+                + Сохранить текущий как пресет
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// Меню «Настройки таблицы» — 12 чекбоксов колонок; сохранение по
+// клику мгновенно в localStorage. Дефолты — DEFAULT_COLS.
+function ColSettingsMenu({ cols, onChange }) {
+  const [open, setOpen] = useState(false)
+  const menuRef = useRef(null)
+  useEffect(() => {
+    if (!open) return
+    const onDown = (e) => {
+      if (menuRef.current && !menuRef.current.contains(e.target)) setOpen(false)
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [open])
+  const toggle = (k) => onChange({ ...cols, [k]: !cols[k] })
+  const items = [
+    ['image', 'Фотография'],
+    ['sku', 'Артикул / код'],
+    ['category', 'Категория'],
+    ['unit', 'Единица измерения'],
+    ['cell', 'Ячейка'],
+    ['stock', 'Остаток'],
+    ['minStock', 'Мин. остаток'],
+    ['reserved', 'Резерв'],
+    ['available', 'Доступно'],
+    ['cost', 'Себестоимость'],
+    ['price', 'Цена продажи'],
+    ['margin', 'Маржа (₽)'],
+  ]
+  return (
+    <div className="relative shrink-0" ref={menuRef}>
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="h-10 w-10 rounded-xl grid place-items-center border border-line bg-surface-2 text-muted hover:text-ink transition"
+        title="Настройки таблицы"
+      >
+        <SlidersHorizontal size={16} />
+      </button>
+      {open && (
+        <div className="absolute right-0 mt-1 w-64 card p-2 z-30 animate-fadeUp">
+          <div className="text-[11px] font-semibold text-muted px-2 py-1.5 uppercase">
+            Настройки таблицы
+          </div>
+          {items.map(([key, label]) => (
+            <label
+              key={key}
+              className="flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-surface-2 cursor-pointer text-[13px]"
+            >
+              <input
+                type="checkbox"
+                checked={!!cols[key]}
+                onChange={() => toggle(key)}
+                className="accent-brand w-4 h-4"
+              />
+              {label}
+            </label>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
