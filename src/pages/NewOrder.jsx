@@ -919,7 +919,7 @@ export default function NewOrder({ fullscreen = false }) {
   // payment: { method: 'cash'|'card'|'credit'|'mixed', cashPaid, cardPaid, change }
   const finalSubmit = (payment) => {
     const cust = customers.find((c) => c.id === customerId)
-    addOrder({
+    const r = addOrder({
       // Без галочки «Доставка» — обычный розничный чек: закрывается
       // сразу, товар физически ушёл, воронка статусов не нужна.
       // С галочкой — заказ с доставкой, идёт по воронке.
@@ -941,6 +941,12 @@ export default function NewOrder({ fullscreen = false }) {
       geo: geo ? { lat: geo.lat, lng: geo.lng } : undefined,
       courier: 'Самовывоз',
     })
+    if (r && r.ok === false) {
+      // B5 сработал: сумма оплаты меньше total (или другая валидация).
+      // PaymentModal остаётся открытым — покажем алерт.
+      alert(r.error || 'Не удалось провести чек')
+      return
+    }
     const fresh = useStore.getState().orders[0]
     // Заказ создан — черновик больше не нужен, чтобы возврат на /orders/new
     // не восстанавливал уже проведённый чек.

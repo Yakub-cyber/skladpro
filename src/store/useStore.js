@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { makeSeed } from './seed'
-import { uid, docNo } from '../lib/id'
+import { uid, nextNo } from '../lib/id'
 import { nextStatus, statusInfo, docTypeInfo, DEFAULT_WORK_ZONES } from '../lib/constants'
 import { applyDocToState } from '../lib/posting'
 import { applyOrderStock } from '../lib/orders'
@@ -144,10 +144,47 @@ export const useStore = create(
         const p = get().products.find((x) => x.id === id)
         if (p) get().logAction(`Изменён товар «${p.name}»`, { section: 'Товары', type: 'update' })
       },
+      // Удаление товара защищено от «висячих» ссылок. Если товар
+      // упоминается в открытых заказах — резерв «замораживается на
+      // фантоме» (reservedByProduct продолжает копить qty на удалённом
+      // id). То же для документов/заявок поставщикам с этим товаром.
+      // Возвращает { ok:false, error } — UI показывает подсказку что
+      // перед удалением надо закрыть/отменить связанные документы.
       removeProduct: (id) => {
-        const p = get().products.find((x) => x.id === id)
-        set((s) => ({ products: s.products.filter((x) => x.id !== id) }))
+        const s = get()
+        const inOpenOrders = (s.orders || []).some(
+          (o) =>
+            !['cancelled', 'delivered'].includes(o.status) &&
+            (o.items || []).some((it) => it.productId === id),
+        )
+        if (inOpenOrders) {
+          return {
+            ok: false,
+            error: 'Товар используется в открытых заказах — закройте или отмените их сначала',
+          }
+        }
+        const inDraftDocs = (s.documents || []).some(
+          (d) => d.status !== 'cancelled' && (d.items || []).some((it) => it.productId === id),
+        )
+        if (inDraftDocs) {
+          return {
+            ok: false,
+            error: 'Товар есть в документах — удалить нельзя (нарушит остатки и историю)',
+          }
+        }
+        const inPo = (s.purchaseOrders || []).some(
+          (po) => po.status !== 'closed' && (po.items || []).some((it) => it.productId === id),
+        )
+        if (inPo) {
+          return {
+            ok: false,
+            error: 'Товар есть в открытых заказах поставщикам — закройте их сначала',
+          }
+        }
+        const p = s.products.find((x) => x.id === id)
+        set((st) => ({ products: st.products.filter((x) => x.id !== id) }))
         if (p) get().logAction(`Удалён товар «${p.name}»`, { section: 'Товары', type: 'delete' })
+        return { ok: true }
       },
       adjustStock: (id, delta) =>
         set((s) => ({
@@ -205,37 +242,88 @@ export const useStore = create(
         })
       },
       // Перемещение между складами/ячейками (общий остаток не меняется)
+      // B7: частичное перемещение. Раньше `transferStock` двигал ВЕСЬ
+      // остаток (просто переписывал warehouseId), а параметр `qty`
+      // ложился только в reason движения. Теперь:
+      //   - `qty >= p.stock` (или не указан) — переезжает весь товар
+      //     (backward compat, изменения нет);
+      //   - `qty < p.stock` — на исходном складе создаём отдельную
+      //     карточку-«близнеца» c оставшимся остатком, а сам товар
+      //     переезжает с частичным `qty` на новый склад.
+      // Идентичные копии на разных складах различаются `warehouseId`
+      // и `cell`; поле `sku` и `id` разные. Это осознанный
+      // компромисс: полноценный multi-store требует переработки
+      // модели (product.stocks[whId]), но для типового склада с
+      // 1-2 точками работает.
       transferStock: (productId, toWarehouseId, toCell, qty) => {
         const p = get().products.find((x) => x.id === productId)
-        if (!p) return
+        if (!p) return { ok: false, error: 'Товар не найден' }
         const whName = (id) => get().warehouses?.find((w) => w.id === id)?.name || '—'
         const from = `${whName(p.warehouseId)}${p.cell ? ' · ' + p.cell : ''}`
         const to = `${whName(toWarehouseId)}${toCell ? ' · ' + toCell : ''}`
-        set((s) => ({
-          products: s.products.map((x) =>
-            x.id === productId
-              ? { ...x, warehouseId: toWarehouseId || x.warehouseId, cell: toCell || x.cell }
-              : x,
-          ),
-          movements: [
-            {
-              id: uid('mv'),
-              type: 'transfer',
-              productId,
-              name: p.name,
-              qty: qty || p.stock,
-              delta: 0,
-              reason: `Перемещение: ${from} → ${to}`,
-              by: s.authUserId,
-              at: new Date().toISOString(),
-            },
-            ...s.movements,
-          ],
-        }))
-        get().logAction(`Перемещение «${p.name}»: ${from} → ${to}`, {
-          section: 'Склад',
-          type: 'transfer',
+        const n = Number(qty) || 0
+        const stock = Number(p.stock) || 0
+        const partial = n > 0 && n < stock
+        set((s) => {
+          const movement = {
+            id: uid('mv'),
+            type: 'transfer',
+            productId,
+            name: p.name,
+            qty: partial ? n : stock,
+            delta: 0,
+            reason: `Перемещение: ${from} → ${to}${partial ? ` (частично ${n}/${stock})` : ''}`,
+            by: s.authUserId,
+            at: new Date().toISOString(),
+          }
+          if (!partial) {
+            // Целиком: старый путь.
+            return {
+              products: s.products.map((x) =>
+                x.id === productId
+                  ? { ...x, warehouseId: toWarehouseId || x.warehouseId, cell: toCell || x.cell }
+                  : x,
+              ),
+              movements: [movement, ...s.movements],
+            }
+          }
+          // Частично: исходную карточку уменьшаем, создаём копию на
+          // новом складе с перенесённой частью. batches, если есть,
+          // «переезжают» пропорционально n/stock (округление вниз).
+          const ratio = n / stock
+          const copyBatches = (p.batches || []).map((b) => ({
+            id: uid('b'),
+            qty: Math.floor((Number(b.qty) || 0) * ratio),
+            cost: b.cost,
+            at: b.at,
+          }))
+          const remainBatches = (p.batches || []).map((b, i) => ({
+            ...b,
+            qty: (Number(b.qty) || 0) - (copyBatches[i]?.qty || 0),
+          }))
+          const copy = {
+            ...p,
+            id: uid('p'),
+            stock: n,
+            warehouseId: toWarehouseId || p.warehouseId,
+            cell: toCell || p.cell,
+            batches: copyBatches,
+          }
+          return {
+            products: [
+              copy,
+              ...s.products.map((x) =>
+                x.id === productId ? { ...x, stock: stock - n, batches: remainBatches } : x,
+              ),
+            ],
+            movements: [movement, ...s.movements],
+          }
         })
+        get().logAction(
+          `Перемещение «${p.name}»: ${from} → ${to}${partial ? ` (${n}/${stock})` : ''}`,
+          { section: 'Склад', type: 'transfer' },
+        )
+        return { ok: true }
       },
 
       // ── Документы (реестр складских документов) ───────────────
@@ -267,10 +355,10 @@ export const useStore = create(
         }
         const id = uid('doc')
         set((s) => {
-          const seq = s.documents.filter((d) => d.type === type).length + 1
+          const prefix = docTypeInfo(type).prefix
           const header = {
             id,
-            no: docNo(docTypeInfo(type).prefix, seq),
+            no: nextNo(s.documents.filter((d) => d.type === type), prefix),
             type,
             status: post ? 'posted' : 'draft',
             items: items.map((it) => ({ ...it })),
@@ -333,13 +421,24 @@ export const useStore = create(
       //   'order'  — заказ с доставкой/самовывозом (по умолчанию).
       //              Идёт по обычной воронке статусов.
       addOrder: (order) => {
+        // B5: валидация суммы оплаты. Единственный шлюз раньше был в
+        // PaymentModal.canConfirm — из кода легко обойти (тесты, cloud
+        // sync, batch-импорт), и заказ уходил с недостачей выручки.
+        const p = order.payment || {}
+        const total = Number(order.total) || 0
+        if (p.method && p.method !== 'credit') {
+          const paid = (Number(p.cashPaid) || 0) + (Number(p.cardPaid) || 0)
+          if (paid + 0.01 < total) {
+            return { ok: false, error: `Оплачено ${paid}₽ из ${total}₽ — недостаточно` }
+          }
+        }
         const id = uid('o')
         const kind = order.kind || 'order'
         set((s) => {
-          const seq = s.orders.length + 101
+          const prefix = kind === 'retail' ? 'ЧК' : 'ЗК'
           const o = {
             id,
-            no: docNo(kind === 'retail' ? 'ЧК' : 'ЗК', seq),
+            no: nextNo(s.orders, prefix),
             status: 'new',
             createdAt: new Date().toISOString(),
             track: [{ status: 'new', at: new Date().toISOString() }],
@@ -369,8 +468,8 @@ export const useStore = create(
         // Раньше `/money` не видел выручку от кассы (POS писал только
         // `order.payment`), теперь при cash/card/mixed балансы касс
         // растут сразу же. Для «в долг» — деньги не пришли, tx не
-        // создаём (customer.balance уже прирос выше).
-        const p = order.payment || {}
+        // создаём (customer.balance уже прирос выше). `p` уже
+        // объявлен в валидации выше (B5).
         if (p.method && p.method !== 'credit') {
           const st = get()
           const shift = st.activeShiftId
@@ -407,6 +506,7 @@ export const useStore = create(
           section: 'Заказы',
           type: 'create',
         })
+        return { ok: true, id }
       },
       setOrderStatus: (id, status, note) => {
         set((s) => {
@@ -456,6 +556,23 @@ export const useStore = create(
         }
         set((s) => {
           const next = { ...o, ...patch }
+          // B6: если patch менял items или discount — пересчитываем
+          // subtotal/total из позиций. Раньше total клался как есть,
+          // а debtDelta пытался использовать «замороженное» число →
+          // customer.balance расходился с фактом.
+          const itemsChanged = 'items' in patch
+          const discChanged = 'discount' in patch
+          if (itemsChanged || discChanged) {
+            const items = next.items || []
+            const subtotal = items.reduce(
+              (acc, it) => acc + (Number(it.qty) || 0) * (Number(it.price) || 0),
+              0,
+            )
+            const disc = Number(next.discount) || 0
+            const total = Math.round(subtotal * (1 - disc / 100))
+            next.subtotal = subtotal
+            next.total = total
+          }
           const oldDebt = o.onCredit ? o.total || 0 : 0
           const newDebt = next.onCredit ? next.total || 0 : 0
           const debtDelta = newDebt - oldDebt
@@ -500,6 +617,12 @@ export const useStore = create(
                 ? {
                     ...x,
                     status: 'cancelled',
+                    // B4: сбрасываем stockConsumed после возврата остатков —
+                    // иначе повторный setOrderStatus('shipped') не спишет
+                    // ничего (guard `!o.stockConsumed`), товар «уйдёт
+                    // бесплатно». cancelOrder идемпотентен и всегда
+                    // финализирует в согласованное состояние.
+                    stockConsumed: false,
                     track: [
                       ...(x.track || []),
                       { status: 'cancelled', at: new Date().toISOString(), ...(note ? { note } : {}) },
@@ -539,12 +662,12 @@ export const useStore = create(
       // ── Накладные ────────────────────────────────────────────
       addInvoice: (inv) => {
         set((s) => {
-          const seq = s.invoices.length + 1
+          const prefix = inv.kind === 'in' ? 'ПР' : 'РН'
           return {
             invoices: [
               {
                 id: uid('inv'),
-                no: docNo(inv.kind === 'in' ? 'ПР' : 'РН', seq),
+                no: nextNo(s.invoices.filter((x) => x.kind === inv.kind), prefix),
                 createdAt: new Date().toISOString(),
                 ...inv,
               },
@@ -604,17 +727,57 @@ export const useStore = create(
         set((s) => ({
           customers: s.customers.map((c) => (c.id === id ? { ...c, ...patch } : c)),
         })),
-      // Приём оплаты — гасит задолженность контрагента
-      addPayment: (customerId, amount) => {
+      // Клиент считается «в использовании», если у него есть открытые
+      // заказы, долг > 0, или он привязан к какой-то moneyTx. Иначе
+      // безопасно удаляется. В UI кнопка «Удалить» доступна только для
+      // «чистых» карточек — но защита должна быть и в сторе.
+      removeCustomer: (id) => {
+        const s = get()
+        const c = s.customers.find((x) => x.id === id)
+        if (!c) return { ok: false, error: 'Клиент не найден' }
+        if ((c.balance || 0) > 0) {
+          return { ok: false, error: `У клиента есть долг ${c.balance} ₽ — сначала закройте` }
+        }
+        const hasOpenOrders = (s.orders || []).some(
+          (o) => o.customerId === id && !['cancelled', 'delivered'].includes(o.status),
+        )
+        if (hasOpenOrders) {
+          return { ok: false, error: 'У клиента есть открытые заказы' }
+        }
+        set((st) => ({ customers: st.customers.filter((c) => c.id !== id) }))
+        get().logAction(`Удалён клиент «${c.name}»`, { section: 'Контрагенты', type: 'delete' })
+        return { ok: true }
+      },
+      // Приём оплаты от клиента — тонкая обёртка над addMoneyTx с
+      // purpose='debt-in'. Раньше это была параллельная механика:
+      // addPayment двигал customer.balance, но НЕ писал moneyTx —
+      // поэтому касса не росла, а Money.jsx не видел прихода.
+      // Теперь оба пути (карточка клиента и /money → «Приход») дают
+      // один и тот же побочный эффект: +сумма к балансу счёта,
+      // −сумма из долга клиента, запись в ленте /money и /movements.
+      //
+      // accountId — куда положить: если не передан, берём кассу
+      // активной смены (или первую доступную кассу).
+      addPayment: (customerId, amount, opts = {}) => {
         const a = Number(amount) || 0
-        if (a <= 0) return
-        set((s) => ({
-          customers: s.customers.map((c) =>
-            c.id === customerId ? { ...c, balance: Math.max(0, (c.balance || 0) - a) } : c,
-          ),
-        }))
-        const c = get().customers.find((x) => x.id === customerId)
-        get().logAction(`Оплата от «${c?.name}»: ${a} ₽`, { section: 'Финансы', type: 'in' })
+        if (a <= 0) return { ok: false, error: 'Укажите сумму больше нуля' }
+        const s = get()
+        const shift = s.activeShiftId
+          ? s.shifts.find((sh) => sh.id === s.activeShiftId)
+          : null
+        const accountId =
+          opts.accountId ||
+          shift?.cashAccountId ||
+          s.accounts.find((a) => a.kind === 'cash')?.id
+        if (!accountId) return { ok: false, error: 'Не найдена касса — добавьте её в разделе «Кассы»' }
+        return get().addMoneyTx({
+          type: 'in',
+          accountId,
+          amount: a,
+          purpose: 'debt-in',
+          customerId,
+          note: opts.note || '',
+        })
       },
 
       // ── Поставщики ───────────────────────────────────────────
@@ -624,8 +787,23 @@ export const useStore = create(
         set((s) => ({
           suppliers: s.suppliers.map((sp) => (sp.id === id ? { ...sp, ...patch } : sp)),
         })),
-      removeSupplier: (id) =>
-        set((s) => ({ suppliers: s.suppliers.filter((sp) => sp.id !== id) })),
+      removeSupplier: (id) => {
+        const s = get()
+        const sup = s.suppliers.find((x) => x.id === id)
+        if (!sup) return { ok: false, error: 'Поставщик не найден' }
+        if ((sup.balance || 0) > 0) {
+          return { ok: false, error: `Мы должны поставщику ${sup.balance} ₽ — сначала закройте` }
+        }
+        const hasOpenPo = (s.purchaseOrders || []).some(
+          (po) => po.supplierId === id && !['closed', 'cancelled'].includes(po.status),
+        )
+        if (hasOpenPo) {
+          return { ok: false, error: 'Есть открытые заказы поставщикам' }
+        }
+        set((st) => ({ suppliers: st.suppliers.filter((sp) => sp.id !== id) }))
+        get().logAction(`Удалён поставщик «${sup.name}»`, { section: 'Контрагенты', type: 'delete' })
+        return { ok: true }
+      },
 
       // ── Категории цен ────────────────────────────────────────
       addPriceType: (pt) => {
@@ -797,12 +975,14 @@ export const useStore = create(
         }
         const id = uid('mtx')
         set((s) => {
-          const seq = (s.moneyTx || []).length + 1
           const prefix =
             type === 'in' ? 'ПКО' : type === 'out' ? 'РКО' : 'ПРВ'
           const header = {
             id,
-            no: docNo(prefix, seq),
+            no: nextNo(
+              (s.moneyTx || []).filter((t) => t.type === type),
+              prefix,
+            ),
             type,
             accountId: tx.accountId,
             toAccountId: tx.toAccountId || null,
@@ -902,11 +1082,10 @@ export const useStore = create(
         const id = uid('po')
         const items = (po.items || []).map((it) => ({ ...it }))
         set((s) => {
-          const seq = (s.purchaseOrders || []).length + 1
           const sup = s.suppliers.find((x) => x.id === po.supplierId)
           const header = {
             id,
-            no: docNo('ЗКП', seq),
+            no: nextNo(s.purchaseOrders || [], 'ЗКП'),
             supplierId: po.supplierId,
             supplierName: sup?.name || po.supplierName || '',
             items,

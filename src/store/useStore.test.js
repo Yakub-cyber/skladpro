@@ -538,7 +538,7 @@ describe('openShift — accountId + gate по cashierIds (T1-B)', () => {
   })
 })
 
-describe('addPayment — оплата гасит долг', () => {
+describe('addPayment — оплата гасит долг (B2)', () => {
   it('баланс уменьшается на сумму оплаты (не уходит в отрицательное)', () => {
     const cust = state().customers[0]
     useStore.setState((s) => ({
@@ -558,6 +558,124 @@ describe('addPayment — оплата гасит долг', () => {
     state().addPayment(cust.id, 0)
     state().addPayment(cust.id, -100)
     expect(state().customers.find((c) => c.id === cust.id).balance).toBe(500)
+  })
+
+  // B2: раньше addPayment был параллельной механикой — двигал balance,
+  // НО НЕ писал moneyTx. Касса не росла. Теперь — обёртка над addMoneyTx.
+  it('addPayment создаёт запись в moneyTx (не только двигает balance)', () => {
+    const cust = state().customers[0]
+    useStore.setState((s) => ({
+      customers: s.customers.map((c) => (c.id === cust.id ? { ...c, balance: 500 } : c)),
+    }))
+    const txBefore = state().moneyTx.length
+    state().addPayment(cust.id, 300)
+    const tx = state().moneyTx[0]
+    expect(state().moneyTx.length).toBe(txBefore + 1)
+    expect(tx.type).toBe('in')
+    expect(tx.amount).toBe(300)
+    expect(tx.purpose).toBe('debt-in')
+    expect(tx.customerId).toBe(cust.id)
+  })
+
+  it('addPayment пополняет баланс cash-счёта на сумму', () => {
+    const cust = state().customers[0]
+    const cashAcc = state().accounts.find((a) => a.kind === 'cash').id
+    useStore.setState((s) => ({
+      customers: s.customers.map((c) => (c.id === cust.id ? { ...c, balance: 500 } : c)),
+    }))
+    state().addPayment(cust.id, 250)
+    const cashTx = state().moneyTx.filter(
+      (t) => t.accountId === cashAcc && t.status === 'posted',
+    )
+    const sum = cashTx.reduce(
+      (acc, t) => acc + (t.type === 'in' ? t.amount : -t.amount),
+      0,
+    )
+    expect(sum).toBe(250)
+  })
+})
+
+describe('remove* — защита от «висячих» ссылок (B3)', () => {
+  // Раньше removeProduct/removeSupplier/removeCustomer молча удаляли —
+  // в итоге открытые заказы ссылались на несуществующие id, резервы
+  // копились «на фантоме», долги не закрывались.
+
+  it('removeProduct: товар в открытом заказе → отказ', () => {
+    const p = state().products.find((x) => x.stock >= 10)
+    state().addOrder({
+      customerId: state().customers[0].id,
+      items: [{ productId: p.id, name: p.name, qty: 1, price: 100 }],
+      total: 100,
+    })
+    const r = state().removeProduct(p.id)
+    expect(r.ok).toBe(false)
+    expect(r.error).toMatch(/открытых заказ/i)
+    expect(state().products.find((x) => x.id === p.id)).toBeTruthy()
+  })
+
+  it('removeProduct: у товара нет ссылок → удаление проходит', () => {
+    // Создаём заведомо «чистый» товар — без документов/заказов/PO.
+    // На seed-товарах visitor может быть привязан к готовым документам.
+    useStore.setState((s) => ({
+      products: [
+        {
+          id: 'p_test_clean',
+          sku: 'TEST-1',
+          name: 'Тестовый чистый',
+          category: 'Крепёж',
+          unit: 'шт',
+          price: 100,
+          cost: 50,
+          stock: 10,
+          minStock: 0,
+          tags: [],
+          warehouseId: 'wh1',
+          prices: { pt_retail: 100 },
+          type: 'product',
+          batches: [{ id: 'b_test', qty: 10, cost: 50, at: new Date(0).toISOString() }],
+        },
+        ...s.products,
+      ],
+    }))
+    const r = state().removeProduct('p_test_clean')
+    expect(r.ok).toBe(true)
+    expect(state().products.find((x) => x.id === 'p_test_clean')).toBeFalsy()
+  })
+
+  it('removeCustomer: есть долг → отказ', () => {
+    const cust = state().customers[0]
+    useStore.setState((s) => ({
+      customers: s.customers.map((c) => (c.id === cust.id ? { ...c, balance: 500 } : c)),
+    }))
+    const r = state().removeCustomer(cust.id)
+    expect(r.ok).toBe(false)
+    expect(r.error).toMatch(/долг/i)
+  })
+
+  it('removeCustomer: открытый заказ → отказ', () => {
+    const cust = state().customers[0]
+    useStore.setState((s) => ({
+      customers: s.customers.map((c) => (c.id === cust.id ? { ...c, balance: 0 } : c)),
+    }))
+    state().addOrder({
+      customerId: cust.id,
+      items: [{ productId: state().products[0].id, name: 'X', qty: 1, price: 100 }],
+      total: 100,
+    })
+    const r = state().removeCustomer(cust.id)
+    expect(r.ok).toBe(false)
+    expect(r.error).toMatch(/открытые заказы/i)
+  })
+
+  it('removeSupplier: мы должны деньги → отказ', () => {
+    const sup = state().suppliers[0]
+    if (!sup) return
+    useStore.setState((s) => ({
+      suppliers: s.suppliers.map((x) => (x.id === sup.id ? { ...x, balance: 200 } : x)),
+    }))
+    const r = state().removeSupplier(sup.id)
+    expect(r.ok).toBe(false)
+    expect(r.error).toMatch(/должны/i)
   })
 })
 
@@ -691,18 +809,115 @@ describe('updateSettings — мержит патч', () => {
   })
 })
 
-describe('transferStock — перемещение между складами', () => {
-  it('warehouseId и cell меняются, физический остаток НЕ трогается', () => {
+describe('transferStock — перемещение между складами (B7)', () => {
+  it('целиком: qty ≥ p.stock → warehouseId/cell меняются, остаток не трогается', () => {
     const p = state().products.find((x) => x.warehouseId === 'wh1')
     const stockBefore = p.stock
-    state().transferStock(p.id, 'wh2', 'A1', 5)
+    state().transferStock(p.id, 'wh2', 'A1', stockBefore) // целиком
     const after = productById(p.id)
     expect(after.warehouseId).toBe('wh2')
     expect(after.cell).toBe('A1')
-    expect(after.stock).toBe(stockBefore) // перемещение — не расход
+    expect(after.stock).toBe(stockBefore)
     const mv = state().movements[0]
     expect(mv.type).toBe('transfer')
     expect(mv.delta).toBe(0)
+  })
+
+  it('частично: qty < p.stock → создаётся копия на новом складе с qty, исходная уменьшается', () => {
+    const p = state().products.find((x) => x.stock >= 10)
+    const initial = p.stock
+    const totalCount = state().products.length
+    state().transferStock(p.id, 'wh2', 'B2', 3)
+    const src = productById(p.id)
+    // Исходная карточка: остаток уменьшен на 3, склад НЕ меняется
+    expect(src.stock).toBe(initial - 3)
+    expect(src.warehouseId).toBe(p.warehouseId)
+    // Появилась новая карточка на wh2 с остатком 3
+    expect(state().products.length).toBe(totalCount + 1)
+    const copy = state().products.find(
+      (x) => x.sku === p.sku && x.warehouseId === 'wh2',
+    )
+    expect(copy?.stock).toBe(3)
+    expect(copy?.cell).toBe('B2')
+  })
+})
+
+describe('B4: cancelOrder сбрасывает stockConsumed', () => {
+  it('после cancelOrder повторное shipped снова списывает остаток', () => {
+    const p = state().products.find((x) => x.stock >= 10)
+    const before = productById(p.id).stock
+    state().addOrder({
+      customerId: state().customers[0].id,
+      items: [{ productId: p.id, name: p.name, unit: p.unit, qty: 2, price: 100 }],
+      total: 200,
+    })
+    const id = state().orders[0].id
+    state().setOrderStatus(id, 'shipped')
+    expect(productById(p.id).stock).toBe(before - 2)
+    state().cancelOrder(id)
+    expect(productById(p.id).stock).toBe(before)
+    // Флаг сброшен — повторный shipped снова списывает
+    const cancelled = state().orders.find((o) => o.id === id)
+    expect(cancelled.stockConsumed).toBe(false)
+  })
+})
+
+describe('B5: addOrder — валидация суммы оплаты', () => {
+  it('cashPaid + cardPaid < total → { ok:false }, заказ не создаётся', () => {
+    const p = state().products[0]
+    const ordersBefore = state().orders.length
+    const r = state().addOrder({
+      customerId: state().customers[0].id,
+      items: [{ productId: p.id, name: p.name, qty: 1, price: 1000 }],
+      total: 1000,
+      payment: { method: 'cash', cashPaid: 400, cardPaid: 0 },
+    })
+    expect(r.ok).toBe(false)
+    expect(r.error).toMatch(/недостаточно|Оплачено/i)
+    expect(state().orders.length).toBe(ordersBefore)
+  })
+
+  it('credit-платёж не проверяется на сумму (деньги ещё не пришли)', () => {
+    const p = state().products[0]
+    const r = state().addOrder({
+      customerId: state().customers[0].id,
+      items: [{ productId: p.id, name: p.name, qty: 1, price: 500 }],
+      total: 500,
+      onCredit: true,
+      payment: { method: 'credit', cashPaid: 0, cardPaid: 0 },
+    })
+    expect(r.ok).toBe(true)
+  })
+})
+
+describe('B6: updateOrder пересчитывает total при смене items', () => {
+  it('изменение items → total и subtotal пересчитываются', () => {
+    const p = state().products[0]
+    state().addOrder({
+      customerId: state().customers[0].id,
+      items: [{ productId: p.id, name: p.name, qty: 1, price: 100 }],
+      total: 100,
+    })
+    const id = state().orders[0].id
+    state().updateOrder(id, {
+      items: [{ productId: p.id, name: p.name, qty: 3, price: 200 }],
+    })
+    const o = state().orders.find((x) => x.id === id)
+    expect(o.subtotal).toBe(600)
+    expect(o.total).toBe(600)
+  })
+
+  it('изменение discount → total уменьшается', () => {
+    const p = state().products[0]
+    state().addOrder({
+      customerId: state().customers[0].id,
+      items: [{ productId: p.id, name: p.name, qty: 2, price: 500 }],
+      total: 1000,
+    })
+    const id = state().orders[0].id
+    state().updateOrder(id, { discount: 10 })
+    const o = state().orders.find((x) => x.id === id)
+    expect(o.total).toBe(900)
   })
 })
 
