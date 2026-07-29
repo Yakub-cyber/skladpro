@@ -50,6 +50,7 @@ export function bindStore(store) {
 // Runtime-поля облака (не попадают в persist — см. persistPartialize).
 export const cloudInitialState = {
   authUserId: null,
+  authEmail: null,
   cloud: hasSupabase,
   cloudReady: false,
   cloudError: null,
@@ -221,6 +222,10 @@ export const createCloudSlice = (set, get) => ({
           companyId,
           companyName: membership.companies?.name || 'Компания',
           authUserId: me.id,
+          // F2-6: раньше authEmail в state никто не писал, но
+          // Employees.jsx его читал → сравнение с m.email всегда false,
+          // админ не подсвечивался как «вы».
+          authEmail: session?.user?.email || null,
           cloudReady: true,
           needOnboarding: false,
           cloudError: null,

@@ -42,7 +42,10 @@ export default function Cashiers() {
   const total = accounts.reduce((a, x) => a + (balances[x.id] || 0), 0)
 
   const canBeCashier = (e) =>
-    e.active !== false && ['admin', 'manager', 'stock'].includes(e.role)
+    // F2-5: раньше здесь не было 'cashier' → сотрудников с этой ролью
+    // невозможно было назначить на кассу, openShift возвращал
+    // {ok:false, error:'Кассир не назначен'} → тупик.
+    e.active !== false && ['admin', 'manager', 'stock', 'cashier'].includes(e.role)
 
   const editing = accounts.find((a) => a.id === editId)
 

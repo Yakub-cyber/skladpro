@@ -834,11 +834,109 @@ describe('transferStock — перемещение между складами (
     expect(src.warehouseId).toBe(p.warehouseId)
     // Появилась новая карточка на wh2 с остатком 3
     expect(state().products.length).toBe(totalCount + 1)
+    // F2-2: копия теперь несёт суффикс в SKU (уникальность), ищем по name+warehouseId.
     const copy = state().products.find(
-      (x) => x.sku === p.sku && x.warehouseId === 'wh2',
+      (x) => x.name === p.name && x.warehouseId === 'wh2',
     )
     expect(copy?.stock).toBe(3)
     expect(copy?.cell).toBe('B2')
+    expect(copy?.sku).not.toBe(p.sku)
+    expect(copy?.sku).toContain(p.sku)
+  })
+})
+
+describe('F2 — фиксы средней сложности', () => {
+  it('F2-1: refundOrder возвращает партии через FIFO reverse', () => {
+    // Готовим товар с двумя партиями по 5 шт, cost=100 и 200.
+    useStore.setState((s) => ({
+      products: [
+        {
+          id: 'p_fifo',
+          sku: 'FIFO-1',
+          name: 'ФИФО-товар',
+          category: 'Крепёж',
+          unit: 'шт',
+          price: 500,
+          cost: 150,
+          stock: 10,
+          warehouseId: 'wh1',
+          prices: { pt_retail: 500 },
+          type: 'product',
+          batches: [
+            { id: 'b1', qty: 5, cost: 100, at: '2026-01-01' },
+            { id: 'b2', qty: 5, cost: 200, at: '2026-02-01' },
+          ],
+        },
+        ...s.products,
+      ],
+    }))
+    // Продажа 3 шт → FIFO списывает 3 из первой партии (cost=100).
+    state().addOrder({
+      kind: 'retail',
+      customerId: state().customers[0].id,
+      items: [{ productId: 'p_fifo', name: 'ФИФО', unit: 'шт', qty: 3, price: 500 }],
+      total: 1500,
+      payment: { method: 'cash', cashPaid: 1500, cardPaid: 0 },
+    })
+    const origId = state().orders[0].id
+    expect(state().products.find((p) => p.id === 'p_fifo').stock).toBe(7)
+    // Возвращаем всё → партия b1 должна восстановиться до 5.
+    state().refundOrder(origId, { items: [{ productId: 'p_fifo', qty: 3 }] })
+    const p = state().products.find((p) => p.id === 'p_fifo')
+    expect(p.stock).toBe(10)
+    // Инвариант partitions: sum(batches.qty) === stock
+    const sumBatch = (p.batches || []).reduce((a, b) => a + b.qty, 0)
+    expect(sumBatch).toBe(p.stock)
+  })
+
+  it('F2-2: transferStock частично создаёт копию с уникальным SKU', () => {
+    const p = state().products.find((x) => x.warehouseId === 'wh1' && x.stock >= 5)
+    const origSku = p.sku
+    state().transferStock(p.id, 'wh2', 'A1', 2)
+    const copies = state().products.filter((x) => x.name === p.name)
+    // Должно быть 2 карточки — оригинал и копия
+    expect(copies.length).toBeGreaterThanOrEqual(2)
+    // SKU НЕ должен совпадать
+    const skus = copies.map((c) => c.sku)
+    expect(new Set(skus).size).toBe(copies.length)
+    expect(skus).toContain(origSku)
+  })
+
+  it('F2-7: assignCourier отклоняет non-courier роль', () => {
+    // Создаём order и пытаемся назначить admin.
+    state().addOrder({
+      customerId: state().customers[0].id,
+      items: [{ productId: state().products[0].id, name: 'X', qty: 1, price: 100 }],
+      total: 100,
+    })
+    const oid = state().orders[0].id
+    const admin = state().employees.find((e) => e.role === 'admin')
+    const r = state().assignCourier(oid, admin.id)
+    expect(r.ok).toBe(false)
+    expect(r.error).toMatch(/Курьер/i)
+    // Заказ не изменился
+    expect(state().orders.find((o) => o.id === oid).assignedTo).toBeUndefined()
+  })
+
+  it('F2-9: recalcClosedShift пересчитывает snapshot после cancel', async () => {
+    await state().login('e1', '1111')
+    // Открываем + закрываем смену с продажей.
+    state().openShift(0)
+    const shiftId = state().activeShiftId
+    state().addOrder({
+      kind: 'retail',
+      customerId: state().customers[0].id,
+      items: [{ productId: state().products[0].id, name: 'X', qty: 1, price: 1000 }],
+      total: 1000,
+      payment: { method: 'cash', cashPaid: 1000, cardPaid: 0 },
+    })
+    const oid = state().orders[0].id
+    state().closeShift(1000)
+    // snapshot = 1000
+    expect(state().shifts.find((s) => s.id === shiftId).revenue).toBe(1000)
+    // Отменяем заказ (снапшот должен пересчитаться).
+    state().cancelOrder(oid)
+    expect(state().shifts.find((s) => s.id === shiftId).revenue).toBe(0)
   })
 })
 

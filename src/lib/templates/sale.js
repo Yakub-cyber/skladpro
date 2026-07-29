@@ -34,10 +34,28 @@ function normalizeItems(doc) {
 // ── Счёт на оплату ────────────────────────────────────────────────────────
 export function bill(doc, ctx) {
   const r = ctx.requisites || {}
-  const rate = r.vatRate ?? 20
+  // F2-4: если у документа сохранён vatSummary (POS-чек всегда его
+  // пишет — см. NewOrder.finalSubmit), используем ставку и разбивку
+  // на момент продажи. Иначе legacy — считаем по текущей ставке
+  // компании. Иначе меняем НДС в Settings → все старые чеки
+  // печатались с новым НДС.
+  const legacyRate = r.vatRate ?? 20
   const items = normalizeItems(doc)
   const total = items.reduce((a, it) => a + it.qty * it.price, 0) || Number(doc.total) || 0
-  const { net, vat } = splitVat(total, rate)
+  let net, vat, rate
+  if (doc.vatSummary && Number(doc.vatSummary.gross) > 0) {
+    net = Number(doc.vatSummary.net)
+    vat = Number(doc.vatSummary.vat)
+    // «Эффективная» ставка для строки «в т.ч. НДС X%»: если чек mixed —
+    // берём первую с ненулевой gross; иначе средневзвешенная.
+    const first = (doc.vatSummary.byRate || []).find((b) => Number(b.gross) > 0)
+    rate = first ? Number(first.rate) : (vat > 0 ? Math.round((vat / net) * 100) : 0)
+  } else {
+    rate = legacyRate
+    const s = splitVat(total, rate)
+    net = s.net
+    vat = s.vat
+  }
   const cur = esc(ctx.currency)
   const sellerReq = sellerRequisites(r, ctx.settings)
   const buyerReq = buyerRequisites(ctx.customer || {})

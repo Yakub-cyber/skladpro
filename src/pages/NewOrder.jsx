@@ -746,7 +746,12 @@ export default function NewOrder({ fullscreen = false }) {
   // случайно закрыл вкладку / зашёл в клиента / открыл другой заказ. Без
   // автосейва — всё с нуля. Сохраняем черновик в localStorage при каждом
   // изменении и восстанавливаем при возврате.
-  const DRAFT_KEY = 'sklad.newOrder.draft'
+  // F2-8: раньше DRAFT_KEY был глобальным — если на одной машине
+  // работают два кассира, второй восстанавливал черновик первого
+  // (или наоборот, тёр). Теперь ключ привязан к authUserId. Если
+  // пользователь не залогинен (маловероятно на /pos) — общий ключ.
+  const authUserId = useStore((s) => s.authUserId)
+  const DRAFT_KEY = 'sklad.newOrder.draft.' + (authUserId || 'guest')
   const DRAFT_TTL_MS = 6 * 60 * 60 * 1000 // 6 часов — типичная смена
   const restoredRef = useRef(false)
   // Восстановление один раз на mount. Если черновик просрочен — игнорируем.

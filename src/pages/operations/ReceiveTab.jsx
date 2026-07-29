@@ -20,6 +20,7 @@ export default function ReceiveTab() {
   const [cat, setCat] = useState('all')
   const [msg, setMsg] = useState('')
   const [done, setDone] = useState('')
+  const [err, setErr] = useState('')
 
   const round3 = (n) => Math.round(n * 1000) / 1000
 
@@ -60,7 +61,11 @@ export default function ReceiveTab() {
   )
 
   const submit = (post) => {
-    addDocument(
+    setErr('')
+    // F2-3: раньше результат addDocument отбрасывался — при отказе
+    // (например, недостача remainder) тост «Оприходовано» показывался,
+    // а документ не создавался.
+    const r = addDocument(
       {
         type: 'purchase',
         reason: 'Закупка',
@@ -74,6 +79,10 @@ export default function ReceiveTab() {
       },
       { post },
     )
+    if (r && typeof r === 'object' && r.ok === false) {
+      setErr(r.error || 'Не удалось провести закупку')
+      return
+    }
     setDone(post ? `Оприходовано ${count} ед. в ${items.length} поз. на ${money(total)}` : `Черновик закупки на ${items.length} поз.`)
     setItems([])
     setTimeout(() => setDone(''), 3000)
@@ -107,6 +116,7 @@ export default function ReceiveTab() {
         </div>
 
         {done && <div className="mb-3"><Toast>{done}</Toast></div>}
+        {err && <div className="mb-3 text-[13px] text-bad p-3 rounded-xl bg-bad-soft/30">{err}</div>}
 
         <div className="flex-1 overflow-y-auto no-scrollbar -mx-1 px-1 min-h-[80px]">
           {items.length === 0 ? (

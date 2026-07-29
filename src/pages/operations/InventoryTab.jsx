@@ -16,6 +16,7 @@ export default function InventoryTab() {
   const [counts, setCounts] = useState({})
   const [q, setQ] = useState('')
   const [done, setDone] = useState('')
+  const [err, setErr] = useState('')
 
   const list = useMemo(() => {
     const s = q.toLowerCase()
@@ -39,11 +40,19 @@ export default function InventoryTab() {
   })
 
   const submit = (post) => {
+    setErr('')
     const items = changed.map(([id, v]) => {
       const p = products.find((x) => x.id === id)
       return { productId: id, name: p.name, unit: p.unit, qty: Number(v), prevStock: p.stock }
     })
-    addDocument({ type: 'inventory', reason: 'Инвентаризация', items }, { post })
+    // F2-3: раньше результат addDocument отбрасывался — если было
+    // расхождение (например, отрицательный факт при post=true) тост
+    // «Применено» всё равно показывался, а документ не создавался.
+    const r = addDocument({ type: 'inventory', reason: 'Инвентаризация', items }, { post })
+    if (r && typeof r === 'object' && r.ok === false) {
+      setErr(r.error || 'Не удалось провести документ')
+      return
+    }
     setDone(post ? `Применено по ${changed.length} позициям` : `Черновик инвентаризации на ${changed.length} поз.`)
     setCounts({})
     setTimeout(() => setDone(''), 3000)
@@ -68,6 +77,7 @@ export default function InventoryTab() {
         )}
       </div>
       {done && <div className="mb-3"><Toast>{done}</Toast></div>}
+      {err && <div className="mb-3 text-[13px] text-bad p-3 rounded-xl bg-bad-soft/30">{err}</div>}
 
       <div className="relative mb-3 max-w-sm">
         <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />

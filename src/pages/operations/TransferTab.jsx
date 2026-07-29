@@ -12,6 +12,7 @@ export default function TransferTab() {
   const [items, setItems] = useState([])
   const [toWh, setToWh] = useState(warehouses[0]?.id || '')
   const [done, setDone] = useState('')
+  const [err, setErr] = useState('')
 
   const whName = (id) => warehouses.find((w) => w.id === id)?.name || '—'
   const add = (p) => {
@@ -23,7 +24,12 @@ export default function TransferTab() {
     )
   }
   const submit = (post) => {
-    addDocument({ type: 'transfer', toWarehouseId: toWh, items }, { post })
+    setErr('')
+    const r = addDocument({ type: 'transfer', toWarehouseId: toWh, items }, { post })
+    if (r && typeof r === 'object' && r.ok === false) {
+      setErr(r.error || 'Не удалось провести перемещение')
+      return
+    }
     setDone(post ? `Перемещено ${items.length} поз. → ${whName(toWh)}` : `Черновик перемещения на ${items.length} поз.`)
     setItems([])
     setTimeout(() => setDone(''), 3000)
@@ -35,6 +41,7 @@ export default function TransferTab() {
         Перемещение переносит товар на другой склад. Общий остаток не меняется — движение фиксируется в журнале.
       </p>
       {done && <div className="mb-3"><Toast>{done}</Toast></div>}
+      {err && <div className="mb-3 text-[13px] text-bad p-3 rounded-xl bg-bad-soft/30">{err}</div>}
 
       <Field label="Склад назначения">
         <Select value={toWh} onChange={(e) => setToWh(e.target.value)}>

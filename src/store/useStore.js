@@ -103,6 +103,32 @@ export const useStore = create(
         get().logAction('Закрыта смена', { section: 'Касса', type: 'shift' })
       },
 
+      // F2-9: пересчитать snapshot закрытой смены. Вызывается из
+      // cancelOrder и refundOrder — если заказ принадлежит уже
+      // закрытой смене, её `revenue`/`ordersCount` без пересчёта
+      // расходятся с фактом (закрытие делает snapshot, а последующие
+      // отмены/возвраты его не двигают). Открытая смена snapshot не
+      // имеет — там revenue считается на лету.
+      recalcClosedShift: (shiftId) => {
+        if (!shiftId) return
+        const st = get()
+        const sh = (st.shifts || []).find((x) => x.id === shiftId)
+        if (!sh || !sh.closedAt) return
+        const os = (st.orders || []).filter(
+          (o) => o.shiftId === shiftId && o.status !== 'cancelled',
+        )
+        // refund-заказы уменьшают выручку смены.
+        const revenue = os.reduce(
+          (a, o) => a + (o.kind === 'refund' ? -1 : 1) * (Number(o.total) || 0),
+          0,
+        )
+        set((state) => ({
+          shifts: state.shifts.map((x) =>
+            x.id === shiftId ? { ...x, revenue, ordersCount: os.length } : x,
+          ),
+        }))
+      },
+
       // ── Товары / услуги / комплекты ─────────────────────────────
       // type: 'product' | 'service' | 'kit' (default 'product'). Услуга и
       // комплект пропускают ленту складских полей (stock/batches/cell);
@@ -301,9 +327,21 @@ export const useStore = create(
             ...b,
             qty: (Number(b.qty) || 0) - (copyBatches[i]?.qty || 0),
           }))
+          // F2-2: раньше копия несла тот же SKU — ломало импорт CSV
+          // (bySku[sku]=p давал недетерминированный маппинг), поиск
+          // и сканер штрихкода. Добавляем суффикс `·<whShort>` из
+          // первых 2 символов имени склада или из его id, чтобы SKU
+          // остался уникальным. При обратном перемещении суффикс
+          // будет наращиваться — это лучше, чем дубль.
+          const whShort = (whName(toWarehouseId) || String(toWarehouseId || 'wh'))
+            .replace(/[^\wа-яА-Я]/g, '')
+            .slice(0, 3)
+            .toUpperCase()
+          const suffix = whShort ? `·${whShort}` : `·${uid('w').slice(-3)}`
           const copy = {
             ...p,
             id: uid('p'),
+            sku: p.sku + suffix,
             stock: n,
             warehouseId: toWarehouseId || p.warehouseId,
             cell: toCell || p.cell,
@@ -655,6 +693,9 @@ export const useStore = create(
           (t) => t.orderId === id && t.status !== 'cancelled',
         )
         linkedTx.forEach((t) => get().cancelMoneyTx(t.id))
+        // F2-9: если отменили заказ уже закрытой смены — пересчитать
+        // её snapshot revenue.
+        if (o.shiftId) get().recalcClosedShift(o.shiftId)
         get().logAction(
           `Отменён заказ ${o.no} · ${o.stockConsumed ? 'остатки возвращены' : 'резерв снят'}`,
           { section: 'Заказы', type: 'delete' },
@@ -695,20 +736,32 @@ export const useStore = create(
             }
           }
         }
-        // Считаем сумму возврата пропорционально orig.price.
+        // F2-1: enriched-items несут `consumed` для FIFO reverse. Для
+        // частичного возврата пропорционально усекаем `consumed[i].qty`,
+        // чтобы вернуть только вернувшуюся долю в те же партии, а
+        // остальное осталось consumed (в продаже). Раньше stock тупо
+        // += qty без batches — партии протухали, следующая продажа
+        // считала COGS по «дырявым» партиям.
         const enriched = items.map((ri) => {
           const oi = orig.items.find((x) => x.productId === ri.productId)
+          const refQty = Number(ri.qty)
+          const origQty = Number(oi.qty) || 0
+          const ratio = origQty > 0 ? refQty / origQty : 0
+          const consumed = (oi.consumed || []).map((c) => ({
+            ...c,
+            qty: (Number(c.qty) || 0) * ratio,
+          }))
           return {
             ...oi,
-            qty: Number(ri.qty),
-            consumed: (oi.consumed || []).slice(0, 8), // partition-hint для FIFO reverse
+            qty: refQty,
+            consumed,
           }
         })
         const refundTotal = enriched.reduce(
           (acc, it) => acc + Number(it.qty) * Number(it.price || 0),
           0,
         )
-        // Создаём refund-order через addOrder (kind='refund' — специальный).
+        // Создаём refund-order.
         const id = uid('o')
         set((st) => {
           const o = {
@@ -728,14 +781,15 @@ export const useStore = create(
             total: refundTotal,
             payment: { method: orig.payment?.method || 'cash', cashPaid: 0, cardPaid: 0 },
           }
-          // Возврат остатка на склад — прибавляем qty к продукту.
-          const products = st.products.map((p) => {
-            const ri = enriched.find((x) => x.productId === p.id)
-            return ri ? { ...p, stock: (Number(p.stock) || 0) + Number(ri.qty) } : p
-          })
+          // F2-1: возврат на склад через applyOrderStock(+1). Функция
+          // умеет reverseConsume(batches, consumed) — партии восстанавливаются
+          // в исходные, cost пересчитывается по FIFO, инвариант
+          // sum(batches.qty)===stock сохраняется. Плюс восстанавливает
+          // коды маркировки, если товар marked.
+          const applied = applyOrderStock(st, o, +1)
           return {
-            orders: [o, ...st.orders],
-            products,
+            orders: [applied.order, ...st.orders],
+            products: applied.products,
           }
         })
         // Возврат денег.
@@ -797,6 +851,9 @@ export const useStore = create(
             })
           }
         }
+        // F2-9: если refund относится к оригиналу закрытой смены —
+        // пересчитать snapshot. refund-заказ уменьшит revenue.
+        if (orig.shiftId) get().recalcClosedShift(orig.shiftId)
         get().logAction(`Возврат по ${orig.no} на ${refundTotal} ₽`, {
           section: 'Заказы',
           type: 'return',
@@ -807,6 +864,13 @@ export const useStore = create(
       assignCourier: (id, employeeId) => {
         const o = get().orders.find((x) => x.id === id)
         const emp = get().employees.find((e) => e.id === employeeId)
+        // F2-7: раньше валидация роли была только в UI (Orders.jsx
+        // фильтровал по role='courier'). Через API/tests можно было
+        // назначить кассира на доставку → NAV/фильтр «Мои заказы»
+        // работал бы неверно. Теперь проверка в actionу.
+        if (employeeId && emp && emp.role !== 'courier') {
+          return { ok: false, error: 'На доставку можно назначить только сотрудника с ролью «Курьер»' }
+        }
         set((s) => ({
           orders: s.orders.map((x) =>
             x.id === id ? { ...x, assignedTo: employeeId || null } : x,
@@ -816,6 +880,7 @@ export const useStore = create(
           employeeId ? `Курьер «${emp?.name}» назначен на ${o?.no}` : `Снято назначение с ${o?.no}`,
           { section: 'Доставка' },
         )
+        return { ok: true }
       },
 
       // ── Накладные ────────────────────────────────────────────
