@@ -1,4 +1,5 @@
 import { useMemo } from 'react'
+import { Link } from 'react-router-dom'
 import {
   Sparkles,
   PackageMinus,
@@ -232,12 +233,17 @@ export default function Analytics() {
               {d.forecast.map(({ p, perDay, days, reco }) => {
                 const c = catInfo(p.category)
                 return (
-                  <tr key={p.id}>
+                  <tr key={p.id} className="hover:bg-surface-2/40 transition">
                     <td className="py-2.5 px-2">
-                      <div className="flex items-center gap-2">
+                      {/* F3-8: раньше строки прогноза не кликались — из
+                          отчёта нельзя было провалиться в товар. */}
+                      <Link
+                        to={`/products?q=${encodeURIComponent(p.name)}`}
+                        className="flex items-center gap-2 hover:text-brand transition"
+                      >
                         <span className="w-2 h-2 rounded-full" style={{ background: c.color }} />
                         {p.name}
-                      </div>
+                      </Link>
                     </td>
                     <td className="py-2.5 px-2 text-right tabular-nums">
                       {num(p.stock)} {p.unit}

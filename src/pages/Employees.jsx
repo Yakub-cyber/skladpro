@@ -26,7 +26,14 @@ const PERM_LABEL = NAV.reduce((m, n) => {
 }, {})
 
 export default function Employees() {
-  const { employees, authUserId, updateEmployee, removeEmployee, cloud, companyId } = useStore()
+  // F3-7: селекторы вместо useStore() — иначе Employees ререндерится
+  // на каждое изменение state, включая audit и sync-тик.
+  const employees = useStore((s) => s.employees)
+  const authUserId = useStore((s) => s.authUserId)
+  const updateEmployee = useStore((s) => s.updateEmployee)
+  const removeEmployee = useStore((s) => s.removeEmployee)
+  const cloud = useStore((s) => s.cloud)
+  const companyId = useStore((s) => s.companyId)
   const [adding, setAdding] = useState(false)
   const confirm = useConfirm()
 

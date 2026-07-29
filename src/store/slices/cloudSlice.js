@@ -7,6 +7,7 @@
 import { makeSeed } from '../seed'
 import { uid } from '../../lib/id'
 import { hasSupabase } from '../../lib/supabase'
+import { apiBootstrap } from '../../lib/api'
 import { stockConsumedFromStatus } from '../../lib/orders'
 import {
   cloudLoadMerged,
@@ -99,7 +100,11 @@ export const createCloudSlice = (set, get) => ({
       set({ recoveryMode: true, resetToken })
       return
     }
-    // восстановление сессии при загрузке
+    // F3-1: восстановление сессии при загрузке. apiBootstrap() читает
+    // refreshToken из localStorage и обновляет пару токенов —
+    // getCloudSession() без него всегда null, а authUserId
+    // персистится → AuthGate видит id, но каждый API-запрос 401.
+    await apiBootstrap()
     const s = await getCloudSession()
     if (s) get().bootstrapCloud()
   },

@@ -372,7 +372,10 @@ function PadBtn({ children, onClick, className }) {
 }
 
 function CloudLogin({ onBack, initialMode = 'signin' }) {
-  const { signIn, signUp } = useStore()
+  // F3-7: раньше useStore() без селектора → ререндер CloudLogin на
+  // каждое изменение state (audit, sync-тик) — заметный лаг при вводе.
+  const signIn = useStore((s) => s.signIn)
+  const signUp = useStore((s) => s.signUp)
   // При открытии из Landing-«Регистрация» мы должны сразу видеть вкладку
   // «Регистрация», а не «Вход». initialMode пробрасывается родителем.
   // Также поддерживаем ?invite=<token>&email=<email> в hash-URL — если

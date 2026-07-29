@@ -20,6 +20,9 @@ yarn-error.log*
 .env.*
 !.env.example
 
+# F3-3/F3-4: generated по шаблону, не коммитим (source — sw.template.js).
+public/sw.js
+
 # Редакторы / ОС
 .vscode/*
 !.vscode/extensions.json

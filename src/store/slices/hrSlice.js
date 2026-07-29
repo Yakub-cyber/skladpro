@@ -5,9 +5,21 @@
 import { uid } from '../../lib/id'
 import { hashPin, verifyPin } from '../../lib/crypto'
 import { updateMemberRole } from '../../lib/cloud'
+import { effectivePlan, PLAN_LIMITS } from '../../lib/subscription'
 
 export const createHrSlice = (set, get) => ({
   addEmployee: async (e) => {
+    // F3-2: гейт по плану. free — 3 сотрудника, business — 15.
+    const st = get()
+    const eff = effectivePlan(st.settings?.subscription, new Date())
+    const limits = PLAN_LIMITS[eff] || PLAN_LIMITS.free
+    const active = (st.employees || []).filter((x) => x.active !== false).length
+    if (Number.isFinite(limits.employees) && active >= limits.employees) {
+      return {
+        ok: false,
+        error: `План «${limits.label}» позволяет ${limits.employees} активных сотрудников. Улучшите тариф.`,
+      }
+    }
     const pinHash = e.pin ? await hashPin(e.pin) : ''
     set((s) => ({
       employees: [
@@ -15,6 +27,7 @@ export const createHrSlice = (set, get) => ({
         { id: uid('e'), active: true, role: 'stock', ...e, pin: pinHash },
       ],
     }))
+    return { ok: true }
   },
 
   updateEmployee: async (id, patch) => {

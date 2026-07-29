@@ -5,6 +5,14 @@ import { uid, nextNo } from '../lib/id'
 import { nextStatus, statusInfo, docTypeInfo, DEFAULT_WORK_ZONES } from '../lib/constants'
 import { applyDocToState } from '../lib/posting'
 import { applyOrderStock } from '../lib/orders'
+import { effectivePlan, PLAN_LIMITS } from '../lib/subscription'
+
+// F3-2: разрешение имени плана и лимитов на текущий момент. Отдельная
+// функция, чтобы actions в сторе не тянули за собой знание о subscription.
+function planLimits(sub) {
+  const eff = effectivePlan(sub, new Date())
+  return PLAN_LIMITS[eff] || PLAN_LIMITS.free
+}
 import { persistMigrate, persistPartialize, persistMerge } from './persistMigrate'
 import { createHrSlice } from './slices/hrSlice'
 import { createCloudSlice, cloudInitialState, bindStore } from './slices/cloudSlice'
@@ -135,7 +143,20 @@ export const useStore = create(
       // seed по умолчанию оставляем безопасный — движок posting.js это
       // корректно обрабатывает.
       addProduct: (p) => {
-        const pts = get().priceTypes || []
+        // F3-2: гейт по плану подписки. После триала free-план имеет
+        // лимит 100 позиций. planLimits() читает subscription из settings.
+        const st = get()
+        const limits = planLimits(st.settings?.subscription)
+        if (
+          Number.isFinite(limits.products) &&
+          (st.products || []).length >= limits.products
+        ) {
+          return {
+            ok: false,
+            error: `Достигнут лимит плана «${limits.label}»: ${limits.products} товаров. Улучшите тариф в разделе «Подписка».`,
+          }
+        }
+        const pts = st.priceTypes || []
         const prices =
           p.prices || Object.fromEntries(pts.map((t) => [t.id, p.price || 0]))
         set((s) => ({
@@ -162,6 +183,7 @@ export const useStore = create(
           section: 'Товары',
           type: 'create',
         })
+        return { ok: true }
       },
       updateProduct: (id, patch) => {
         set((s) => ({
@@ -1068,9 +1090,22 @@ export const useStore = create(
       // ── Склады и ячейки (редактор размещения) ────────────────
       setActiveWarehouse: (id) => set({ activeWarehouseId: id }),
       addWarehouse: (w) => {
+        // F3-2: гейт по плану. У free — 1 склад.
+        const st = get()
+        const limits = planLimits(st.settings?.subscription)
+        if (
+          Number.isFinite(limits.warehouses) &&
+          (st.warehouses || []).length >= limits.warehouses
+        ) {
+          return {
+            ok: false,
+            error: `План «${limits.label}» позволяет ${limits.warehouses} склад(ов). Улучшите тариф.`,
+          }
+        }
         const id = uid('wh')
         set((s) => ({ warehouses: [...s.warehouses, { id, ...w }], activeWarehouseId: id }))
         get().logAction(`Добавлен склад «${w.name}»`, { section: 'Склады', type: 'create' })
+        return { ok: true, id }
       },
       removeWarehouse: (id) =>
         set((s) => {

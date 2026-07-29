@@ -11,7 +11,13 @@
 //
 // Версия кэша меняется при каждом деплое — эта константа регулирует,
 // когда SW считает кэш «протухшим» и чистит его.
-const CACHE_VERSION = 'skladpro-v3'
+// F3-4: CACHE_VERSION поднимается автоматически при каждой сборке
+// (vite.config.js подставляет timestamp вместо __BUILD_ID__). Раньше
+// константа была статичной → SW после deploy отдавал stale main.js.
+const CACHE_VERSION = 'skladpro-__BUILD_ID__'
+// F3-3: origin бэкенда пробрасывается из VITE_API_URL при build. Пусто
+// в dev — тогда isApi() смотрит только на legacy-хосты.
+const API_ORIGIN = '__API_ORIGIN__'
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`
 const PRECACHE_URLS = [
   './',
@@ -42,6 +48,7 @@ self.addEventListener('activate', (event) => {
 })
 
 const isApi = (url) =>
+  (API_ORIGIN && url.origin === API_ORIGIN) ||
   url.hostname.includes('supabase.co') ||
   url.hostname.includes('proxyapi.ru') ||
   url.hostname.includes('nominatim.openstreetmap.org')
