@@ -97,6 +97,20 @@ export default function SaleTab() {
   const submit = (post) => {
     setErr('')
     const cust = customers.find((c) => c.id === customerId)
+    // C1: гейт кредитного лимита. Не даём провести продажу «в долг»,
+    // если долг после продажи вылетит за customer.creditLimit.
+    if (post && onCredit && cust?.id) {
+      const limit = Number(cust.creditLimit) || 0
+      if (limit > 0) {
+        const newDebt = (Number(cust.balance) || 0) + total
+        if (newDebt > limit) {
+          setErr(
+            `Кредитный лимит превышен: долг стал бы ${money(newDebt)} при лимите ${money(limit)}`,
+          )
+          return
+        }
+      }
+    }
     const r = addDocument(
       {
         type: 'sale',

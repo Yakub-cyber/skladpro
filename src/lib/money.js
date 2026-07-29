@@ -51,6 +51,7 @@ export const MONEY_PURPOSES = {
     { key: 'other', label: 'Прочий приход' },
   ],
   out: [
+    { key: 'sale-refund', label: 'Возврат покупателю' },
     { key: 'debt-out', label: 'Оплата поставщику' },
     { key: 'salary', label: 'Зарплата' },
     { key: 'rent', label: 'Аренда' },

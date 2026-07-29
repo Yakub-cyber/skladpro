@@ -432,6 +432,22 @@ export const useStore = create(
             return { ok: false, error: `Оплачено ${paid}₽ из ${total}₽ — недостаточно` }
           }
         }
+        // C1: кредитный лимит клиента. При продаже «в долг» смотрим,
+        // не выйдет ли текущий долг + новая продажа за customer.creditLimit.
+        // 0 или отсутствует — лимита нет.
+        if (order.onCredit && order.customerId) {
+          const cust = get().customers.find((c) => c.id === order.customerId)
+          const limit = Number(cust?.creditLimit) || 0
+          if (limit > 0) {
+            const newDebt = (Number(cust?.balance) || 0) + total
+            if (newDebt > limit) {
+              return {
+                ok: false,
+                error: `Кредитный лимит превышен: долг стал бы ${newDebt}₽ при лимите ${limit}₽`,
+              }
+            }
+          }
+        }
         const id = uid('o')
         const kind = order.kind || 'order'
         set((s) => {
@@ -643,6 +659,149 @@ export const useStore = create(
           `Отменён заказ ${o.no} · ${o.stockConsumed ? 'остатки возвращены' : 'резерв снят'}`,
           { section: 'Заказы', type: 'delete' },
         )
+      },
+      // C2: Возврат по чеку. Клиент вернул товар — оформляем «возврат-
+      // документ» со ссылкой на оригинал и параллельно откатываем
+      // деньги и остаток. items — массив { productId, qty } из
+      // оригинального чека (можно вернуть меньшее количество, чем
+      // покупали, но не больше).
+      //
+      // Побочки:
+      //   1) Новый order kind='refund' с origOrderId + reason + items;
+      //   2) Возврат остатка на склад (обратный FIFO по partition из
+      //      original.items[].consumed);
+      //   3) Возврат денег через addMoneyTx type='out' с purpose=
+      //      'sale-refund' на тот же счёт, где было получено (или на
+      //      cash-account смены). Для credit — уменьшаем customer.balance.
+      refundOrder: (origOrderId, opts = {}) => {
+        const s = get()
+        const orig = s.orders.find((o) => o.id === origOrderId)
+        if (!orig) return { ok: false, error: 'Оригинальный заказ не найден' }
+        if (!orig.stockConsumed) {
+          return { ok: false, error: 'Заказ ещё не отгружен — используйте «Отмена»' }
+        }
+        // items не задан — возврат полного чека (по всем позициям).
+        const items = (opts.items && opts.items.length)
+          ? opts.items
+          : orig.items.map((it) => ({ productId: it.productId, qty: it.qty }))
+        // Проверка: qty не больше, чем в оригинале.
+        for (const ri of items) {
+          const oi = orig.items.find((x) => x.productId === ri.productId)
+          if (!oi) return { ok: false, error: `Товар ${ri.productId} не из этого чека` }
+          if (Number(ri.qty) > Number(oi.qty)) {
+            return {
+              ok: false,
+              error: `Возвращают ${ri.qty} из ${oi.qty} по «${oi.name}» — больше нельзя`,
+            }
+          }
+        }
+        // Считаем сумму возврата пропорционально orig.price.
+        const enriched = items.map((ri) => {
+          const oi = orig.items.find((x) => x.productId === ri.productId)
+          return {
+            ...oi,
+            qty: Number(ri.qty),
+            consumed: (oi.consumed || []).slice(0, 8), // partition-hint для FIFO reverse
+          }
+        })
+        const refundTotal = enriched.reduce(
+          (acc, it) => acc + Number(it.qty) * Number(it.price || 0),
+          0,
+        )
+        // Создаём refund-order через addOrder (kind='refund' — специальный).
+        const id = uid('o')
+        set((st) => {
+          const o = {
+            id,
+            no: nextNo(st.orders, 'ВЧК'),
+            kind: 'refund',
+            origOrderId,
+            reason: opts.reason || 'Возврат покупателя',
+            status: 'delivered',
+            createdAt: new Date().toISOString(),
+            track: [{ status: 'delivered', at: new Date().toISOString() }],
+            shiftId: st.activeShiftId || null,
+            stockConsumed: true,
+            customerId: orig.customerId,
+            customerName: orig.customerName,
+            items: enriched,
+            total: refundTotal,
+            payment: { method: orig.payment?.method || 'cash', cashPaid: 0, cardPaid: 0 },
+          }
+          // Возврат остатка на склад — прибавляем qty к продукту.
+          const products = st.products.map((p) => {
+            const ri = enriched.find((x) => x.productId === p.id)
+            return ri ? { ...p, stock: (Number(p.stock) || 0) + Number(ri.qty) } : p
+          })
+          return {
+            orders: [o, ...st.orders],
+            products,
+          }
+        })
+        // Возврат денег.
+        const method = orig.payment?.method
+        const shift = s.activeShiftId
+          ? s.shifts.find((sh) => sh.id === s.activeShiftId)
+          : null
+        if (method === 'credit') {
+          // Долг клиента уменьшается: возврат гасит.
+          set((st) => ({
+            customers: st.customers.map((c) =>
+              c.id === orig.customerId
+                ? { ...c, balance: Math.max(0, (c.balance || 0) - refundTotal) }
+                : c,
+            ),
+          }))
+        } else if (method === 'cash' || method === 'mixed') {
+          const cashAcc =
+            shift?.cashAccountId || s.accounts.find((a) => a.kind === 'cash')?.id
+          if (cashAcc && refundTotal > 0) {
+            const cashPart = method === 'mixed'
+              ? Math.min(refundTotal, Number(orig.payment?.cashPaid) || 0)
+              : refundTotal
+            if (cashPart > 0) {
+              get().addMoneyTx({
+                type: 'out',
+                accountId: cashAcc,
+                amount: cashPart,
+                purpose: 'sale-refund',
+                orderId: id,
+                note: `Возврат по ${orig.no}`,
+              })
+            }
+            if (method === 'mixed') {
+              const cardPart = refundTotal - cashPart
+              const bankAcc = s.accounts.find((a) => a.kind === 'bank')?.id
+              if (cardPart > 0 && bankAcc) {
+                get().addMoneyTx({
+                  type: 'out',
+                  accountId: bankAcc,
+                  amount: cardPart,
+                  purpose: 'sale-refund',
+                  orderId: id,
+                  note: `Возврат по ${orig.no}`,
+                })
+              }
+            }
+          }
+        } else if (method === 'card') {
+          const bankAcc = s.accounts.find((a) => a.kind === 'bank')?.id
+          if (bankAcc && refundTotal > 0) {
+            get().addMoneyTx({
+              type: 'out',
+              accountId: bankAcc,
+              amount: refundTotal,
+              purpose: 'sale-refund',
+              orderId: id,
+              note: `Возврат по ${orig.no}`,
+            })
+          }
+        }
+        get().logAction(`Возврат по ${orig.no} на ${refundTotal} ₽`, {
+          section: 'Заказы',
+          type: 'return',
+        })
+        return { ok: true, id, total: refundTotal }
       },
       // Назначить заказ конкретному курьеру (сотруднику) — он видит только свои
       assignCourier: (id, employeeId) => {

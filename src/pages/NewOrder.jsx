@@ -37,6 +37,7 @@ import { reservedByProduct } from '../lib/orders'
 import { geocodeAddress } from '../lib/geo'
 import { computeKitStock } from '../lib/kit'
 import { aiParseInvoice, aiConfig, aiEnabled } from '../lib/ai'
+import { computeVatSummary } from '../lib/vat'
 
 // Настройки кассового оборудования по умолчанию. Живут в
 // settings.pos — то есть общие для компании, но применяются только
@@ -496,6 +497,7 @@ function CartBody({
   geoStatus,
   asOrder,
   setAsOrder,
+  vatSummary,
   compact = false,
 }) {
   return (
@@ -665,6 +667,12 @@ function CartBody({
           <span className="text-muted text-sm">Итого</span>
           <span className="text-2xl font-bold tabular-nums">{money(total)}</span>
         </div>
+        {vatSummary && vatSummary.vat > 0 && (
+          <div className="flex justify-between items-center text-[12px] text-muted">
+            <span>в т.ч. НДС</span>
+            <span className="tabular-nums">{money(vatSummary.vat)}</span>
+          </div>
+        )}
         {/* Крупная зелёная CTA на всю ширину чека — сумма на самой кнопке.
             F9 (в родителе) тоже открывает экран оплаты — подпись справа. */}
         <button
@@ -901,6 +909,13 @@ export default function NewOrder({ fullscreen = false }) {
   }
 
   const subtotal = rows.reduce((a, r) => a + r.qty * r.price, 0)
+  // C3: НДС по позициям. rows содержат productId — берём ставку из
+  // каталога (product.vatRate или fallback компании). Показываем в
+  // «Итого · в т.ч. НДС X ₽» и сохраняем в order.vatSummary.
+  const vatSummary = useMemo(
+    () => computeVatSummary(rows, products, settings),
+    [rows, products, settings],
+  )
   const total = Math.round(subtotal * (1 - (Number(discount) || 0) / 100))
   const count = rows.reduce((a, r) => a + r.qty, 0)
   const rowsById = useMemo(
@@ -935,6 +950,9 @@ export default function NewOrder({ fullscreen = false }) {
       // с существующей логикой резервов/долгов клиента в сторе).
       onCredit: payment.method === 'credit',
       payment,
+      // C3: сохраняем разбивку НДС на момент продажи, чтобы отчёты и
+      // печать чека не зависели от последующего изменения product.vatRate.
+      vatSummary,
       address: address || cust?.city || 'Самовывоз',
       // Гео из Nominatim, чтобы Delivery.jsx нарисовал пин на реальном
       // месте, а не в хешированной точке рядом с центром города.
@@ -1013,6 +1031,7 @@ export default function NewOrder({ fullscreen = false }) {
     setAddress,
     asOrder,
     setAsOrder,
+    vatSummary,
     geoStatus: geo
       ? 'found'
       : address.trim().length >= 4

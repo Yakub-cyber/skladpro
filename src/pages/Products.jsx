@@ -1425,6 +1425,25 @@ function ProductModal({ product, onClose }) {
               }}
             />
           </Field>
+          {/* C3: ставка НДС товара. Пусто = «наследовать от компании»
+              (settings.company.vatRate → 20% fallback). Показывается в
+              чеке POS и печатной форме накладной. */}
+          <Field label="НДС" hint="Пусто — берём ставку компании (по умолчанию 20%)">
+            <Select
+              value={
+                f.vatRate === null || f.vatRate === undefined ? '' : String(f.vatRate)
+              }
+              onChange={(e) => {
+                const v = e.target.value
+                set('vatRate', v === '' ? null : Number(v))
+              }}
+            >
+              <option value="">Как у компании</option>
+              <option value="0">0%</option>
+              <option value="10">10% (продукты/детские)</option>
+              <option value="20">20% (общая)</option>
+            </Select>
+          </Field>
         </div>
 
         {/* Редактор состава комплекта — только для type='kit'. Обычный

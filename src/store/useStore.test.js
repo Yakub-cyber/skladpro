@@ -842,6 +842,141 @@ describe('transferStock — перемещение между складами (
   })
 })
 
+describe('C2: refundOrder — возврат по чеку', () => {
+  // Возврат за нал возвращает деньги в кассу (moneyTx type='out'),
+  // возвращает остаток на склад, создаёт refund-order с origOrderId.
+
+  it('cash-чек: возврат создаёт refund-order + moneyTx out + возврат остатка', () => {
+    const p = state().products.find((x) => x.stock >= 10)
+    const before = productById(p.id).stock
+    state().addOrder({
+      kind: 'retail',
+      customerId: state().customers[0].id,
+      items: [{ productId: p.id, name: p.name, unit: p.unit, qty: 2, price: 100 }],
+      total: 200,
+      payment: { method: 'cash', cashPaid: 200, cardPaid: 0 },
+    })
+    const origId = state().orders[0].id
+    // после чека: остаток -2
+    expect(productById(p.id).stock).toBe(before - 2)
+    const r = state().refundOrder(origId, {
+      items: [{ productId: p.id, qty: 1 }],
+      reason: 'брак',
+    })
+    expect(r.ok).toBe(true)
+    expect(r.total).toBe(100)
+    // Остаток восстановлен на 1
+    expect(productById(p.id).stock).toBe(before - 1)
+    // Refund-order с ссылкой на оригинал
+    const refund = state().orders[0]
+    expect(refund.kind).toBe('refund')
+    expect(refund.origOrderId).toBe(origId)
+    expect(refund.no).toMatch(/^ВЧК-/)
+    // moneyTx type='out' с purpose='sale-refund' на кассу
+    const cashAcc = state().accounts.find((a) => a.kind === 'cash').id
+    const refundTx = state().moneyTx.find(
+      (t) => t.orderId === refund.id && t.type === 'out',
+    )
+    expect(refundTx?.amount).toBe(100)
+    expect(refundTx?.purpose).toBe('sale-refund')
+    expect(refundTx?.accountId).toBe(cashAcc)
+  })
+
+  it('credit-чек: возврат уменьшает customer.balance', () => {
+    const cust = state().customers[0]
+    useStore.setState((s) => ({
+      customers: s.customers.map((c) => (c.id === cust.id ? { ...c, balance: 0, creditLimit: 0 } : c)),
+    }))
+    const p = state().products.find((x) => x.stock >= 5)
+    state().addOrder({
+      kind: 'retail',
+      customerId: cust.id,
+      items: [{ productId: p.id, name: p.name, unit: p.unit, qty: 1, price: 500 }],
+      total: 500,
+      onCredit: true,
+      payment: { method: 'credit', cashPaid: 0, cardPaid: 0 },
+    })
+    const origId = state().orders[0].id
+    expect(state().customers.find((c) => c.id === cust.id).balance).toBe(500)
+    state().refundOrder(origId, { items: [{ productId: p.id, qty: 1 }] })
+    // Долг погашается возвратом
+    expect(state().customers.find((c) => c.id === cust.id).balance).toBe(0)
+  })
+
+  it('возврат больше, чем куплено → ok=false', () => {
+    const p = state().products.find((x) => x.stock >= 5)
+    state().addOrder({
+      kind: 'retail',
+      customerId: state().customers[0].id,
+      items: [{ productId: p.id, name: p.name, qty: 2, price: 100 }],
+      total: 200,
+      payment: { method: 'cash', cashPaid: 200, cardPaid: 0 },
+    })
+    const r = state().refundOrder(state().orders[0].id, {
+      items: [{ productId: p.id, qty: 3 }],
+    })
+    expect(r.ok).toBe(false)
+    expect(r.error).toMatch(/больше нельзя/i)
+  })
+})
+
+describe('C1: кредитный лимит клиента', () => {
+  it('onCredit + новый долг > creditLimit → { ok:false, error }', () => {
+    const cust = state().customers[0]
+    useStore.setState((s) => ({
+      customers: s.customers.map((c) =>
+        c.id === cust.id ? { ...c, balance: 800, creditLimit: 1000 } : c,
+      ),
+    }))
+    const r = state().addOrder({
+      customerId: cust.id,
+      items: [{ productId: state().products[0].id, name: 'X', qty: 1, price: 500 }],
+      total: 500, // 800 + 500 = 1300 > 1000
+      onCredit: true,
+      payment: { method: 'credit', cashPaid: 0, cardPaid: 0 },
+    })
+    expect(r.ok).toBe(false)
+    expect(r.error).toMatch(/лимит/i)
+    // balance не изменился, заказа нет
+    expect(state().customers.find((c) => c.id === cust.id).balance).toBe(800)
+  })
+
+  it('onCredit + новый долг ≤ лимита → продажа проходит', () => {
+    const cust = state().customers[0]
+    useStore.setState((s) => ({
+      customers: s.customers.map((c) =>
+        c.id === cust.id ? { ...c, balance: 300, creditLimit: 1000 } : c,
+      ),
+    }))
+    const r = state().addOrder({
+      customerId: cust.id,
+      items: [{ productId: state().products[0].id, name: 'X', qty: 1, price: 400 }],
+      total: 400, // 300 + 400 = 700 ≤ 1000
+      onCredit: true,
+      payment: { method: 'credit', cashPaid: 0, cardPaid: 0 },
+    })
+    expect(r.ok).toBe(true)
+    expect(state().customers.find((c) => c.id === cust.id).balance).toBe(700)
+  })
+
+  it('creditLimit = 0 → нет ограничения', () => {
+    const cust = state().customers[0]
+    useStore.setState((s) => ({
+      customers: s.customers.map((c) =>
+        c.id === cust.id ? { ...c, balance: 0, creditLimit: 0 } : c,
+      ),
+    }))
+    const r = state().addOrder({
+      customerId: cust.id,
+      items: [{ productId: state().products[0].id, name: 'X', qty: 1, price: 999999 }],
+      total: 999999,
+      onCredit: true,
+      payment: { method: 'credit', cashPaid: 0, cardPaid: 0 },
+    })
+    expect(r.ok).toBe(true)
+  })
+})
+
 describe('B4: cancelOrder сбрасывает stockConsumed', () => {
   it('после cancelOrder повторное shipped снова списывает остаток', () => {
     const p = state().products.find((x) => x.stock >= 10)

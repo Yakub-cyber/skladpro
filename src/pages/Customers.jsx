@@ -192,7 +192,7 @@ function CustomerModal({ customer, orders, onClose }) {
         <Mini label="Город" value={c.city} icon={MapPin} />
       </div>
 
-      {/* Баланс / задолженность */}
+      {/* Баланс / задолженность + кредитный лимит */}
       <div
         className={cx(
           'mb-5 p-4 rounded-xl border',
@@ -206,6 +206,11 @@ function CustomerModal({ customer, orders, onClose }) {
             </div>
             <div className={cx('text-xl font-semibold tabular-nums', c.balance > 0 ? 'text-bad' : 'text-ok')}>
               {money(c.balance || 0)}
+              {c.creditLimit > 0 && (
+                <span className="text-[12px] text-muted font-normal ml-2">
+                  / лимит {money(c.creditLimit)}
+                </span>
+              )}
             </div>
           </div>
           {c.balance > 0 && (
@@ -278,13 +283,13 @@ function AddCustomerModal({ open, onClose }) {
   const addCustomer = useStore((s) => s.addCustomer)
   const emptyForm = {
     name: '', type: 'ООО', city: '', contact: '', phone: '',
-    inn: '', kpp: '', address: '',
+    inn: '', kpp: '', address: '', creditLimit: '',
   }
   const [f, setF] = useState(emptyForm)
   const set = (k, v) => setF((s) => ({ ...s, [k]: v }))
   const save = () => {
     if (!f.name) return
-    addCustomer(f)
+    addCustomer({ ...f, creditLimit: Number(f.creditLimit) || 0 })
     setF(emptyForm)
     onClose()
   }
@@ -330,6 +335,18 @@ function AddCustomerModal({ open, onClose }) {
             <Input value={f.phone} onChange={(e) => set('phone', e.target.value)} placeholder="+7" />
           </Field>
         </div>
+        <Field
+          label="Кредитный лимит, ₽"
+          hint="Максимальный долг клиента. При попытке продажи «в долг» сверх лимита продажа блокируется. 0 = не ограничен."
+        >
+          <Input
+            type="number"
+            min="0"
+            value={f.creditLimit}
+            onChange={(e) => set('creditLimit', e.target.value)}
+            placeholder="0"
+          />
+        </Field>
         {/* Реквизиты — показываем только для юрлиц (ООО/ИП); попадают в
             печатные формы ТОРГ-12 / УПД / Счёт как «покупатель». */}
         {isLegal && (
@@ -364,11 +381,12 @@ function EditCustomerModal({ customer, onClose }) {
     inn: customer.inn || '',
     kpp: customer.kpp || '',
     address: customer.address || '',
+    creditLimit: customer.creditLimit || 0,
   })
   const set = (k, v) => setF((s) => ({ ...s, [k]: v }))
   const save = () => {
     if (!f.name.trim()) return
-    updateCustomer(customer.id, f)
+    updateCustomer(customer.id, { ...f, creditLimit: Number(f.creditLimit) || 0 })
     onClose()
   }
   const isLegal = f.type === 'ООО' || f.type === 'ИП'
@@ -409,6 +427,18 @@ function EditCustomerModal({ customer, onClose }) {
             <Input value={f.phone} onChange={(e) => set('phone', e.target.value)} placeholder="+7" />
           </Field>
         </div>
+        <Field
+          label="Кредитный лимит, ₽"
+          hint="При попытке продажи «в долг» сверх лимита продажа блокируется. 0 = без ограничения."
+        >
+          <Input
+            type="number"
+            min="0"
+            value={f.creditLimit}
+            onChange={(e) => set('creditLimit', e.target.value)}
+            placeholder="0"
+          />
+        </Field>
         {isLegal && (
           <div className="grid grid-cols-2 gap-3">
             <Field label="ИНН">
