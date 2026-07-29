@@ -65,6 +65,10 @@ export const cloudInitialState = {
   resetToken: null,
   companyId: null,
   companyName: null,
+  // B2: серверная подписка (план + trial + лимиты). null до bootstrap.
+  // Обновляется каждый раз при cloudBootstrap; после checkout вручную
+  // рекомендуется вызвать refreshSubscription().
+  serverSubscription: null,
 }
 
 export const createCloudSlice = (set, get) => ({
@@ -219,6 +223,22 @@ export const createCloudSlice = (set, get) => ({
       // Настройки: серверные значения поверх локальных, но локальные
       // ключи, которых нет в облаке (aiKey и пр.), сохраняем.
       if (data.settings) data.settings = { ...get().settings, ...data.settings }
+      // B2: подписка — источник истины теперь на сервере. Тянем при bootstrap
+      // (best-effort — не роняем логин, если /v1/subscription недоступен).
+      let serverSubscription = null
+      try {
+        const { apiGetSubscription } = await import('../../lib/api')
+        const r = await apiGetSubscription()
+        if (r?.ok && r.body) {
+          serverSubscription = {
+            subscription: r.body.subscription || null,
+            effectivePlan: r.body.effectivePlan,
+            limits: r.body.limits,
+            trialDaysLeft: r.body.trialDaysLeft,
+            plans: r.body.plans,
+          }
+        }
+      } catch { /* не критично для bootstrap */ }
       // Применение серверных данных не должно эхом уехать обратно в outbox
       pauseSync()
       try {
@@ -234,6 +254,7 @@ export const createCloudSlice = (set, get) => ({
           cloudReady: true,
           needOnboarding: false,
           cloudError: null,
+          serverSubscription,
         })
       } finally {
         if (storeRef) resumeSync(storeRef)
@@ -291,8 +312,10 @@ export const createCloudSlice = (set, get) => ({
     return r
   },
 
-  signUp: async (email, password, name) => {
-    const r = await cloudSignUp(email, password, name)
+  signUp: async (email, password, name, inviteToken) => {
+    // B5-2 (F3-6): 4-й аргумент inviteToken пробрасывается на сервер.
+    // Раньше он проглатывался — /v1/auth/register не знал про токен.
+    const r = await cloudSignUp(email, password, name, inviteToken)
     if (r.ok && !r.needConfirm) await get().bootstrapCloud()
     return r
   },
@@ -307,7 +330,32 @@ export const createCloudSlice = (set, get) => ({
       needOnboarding: false,
       companyId: null,
       companyName: null,
+      serverSubscription: null,
     })
+  },
+
+  // B2: обновить план после checkout / успешной оплаты. Вызывайте после того,
+  // как ЮKassa вернёт пользователя на страницу спасибо (redirect на
+  // YOOKASSA_RETURN_URL); либо периодически если хочется отражать состояние.
+  refreshSubscription: async () => {
+    try {
+      const { apiGetSubscription } = await import('../../lib/api')
+      const r = await apiGetSubscription()
+      if (r?.ok && r.body) {
+        set({
+          serverSubscription: {
+            subscription: r.body.subscription || null,
+            effectivePlan: r.body.effectivePlan,
+            limits: r.body.limits,
+            trialDaysLeft: r.body.trialDaysLeft,
+            plans: r.body.plans,
+          },
+        })
+      }
+      return r
+    } catch (e) {
+      return { ok: false, error: e?.message || 'network error' }
+    }
   },
 
   // Завершить сброс пароля: применить magic-link токен, затем показать логин.

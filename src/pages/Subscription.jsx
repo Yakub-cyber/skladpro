@@ -89,21 +89,54 @@ const MODULES = [
 ]
 
 export default function Subscription() {
-  const sub = useStore((s) => s.settings?.subscription)
+  // B2: серверная подписка (getState в bootstrap) — источник истины.
+  // Fallback на legacy sub из settings, если серверная не пришла (dev/offline).
+  const serverSubscription = useStore((s) => s.serverSubscription)
+  const sub = serverSubscription?.subscription
+    ? {
+        plan: serverSubscription.subscription.plan,
+        trialStartAt: serverSubscription.subscription.trialStartedAt,
+        trialEndAt: serverSubscription.subscription.trialEndsAt,
+        paidUntil: serverSubscription.subscription.paidUntil,
+      }
+    : useStore.getState().settings?.subscription
   const updateSettings = useStore((s) => s.updateSettings)
+  const refreshSubscription = useStore((s) => s.refreshSubscription)
   const companyName = useStore((s) => s.companyName) || 'Ваша компания'
 
   // Эффективный план: активный триал / оплаченный / free при истечении.
-  const effective = effectivePlan(sub)
-  const daysLeftTrial = trialDaysLeft(sub)
+  const effective = serverSubscription?.effectivePlan || effectivePlan(sub)
+  const daysLeftTrial = serverSubscription?.trialDaysLeft ?? trialDaysLeft(sub)
   const daysLeftPaid = paidDaysLeft(sub)
   const cur = PLANS.find((p) => p.key === (sub?.plan === 'trial' ? 'business' : effective)) || PLANS[0]
   const isTrial = sub?.plan === 'trial' && daysLeftTrial > 0
   const isTrialExpired = sub?.plan === 'trial' && daysLeftTrial <= 0
 
-  // Демо-кнопка: включает выбранный план на 30 дней. Заменится
-  // на настоящий провайдер (Stripe / ЮKassa) при подключении биллинга.
-  const activatePlan = (planKey) => {
+  // B2: реальная оплата через ЮKassa. Если сервер вернул confirmation_url —
+  // редиректим пользователя. Если ЮKassa не настроена (503 BILLING_DISABLED),
+  // fallback на legacy-«демо» кнопку — updateSettings меняет только локальный
+  // subscription, чтобы админ мог посмотреть, как выглядит оплаченный вид.
+  const activatePlan = async (planKey) => {
+    // pro/business/start — реальный checkout, остальное — легаси
+    if (['start', 'business', 'pro'].includes(planKey)) {
+      try {
+        const { apiCreateCheckout } = await import('../lib/api')
+        const r = await apiCreateCheckout(planKey, 1)
+        if (r?.ok && r.body?.confirmationUrl) {
+          window.location.assign(r.body.confirmationUrl)
+          return
+        }
+        if (r?.status === 503 || r?.body?.error?.code === 'BILLING_DISABLED') {
+          // eslint-disable-next-line no-alert
+          alert('Приём онлайн-платежей ещё не подключён на сервере. Ниже — демо-режим для проверки лимитов.')
+        } else if (r?.body?.error?.message) {
+          // eslint-disable-next-line no-alert
+          alert(r.body.error.message)
+          return
+        }
+      } catch { /* fallback ниже */ }
+    }
+    // Демо / fallback — работает до подключения ЮKassa.
     const now = new Date()
     const end = extendPlan(null, 1, now)
     updateSettings({
@@ -114,6 +147,8 @@ export default function Subscription() {
         autoRenew: true,
       },
     })
+    // Синкнем с сервером — вдруг super-admin выставил план вручную.
+    refreshSubscription?.()
   }
 
   return (

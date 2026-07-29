@@ -68,9 +68,11 @@ async function saveSession(res) {
 	}
 }
 
-export async function apiSignUp(email, password, name) {
+export async function apiSignUp(email, password, name, inviteToken) {
 	if (!hasApi) return { ok: false, error: 'API_URL не настроен' }
-	const res = await rawFetch('POST', '/v1/auth/register', { email: email.trim(), password, name })
+	const body = { email: email.trim(), password, name }
+	if (inviteToken) body.inviteToken = inviteToken
+	const res = await rawFetch('POST', '/v1/auth/register', body)
 	if (!res.ok) return { ok: false, error: humanAuthError(res) }
 	await saveSession(res.body)
 	emitAuth('SIGNED_IN')
@@ -204,6 +206,40 @@ export function apiReturn({ orderId, items, reason }, idemKey) {
 
 export function apiPinSet(employeeId, pin) { return apiFetch('POST', '/v1/employees/pin/set', { employeeId, pin }) }
 export function apiPinVerify(employeeId, pin) { return apiFetch('POST', '/v1/employees/pin/verify', { employeeId, pin }) }
+
+// ── Subscription / billing (B2) ─────────────────────────────────────────────
+// Сервер — источник истины по плану и trial-окну (раньше жило в localStorage
+// и обходилось очисткой). apiGetSubscription() возвращает { subscription,
+// effectivePlan, limits, trialDaysLeft, plans } — этой структуры хватает,
+// чтобы Subscription.jsx показал статус и CTA «Оплатить».
+export function apiGetSubscription() { return apiFetch('GET', '/v1/subscription') }
+export function apiCreateCheckout(plan, periodMonths = 1) {
+	return apiFetch('POST', '/v1/subscription/checkout', { plan, periodMonths })
+}
+
+// ── API-ключи и Webhooks (B4) ───────────────────────────────────────────────
+// D3 создавал их локально в settings.apiKeys/settings.webhooks. Теперь —
+// на сервере. Секрет ключа отдаётся клиенту РОВНО ОДИН РАЗ при создании,
+// потом только keyPreview.
+export function apiListApiKeys() { return apiFetch('GET', '/v1/api-keys') }
+export function apiCreateApiKey(name, scopes) { return apiFetch('POST', '/v1/api-keys', { name, scopes }) }
+export function apiRevokeApiKey(id) { return apiFetch('DELETE', `/v1/api-keys/${encodeURIComponent(id)}`) }
+export function apiListWebhooks() { return apiFetch('GET', '/v1/webhooks/endpoints') }
+export function apiCreateWebhook(payload) { return apiFetch('POST', '/v1/webhooks/endpoints', payload) }
+export function apiUpdateWebhook(id, payload) { return apiFetch('PUT', `/v1/webhooks/endpoints/${encodeURIComponent(id)}`, payload) }
+export function apiDeleteWebhook(id) { return apiFetch('DELETE', `/v1/webhooks/endpoints/${encodeURIComponent(id)}`) }
+
+// ── GDPR / 152-ФЗ (B5) ──────────────────────────────────────────────────────
+// Экспорт данных компании (JSON): POST → job pending → воркер собирает →
+// GET проверяет статус → downloadUrl (одноразовый токен, без auth).
+export function apiCreateExport() { return apiFetch('POST', '/v1/account/export') }
+export function apiGetExportStatus(jobId) { return apiFetch('GET', `/v1/account/export/${encodeURIComponent(jobId)}`) }
+// Удаление аккаунта: требует password_confirm (защита от угнанной сессии).
+// grace 30 дней — до этого можно отменить apiCancelDeleteAccount().
+export function apiDeleteAccount(passwordConfirm) {
+	return apiFetch('POST', '/v1/account/delete', { passwordConfirm })
+}
+export function apiCancelDeleteAccount() { return apiFetch('POST', '/v1/account/delete/cancel') }
 
 export function apiCustomerPayment(customerId, body, idemKey) {
 	return apiFetch('POST', `/v1/customers/${encodeURIComponent(customerId)}/payments`, body, withIdem(idemKey))

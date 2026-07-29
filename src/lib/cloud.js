@@ -222,7 +222,10 @@ export function remapSeedForCompany(state, companyId) {
 // ── Транспорт outbox: батч → apiSyncPush + при необходимости settings ────────
 // «Терминальные» ответы (STALE, TABLE_FORBIDDEN, TOMBSTONE_LOCKED, …)
 // считаем dropped — ретрай их не починит.
-const TERMINAL_CODES = new Set(['STALE', 'TABLE_FORBIDDEN', 'BAD_ID', 'TOMBSTONE_LOCKED', 'HAS_STOCK_MOVEMENT'])
+// SUBSCRIPTION_LIMIT_EXCEEDED — тоже терминал: клиенту надо апгрейд плана,
+// повторные попытки того же upsert только съедят батареи. UI ловит через
+// syncError и показывает UpgradeModal.
+const TERMINAL_CODES = new Set(['STALE', 'TABLE_FORBIDDEN', 'BAD_ID', 'TOMBSTONE_LOCKED', 'HAS_STOCK_MOVEMENT', 'SUBSCRIPTION_LIMIT_EXCEEDED'])
 
 async function sendBatch(items) {
 	const sent = []
@@ -522,8 +525,8 @@ export function onAuthChange(cb) {
 	return apiOnAuthChange((event, session) => cb(event, session))
 }
 export async function cloudSignIn(email, password) { return apiSignIn(email, password) }
-export async function cloudSignUp(email, password, name) {
-	const r = await apiSignUp(email, password, name)
+export async function cloudSignUp(email, password, name, inviteToken) {
+	const r = await apiSignUp(email, password, name, inviteToken)
 	if (!r.ok) return r
 	// Совместимость: старая версия могла вернуть needConfirm — теперь сессия сразу.
 	return { ok: true, user: r.user, name }
