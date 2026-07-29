@@ -81,8 +81,14 @@ export default function Analytics() {
     const revenue = orders
       .filter((o) => o.status !== 'cancelled')
       .reduce((a, o) => a + o.total, 0)
+    // F1-9: раньше при пустом каталоге или p.price=0 (услуги без цены)
+    // деление давало NaN/Infinity → на плитке рисовалось «NaN%».
+    // Фильтруем позиции с положительной ценой и защищаемся от length=0.
+    const priced = products.filter((p) => Number(p.price) > 0)
     const margin =
-      products.reduce((a, p) => a + (p.price - p.cost) / p.price, 0) / products.length
+      priced.length > 0
+        ? priced.reduce((a, p) => a + (p.price - p.cost) / p.price, 0) / priced.length
+        : 0
     const stockValue = products.reduce((a, p) => a + p.stock * p.cost, 0)
 
     return { pie, top, forecast, revenue, margin, stockValue }

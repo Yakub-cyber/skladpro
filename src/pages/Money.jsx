@@ -100,6 +100,11 @@ export default function Money() {
   const visibleTx = useMemo(() => {
     const s = q.trim().toLowerCase()
     return moneyTx.filter((t) => {
+      // F1-6: селект «Дата» раньше фильтровал только сводку. Лента
+      // показывала всё — юзер выбирал «Сегодня», сводка сжималась,
+      // а лента оставалась «Всё время». Теперь оба используют range.
+      if (range.from && t.at < range.from) return false
+      if (range.to && t.at > range.to) return false
       if (filterAcc !== 'all' && t.accountId !== filterAcc && t.toAccountId !== filterAcc) return false
       if (txStatus !== 'all' && (t.status || 'posted') !== txStatus) return false
       if (txType !== 'all' && t.type !== txType) return false
@@ -112,7 +117,7 @@ export default function Money() {
       }
       return true
     })
-  }, [moneyTx, filterAcc, txStatus, txType, partyId, purposeFilter, empId, q])
+  }, [moneyTx, range, filterAcc, txStatus, txType, partyId, purposeFilter, empId, q])
 
   // Все встреченные назначения (для селекта «Категория»). Мержим in/out/transfer
   // из справочника + фактически использованные ключи из moneyTx (на случай

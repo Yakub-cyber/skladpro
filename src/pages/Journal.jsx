@@ -249,10 +249,17 @@ function shiftMetrics(shift, orders) {
   const os = (orders || []).filter((o) => o.shiftId === shift.id && o.status !== 'cancelled')
   let cash = 0, card = 0, ret = 0
   for (const o of os) {
-    const p = o.payment || {}
-    cash += Number(p.cashPaid) || 0
-    card += Number(p.cardPaid) || 0
-    if (o.type === 'return') ret += Number(o.total) || 0
+    // F1-5: раньше колонка «Возвраты» всегда была 0 — метрика смотрела
+    // o.type='return', но refundOrder создаёт order с kind='refund'.
+    // Для refund-order суммы cash/card в payment нулевые (там deliver-only
+    // маркер), поэтому revenue не задваивается — просто прибавляем total.
+    if (o.kind === 'refund') {
+      ret += Number(o.total) || 0
+    } else {
+      const p = o.payment || {}
+      cash += Number(p.cashPaid) || 0
+      card += Number(p.cardPaid) || 0
+    }
   }
   return { cash, card, ret }
 }

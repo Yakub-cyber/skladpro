@@ -49,6 +49,8 @@ function classify(row) {
   if (['sale', 'writeoff', 'supplier_return', 'out'].includes(t)) return 'goods-out'
   if (t === 'transfer') return 'goods-transfer'
   if (t === 'inventory') return 'goods-inv'
+  // F1-4: refund-order — товар возвращается покупателем НА склад → goods-in.
+  if (row.kind === 'order' && row.raw.kind === 'refund') return 'goods-in'
   if (row.kind === 'order') return 'goods-out' // заказ клиенту = будущий расход
   return 'other'
 }
@@ -118,7 +120,10 @@ function buildTimeline(state) {
       from,
       to,
       status: d.status,
-      href: '#/operations',
+      // F1-13: раньше все non-order строки Movements вели на общий
+      // список без id → пользователь бросал ленту и не находил
+      // конкретный документ. Теперь href содержит id/no.
+      href: `#/operations?docId=${d.id}`,
       raw: d,
     })
   }
@@ -127,17 +132,23 @@ function buildTimeline(state) {
     if (o.status === 'cancelled') continue
     const p = o.payment || {}
     const paid = (Number(p.cashPaid) || 0) + (Number(p.cardPaid) || 0)
+    const isRefund = o.kind === 'refund'
     rows.push({
       kind: 'order',
       at: o.createdAt,
       no: o.no,
-      title: `Продажа · ${statusInfo(o.status).label}`,
+      // F1-4: refund-order — свой заголовок, чтобы не путать с продажей.
+      // Для refund «from» и «to» меняются местами: товар пришёл к нам,
+      // деньги ушли клиенту.
+      title: isRefund
+        ? `Возврат по чеку`
+        : `Продажа · ${statusInfo(o.status).label}`,
       by: o.by,
       qty: (o.items || []).reduce((a, x) => a + (Number(x.qty) || 0), 0),
       sum: o.total,
       paid: paid || (['delivered', 'shipped'].includes(o.status) ? o.total : 0),
-      from: company,
-      to: o.customerName || custName(o.customerId) || 'Розница',
+      from: isRefund ? o.customerName || custName(o.customerId) || 'Клиент' : company,
+      to: isRefund ? company : o.customerName || custName(o.customerId) || 'Розница',
       status: o.status,
       href: `#/orders?id=${o.id}`,
       raw: o,
@@ -157,7 +168,7 @@ function buildTimeline(state) {
       from: inv.kind === 'in' ? inv.party : company,
       to: inv.kind === 'in' ? company : inv.party,
       status: 'posted',
-      href: '#/invoices',
+      href: `#/invoices?id=${inv.id}`,
       raw: inv,
     })
   }
@@ -188,7 +199,7 @@ function buildTimeline(state) {
       from,
       to,
       status: t.status || 'posted',
-      href: '#/money',
+      href: `#/money?txId=${t.id}`,
       raw: t,
     })
   }

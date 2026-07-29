@@ -209,7 +209,11 @@ export default function Subscription() {
       >
         <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3 items-stretch">
           {PLANS.map((p) => {
-            const isCur = p.key === effective
+            // F1-8: во время триала effectivePlan='business' — раньше
+            // на карточке «Бизнес» рисовался бейдж «Ваш план» и убиралась
+            // кнопка «Активировать». Пользователь думал что уже платит.
+            // Теперь isCur считает только по оплаченному плану.
+            const isCur = p.key === effective && sub?.plan !== 'trial'
             return (
               <div
                 key={p.key}

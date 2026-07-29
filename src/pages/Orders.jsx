@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import {
   Plus,
@@ -300,7 +300,9 @@ function OrderDetail({ order }) {
   }, [order])
 
   const highlightCells = order.items.map((it) => it.cell)
-  const trackUrl = `${window.location.origin}/track/${order.id}`
+  // F1-2: HashRouter требует /#/ — раньше клиенту улетала dead-ссылка
+  // на root site. Учитываем и base path (GH Pages /skladpro/).
+  const trackUrl = `${window.location.origin}${window.location.pathname}#/track/${order.id}`
   const copyLink = () => {
     navigator.clipboard?.writeText(trackUrl)
     setCopied(true)
@@ -585,7 +587,7 @@ function OrderDetail({ order }) {
       {printOrder && (
         <DocPreviewModal
           doc={printOrder}
-          category="sale"
+          category={printOrder.kind === 'refund' ? 'refund' : 'sale'}
           onClose={() => setPrintOrder(null)}
         />
       )}
@@ -620,16 +622,22 @@ function RefundModal({ order, onClose }) {
     return acc + Number(it.qty) * Number(oi?.price || 0)
   }, 0)
 
+  // F1-12: guard от двойного клика — refundOrder создаёт refund-order
+  // + moneyTx. Двойной submit = двойной возврат денег и склад в минус.
+  const submittedRef = useRef(false)
   const submit = () => {
     setErr('')
+    if (submittedRef.current) return
     const filtered = items.filter((it) => it.qty > 0)
     if (filtered.length === 0) {
       setErr('Укажите количество хотя бы одной позиции')
       return
     }
+    submittedRef.current = true
     const r = refundOrder(order.id, { items: filtered, reason })
     if (r && r.ok === false) {
       setErr(r.error)
+      submittedRef.current = false // разрешаем retry после исправления
       return
     }
     onClose()

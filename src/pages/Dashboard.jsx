@@ -599,7 +599,7 @@ function StockValuationSection({ products }) {
               </div>
             </div>
             <Link
-              to="/products"
+              to="/products?cost=0"
               className="text-[12px] px-3 h-8 rounded-lg bg-surface hover:bg-surface-2 border border-line grid place-items-center whitespace-nowrap"
             >
               Показать

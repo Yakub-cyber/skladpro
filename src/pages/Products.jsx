@@ -128,6 +128,10 @@ export default function Products() {
   // Инициализация фильтров: подхватываем `stockStatus` из URL (кликом
   // с Dashboard «Ниже минимума» приходим сюда с ?stockStatus=low и
   // сразу видим товары с низким остатком, а не общий каталог).
+  // F1-11: `?cost=0` — переход с Dashboard-виджета «Оценка склада» по
+  // «cost=0 у N позиций». Спец-режим: показывает только товары с
+  // cost=0 и stock>0 (та же выборка что в виджете).
+  const showCostZero = params.get('cost') === '0'
   const [filters, setFilters] = useState(() => {
     const stockStatus = params.get('stockStatus')
     if (['low', 'out', 'in'].includes(stockStatus)) {
@@ -196,6 +200,12 @@ export default function Products() {
   const list = useMemo(() => {
     const s = q.trim().toLowerCase()
     return products.filter((p) => {
+      // F1-11: если пришли по ?cost=0 — показываем только позиции с
+      // нулевой себестоимостью и положительным остатком (та же выборка
+      // что виджет «Оценка склада» на Dashboard).
+      if (showCostZero) {
+        if (!(Number(p.stock) > 0 && !(Number(p.cost) > 0))) return false
+      }
       // Фильтр по типу позиции (Товар / Услуга / Комплект).
       // Дефолтное значение p.type — 'product', учитываем legacy без type.
       const t = p.type || 'product'
@@ -223,7 +233,7 @@ export default function Products() {
       if (filters.marked === 'no' && p.marked) return false
       return true
     })
-  }, [products, q, cat, filters, typeFilter])
+  }, [products, q, cat, filters, typeFilter, showCostZero])
 
   // Пагинация: на демо-30 SKU незаметно, на реальном оптовом каталоге
   // (тысячи позиций) полный рендер таблицы тормозит. Показываем окно
@@ -488,7 +498,21 @@ export default function Products() {
                   requireInput: chosen.length >= 5 ? 'УДАЛИТЬ' : undefined,
                 })
                 if (ok) {
-                  chosen.forEach((p) => removeProduct(p.id))
+                  // F1-1: removeProduct возвращает {ok:false} если товар
+                  // используется в открытых заказах/документах/PO. Раньше
+                  // результат отбрасывался — UI показывал «удалено», а
+                  // товар оставался. Теперь собираем skipped и алертим.
+                  const skipped = []
+                  chosen.forEach((p) => {
+                    const r = removeProduct(p.id)
+                    if (r && r.ok === false) skipped.push({ name: p.name, error: r.error })
+                  })
+                  if (skipped.length > 0) {
+                    alert(
+                      `Не удалены (${skipped.length} из ${chosen.length}):\n\n` +
+                        skipped.map((s) => `• ${s.name}: ${s.error}`).join('\n'),
+                    )
+                  }
                   clearSelection()
                 }
               }}
@@ -1238,7 +1262,13 @@ function ProductModal({ product, onClose }) {
       okLabel: 'Удалить',
     })
     if (ok) {
-      removeProduct(product.id)
+      // F1-1: обрабатываем {ok:false} — если товар в открытом заказе,
+      // модалка остаётся открытой и показывает причину.
+      const r = removeProduct(product.id)
+      if (r && r.ok === false) {
+        alert(r.error)
+        return
+      }
       onClose()
     }
   }

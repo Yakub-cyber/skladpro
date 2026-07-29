@@ -20,6 +20,7 @@
 // ──────────────────────────────────────────────────────────────────────────
 import { PRINT_CSS } from './print'
 import * as sale from './templates/sale'
+import * as refund from './templates/refund'
 import * as purchase from './templates/purchase'
 import * as purchaseOrder from './templates/purchaseOrder'
 import * as cash from './templates/cash'
@@ -110,6 +111,12 @@ export const TEMPLATES = {
     { key: 'upd', label: 'УПД (счёт-фактура)', render: sale.upd },
     { key: 'cheque', label: 'Товарный чек', render: sale.cheque },
     { key: 'waybill', label: 'Ярлык доставки', render: sale.waybill },
+  ],
+  // F1-3: возврат по чеку — свой шаблон «Возврат по чеку №…»
+  // с ссылкой на оригинал (doc.origOrderId) и причиной. Раньше refund
+  // печатался как обычный товарный чек с плюсовыми суммами → путаница.
+  refund: [
+    { key: 'cheque', label: 'Чек возврата', render: refund.refundCheque },
   ],
   purchase: [
     { key: 'receiveAct', label: 'Приёмный акт', render: purchase.receiveAct },

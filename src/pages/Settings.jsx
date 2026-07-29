@@ -61,8 +61,27 @@ export default function Settings() {
   }
 
   const exportData = () => {
-    const data = localStorage.getItem('sklad.db') || '{}'
-    const blob = new Blob([data], { type: 'application/json' })
+    // F1-7: маскируем секреты перед выгрузкой. Раньше `webhooks[].secret`
+    // (whsec_…), `aiKey` (ProxyAPI) и полные `apiKeys` уходили в файл —
+    // экспорт превращался в утечку. `apiKeys` теперь без key-preview
+    // хранят только keyPreview, поэтому уже безопасны, а вот webhook-secret
+    // и aiKey — заменяем на маркер `***`.
+    let payload = localStorage.getItem('sklad.db') || '{}'
+    try {
+      const parsed = JSON.parse(payload)
+      if (parsed?.state?.settings) {
+        const s = parsed.state.settings
+        if (s.aiKey) s.aiKey = '***'
+        if (Array.isArray(s.webhooks)) {
+          s.webhooks = s.webhooks.map((w) => ({ ...w, secret: '***' }))
+        }
+      }
+      payload = JSON.stringify(parsed, null, 2)
+    } catch {
+      // если parse не удался — отдаём как есть, лучше файл с секретом,
+      // чем потерянный бэкап (кейс edge)
+    }
+    const blob = new Blob([payload], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
@@ -473,6 +492,7 @@ function IntegrationsSection() {
   const [freshKey, setFreshKey] = useState(null) // {label, key} — показываем 1 раз
   const [copied, setCopied] = useState(false)
   const [whUrl, setWhUrl] = useState('')
+  const [whErr, setWhErr] = useState('')
 
   const keys = settings.apiKeys || []
   const webhooks = settings.webhooks || []
@@ -491,8 +511,18 @@ function IntegrationsSection() {
   }
 
   const createWebhook = () => {
+    setWhErr('')
     const url = whUrl.trim()
-    if (!/^https?:\/\//.test(url)) return
+    // F1-10: раньше при неверном URL просто return — пользователь не
+    // понимал что не так. Теперь inline-ошибка.
+    if (!url) {
+      setWhErr('Введите URL')
+      return
+    }
+    if (!/^https?:\/\//.test(url)) {
+      setWhErr('URL должен начинаться с http:// или https://')
+      return
+    }
     addWebhook(url, ['order.created', 'order.delivered', 'product.stock_low'])
     setWhUrl('')
   }
@@ -578,18 +608,21 @@ function IntegrationsSection() {
             <Field label="URL приёмника" className="min-w-[280px] flex-1">
               <Input
                 value={whUrl}
-                onChange={(e) => setWhUrl(e.target.value)}
+                onChange={(e) => {
+                  setWhUrl(e.target.value)
+                  if (whErr) setWhErr('')
+                }}
                 placeholder="https://example.com/hook"
               />
             </Field>
             <Button
               icon={Plus}
               onClick={createWebhook}
-              disabled={!/^https?:\/\//.test(whUrl.trim())}
             >
               Добавить
             </Button>
           </div>
+          {whErr && <div className="text-[13px] text-bad mb-2">{whErr}</div>}
           {webhooks.length === 0 ? (
             <div className="text-[13px] text-muted italic">
               Пока нет webhook-endpoints. Здесь появятся URL, куда мы будем

@@ -1553,8 +1553,17 @@ function PaymentModal({ open, onClose, total, onConfirm }) {
     (method === 'cash' && cashN >= total) ||
     (method === 'mixed' && mixedTotal >= total && cashN > 0 && cardN > 0)
 
+  // F1-12: idempotence-guard. Двойной клик или Enter-hammer раньше
+  // приводил к двум вызовам onConfirm → два заказа → два moneyTx →
+  // касса удвоена. Ref (не state), чтобы гарантированно не пропустить
+  // второй synchronous-клик.
+  const submittedRef = useRef(false)
+  useEffect(() => {
+    if (open) submittedRef.current = false
+  }, [open])
   const confirm = () => {
-    if (!canConfirm) return
+    if (!canConfirm || submittedRef.current) return
+    submittedRef.current = true
     onConfirm({
       method,
       cashPaid: method === 'cash' ? cashN : method === 'mixed' ? cashN : 0,
