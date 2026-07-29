@@ -132,27 +132,10 @@ export function persistMigrate(state, version) {
     }))
   }
 
-  if (version < 11) {
-    // Общепит: залы (halls) и столы (tables). Для существующих торговых
-    // точек эти сущности не нужны — просто досыпаем пустые массивы, чтобы
-    // страница «Столы» не падала при первом открытии.
-    state.halls = state.halls || []
-    state.tables = state.tables || []
-    // Роль kitchen — для повара (см. constants.js). Существующим сотрудникам
-    // с ролью, которая перестала существовать, ставим stock как безопасный
-    // fallback.
-    state.employees = (state.employees || []).map((e) => e)
-  }
-
-  if (version < 12) {
-    // Модификаторы блюд: у товара новое поле `modifierGroups: []`.
-    // Если пусто — товар работает как обычно; если непустой массив —
-    // касса открывает модалку выбора модификаторов при добавлении.
-    state.products = (state.products || []).map((p) => ({
-      ...p,
-      modifierGroups: p.modifierGroups || [],
-    }))
-  }
+  // v11/v12 (общепит: halls/tables/modifierGroups) — модуль удалён
+  // ещё в REVERT-1/2, миграции сохранены как no-op, чтобы номера
+  // не съезжали. Фактическая очистка полей у существующих БД —
+  // в v17 ниже.
 
   if (version < 13) {
     // Деньги: кассы/счета и денежные транзакции. Для существующих БД
@@ -192,6 +175,18 @@ export function persistMigrate(state, version) {
       ...a,
       cashierIds: a.cashierIds || [],
     }))
+  }
+
+  if (version < 17) {
+    // Уборка общепит-наследия: модуль удалён в REVERT-1/2, миграции
+    // v11/v12 продолжали досыпать пустые поля — теперь чистим их
+    // окончательно. Никто эти поля больше не читает.
+    delete state.halls
+    delete state.tables
+    state.products = (state.products || []).map((p) => {
+      const { modifierGroups, ...rest } = p
+      return rest
+    })
   }
 
   return state

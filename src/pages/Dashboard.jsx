@@ -117,10 +117,7 @@ function DashboardManager() {
   )
   const chart = useMemo(() => buildSeries(period, orders, costMap), [period, orders, costMap])
 
-  const insights = useMemo(
-    () => analyticsInsights({ products, orders }),
-    [products, orders],
-  )
+  const insights = useMemo(() => analyticsInsights({ products, orders }), [products, orders])
   const stockValue = products.reduce((a, p) => a + p.stock * p.cost, 0)
   const debt = customers.reduce((a, c) => a + (c.balance || 0), 0)
 
@@ -251,7 +248,10 @@ function DashboardManager() {
                   width={44}
                   tickFormatter={(v) => (v >= 1000 ? `${Math.round(v / 1000)}к` : v)}
                 />
-                <Tooltip content={<ChartTip activeKeys={activeMetrics} />} cursor={{ stroke: 'var(--brand)', strokeOpacity: 0.35 }} />
+                <Tooltip
+                  content={<ChartTip activeKeys={activeMetrics} />}
+                  cursor={{ stroke: 'var(--brand)', strokeOpacity: 0.35 }}
+                />
                 {activeMetrics.has('revenue') && (
                   <Area
                     yAxisId="left"
@@ -328,9 +328,7 @@ function DashboardManager() {
                   </div>
                   <div className="min-w-0">
                     <p className="text-[13px] font-medium leading-snug">{ins.title}</p>
-                    <p className="text-[12px] text-muted mt-0.5 leading-relaxed">
-                      {ins.text}
-                    </p>
+                    <p className="text-[12px] text-muted mt-0.5 leading-relaxed">{ins.text}</p>
                     {ins.action && (
                       <Link
                         to={ins.action.to}
@@ -367,9 +365,7 @@ function DashboardManager() {
                 to={`/orders?id=${o.id}`}
                 className="flex items-center gap-3 py-2.5 px-1 hover:bg-surface-2 rounded-lg transition"
               >
-                <div className="font-medium text-sm w-28 shrink-0 tabular-nums">
-                  {o.no}
-                </div>
+                <div className="font-medium text-sm w-28 shrink-0 tabular-nums">{o.no}</div>
                 <div className="flex-1 min-w-0">
                   <div className="text-sm truncate">{o.customerName}</div>
                   <div className="text-[12px] text-muted">
@@ -432,7 +428,10 @@ function ChartTip({ active, payload, label, activeKeys }) {
           return (
             <div key={mm.key} className="flex items-center justify-between gap-3 text-[12px]">
               <span className="flex items-center gap-1.5">
-                <span className="inline-block h-2 w-2 rounded-full" style={{ background: mm.color }} />
+                <span
+                  className="inline-block h-2 w-2 rounded-full"
+                  style={{ background: mm.color }}
+                />
                 {mm.label}
               </span>
               <span className="font-semibold tabular-nums">{money(p.value)}</span>
@@ -461,10 +460,7 @@ function buildSeries(period, orders, costMap = {}) {
   // Себестоимость строки заказа = qty × current cost из costMap.
   // Прагматично; для точной FIFO-COGS нужно фиксировать item.cost при отгрузке.
   const orderCogs = (o) =>
-    (o.items || []).reduce(
-      (s, it) => s + (Number(it.qty) || 0) * (costMap[it.productId] || 0),
-      0,
-    )
+    (o.items || []).reduce((s, it) => s + (Number(it.qty) || 0) * (costMap[it.productId] || 0), 0)
 
   const aggIn = (from, to) => {
     let revenue = 0
@@ -563,9 +559,7 @@ function StockValuationSection({ products }) {
     // «По магазину» — из seed по умолчанию у всех wh1, поэтому если есть
     // wh2 (магазин) — покажем и его, иначе просто повторим общий.
     const shop = warehouses[1] || warehouses[0] || null
-    const inShop = shop
-      ? goods.filter((p) => p.warehouseId === shop.id)
-      : goods
+    const inShop = shop ? goods.filter((p) => p.warehouseId === shop.id) : goods
     const perShop = shop
       ? {
           name: shop.name,
@@ -600,7 +594,8 @@ function StockValuationSection({ products }) {
             <div className="flex-1 min-w-0">
               <div className="font-medium text-[13px] text-warn">Внимание</div>
               <div className="text-[13px]">
-                у {warnCost0} {plural(warnCost0, 'позиции', 'позиций', 'позиций')} себестоимость равна 0 ₽
+                у {warnCost0} {plural(warnCost0, 'позиции', 'позиций', 'позиций')} себестоимость
+                равна 0 ₽
               </div>
             </div>
             <Link

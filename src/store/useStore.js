@@ -124,7 +124,6 @@ export const useStore = create(
               marked: false,
               codes: [],
               components: [],
-              modifierGroups: [],
               prices,
               ...p,
             },
@@ -166,100 +165,13 @@ export const useStore = create(
         })),
 
       // ── Складские операции (с журналом движений) ─────────────
-      // Приёмка со сканера/вручную
-      receiveOp: (items, note) => {
-        set((s) => {
-          const moves = items.map((it) => ({
-            id: uid('mv'),
-            type: 'in',
-            productId: it.productId,
-            name: it.name,
-            qty: it.qty,
-            delta: it.qty,
-            reason: note || 'Приёмка',
-            by: s.authUserId,
-            at: new Date().toISOString(),
-          }))
-          return {
-            products: s.products.map((p) => {
-              const it = items.find((x) => x.productId === p.id)
-              return it ? { ...p, stock: p.stock + it.qty } : p
-            }),
-            movements: [...moves, ...s.movements],
-          }
-        })
-        const total = items.reduce((a, x) => a + x.qty, 0)
-        get().logAction(`Приёмка: ${items.length} поз., ${total} ед.`, {
-          section: 'Склад',
-          type: 'in',
-        })
-      },
-      // Списание (брак/недостача/порча). Возвращает { ok, error? } — UI
-      // должен показать причину отказа. Без проверки списание молча уходило
-      // в ноль (Math.max), скрывая от пользователя расхождение с фактом.
-      writeOff: (productId, qty, reason) => {
-        const p = get().products.find((x) => x.id === productId)
-        if (!p) return { ok: false, error: 'Товар не найден' }
-        const n = Number(qty) || 0
-        if (n <= 0) return { ok: false, error: 'Укажите количество' }
-        if (n > p.stock)
-          return {
-            ok: false,
-            error: `Списание превышает остаток: ${p.stock} ${p.unit || 'шт'}`,
-          }
-        set((s) => ({
-          products: s.products.map((x) =>
-            x.id === productId ? { ...x, stock: x.stock - n } : x,
-          ),
-          movements: [
-            {
-              id: uid('mv'),
-              type: 'writeoff',
-              productId,
-              name: p.name,
-              qty: n,
-              delta: -n,
-              reason: reason || 'Списание',
-              by: s.authUserId,
-              at: new Date().toISOString(),
-            },
-            ...s.movements,
-          ],
-        }))
-        get().logAction(`Списание «${p.name}» −${n} ${p.unit} (${reason || 'Списание'})`, {
-          section: 'Склад',
-          type: 'writeoff',
-        })
-        return { ok: true }
-      },
-      // Возврат на склад (от клиента)
-      returnStock: (productId, qty, reason) => {
-        const p = get().products.find((x) => x.id === productId)
-        if (!p) return
-        set((s) => ({
-          products: s.products.map((x) =>
-            x.id === productId ? { ...x, stock: x.stock + qty } : x,
-          ),
-          movements: [
-            {
-              id: uid('mv'),
-              type: 'return',
-              productId,
-              name: p.name,
-              qty,
-              delta: qty,
-              reason: reason || 'Возврат от клиента',
-              by: s.authUserId,
-              at: new Date().toISOString(),
-            },
-            ...s.movements,
-          ],
-        }))
-        get().logAction(`Возврат «${p.name}» +${qty} ${p.unit}`, {
-          section: 'Склад',
-          type: 'return',
-        })
-      },
+      // Legacy actions receiveOp/writeOff/returnStock/supplierReturn
+      // удалены — UI везде проводит движения через addDocument({type})
+      // → applyDocToState (lib/posting.js), включая FIFO по партиям.
+      // Инвентаризация — единственная operational-функция, оставшаяся
+      // самостоятельной (движок для неё в posting.js есть, но раритетный
+      // фолбэк без партий тоже сохранён).
+
       // Инвентаризация: counts = { productId: фактический остаток }
       applyInventory: (counts) => {
         let changed = 0
@@ -291,43 +203,6 @@ export const useStore = create(
           section: 'Склад',
           type: 'inventory',
         })
-      },
-      // Возврат поставщику (закупленный товар уходит со склада).
-      // Как и writeOff — возвращает { ok, error? } и блокирует превышение.
-      supplierReturn: (productId, qty, reason) => {
-        const p = get().products.find((x) => x.id === productId)
-        if (!p) return { ok: false, error: 'Товар не найден' }
-        const n = Number(qty) || 0
-        if (n <= 0) return { ok: false, error: 'Укажите количество' }
-        if (n > p.stock)
-          return {
-            ok: false,
-            error: `Возврат превышает остаток: ${p.stock} ${p.unit || 'шт'}`,
-          }
-        set((s) => ({
-          products: s.products.map((x) =>
-            x.id === productId ? { ...x, stock: x.stock - n } : x,
-          ),
-          movements: [
-            {
-              id: uid('mv'),
-              type: 'supplier_return',
-              productId,
-              name: p.name,
-              qty: n,
-              delta: -n,
-              reason: reason || 'Возврат поставщику',
-              by: s.authUserId,
-              at: new Date().toISOString(),
-            },
-            ...s.movements,
-          ],
-        }))
-        get().logAction(`Возврат поставщику «${p.name}» −${n} ${p.unit}`, {
-          section: 'Склад',
-          type: 'supplier_return',
-        })
-        return { ok: true }
       },
       // Перемещение между складами/ячейками (общий остаток не меняется)
       transferStock: (productId, toWarehouseId, toCell, qty) => {
@@ -1153,7 +1028,7 @@ export const useStore = create(
     }),
     {
       name: 'sklad.db',
-      version: 16,
+      version: 17,
       partialize: persistPartialize,
       merge: persistMerge,
       migrate: persistMigrate,

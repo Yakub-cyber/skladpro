@@ -6,7 +6,6 @@ import {
   TrendingDown,
   Undo2,
   ClipboardCheck,
-  History,
   Search,
   Check,
   ShoppingCart,
@@ -63,7 +62,6 @@ export const TABS = [
   { key: 'transfer', label: 'Перемещение', icon: ArrowLeftRight },
   { key: 'registry', label: 'Реестр', icon: FileText },
   { key: 'marking', label: 'Маркировка', icon: ShieldCheck },
-  { key: 'journal', label: 'Журнал', icon: History },
 ]
 
 // Поиск товара по названию/артикулу — простой dropdown-suggest.

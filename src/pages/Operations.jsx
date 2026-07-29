@@ -21,7 +21,6 @@ import InventoryTab from './operations/InventoryTab'
 import StockInTab from './operations/StockInTab'
 import DocumentsTab from './operations/DocumentsTab'
 import MarkingTab from './operations/MarkingTab'
-import JournalTab from './operations/JournalTab'
 
 const TAB_COMPONENT = {
   sale: SaleTab,
@@ -34,7 +33,6 @@ const TAB_COMPONENT = {
   stockin: StockInTab,
   registry: DocumentsTab,
   marking: MarkingTab,
-  journal: JournalTab,
 }
 
 // TABS сохраняем как источник иконок/лейблов, а порядок и группировку
@@ -57,7 +55,7 @@ const CATEGORIES = [
     key: 'util',
     label: 'Служебное',
     hint: 'Перемещение, инвентаризация, реестр и журналы',
-    tabs: ['transfer', 'inventory', 'registry', 'marking', 'journal'],
+    tabs: ['transfer', 'inventory', 'registry', 'marking'],
   },
 ]
 

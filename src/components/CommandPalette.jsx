@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Search, Package, ClipboardList, Users, CornerDownLeft } from 'lucide-react'
 import { useStore } from '../store/useStore'
-import { NAV } from './Layout'
+import { NAV_ITEMS } from './Layout'
 import { cx } from './ui'
 import { money } from '../lib/format'
 
@@ -36,8 +36,11 @@ export default function CommandPalette({ open, setOpen }) {
   const results = useMemo(() => {
     const s = q.trim().toLowerCase()
     const out = []
-    NAV.filter((n) => !s || n.label.toLowerCase().includes(s))
-      .slice(0, s ? 3 : NAV.length)
+    // NAV_ITEMS — плоский список пунктов (без групп). Раньше здесь
+    // итерировали по NAV верхнего уровня, где группы не имеют `to`,
+    // и клик по такой строке уносил в nav(undefined) → корень.
+    NAV_ITEMS.filter((n) => n.to && (!s || n.label.toLowerCase().includes(s)))
+      .slice(0, s ? 4 : NAV_ITEMS.length)
       .forEach((n) =>
         out.push({ type: 'Разделы', label: n.label, to: n.to, icon: n.icon }),
       )
