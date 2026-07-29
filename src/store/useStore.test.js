@@ -1056,6 +1056,43 @@ describe('B6: updateOrder пересчитывает total при смене ite
   })
 })
 
+describe('D3: API-ключи и webhook-endpoints', () => {
+  it('addApiKey возвращает полный ключ 1 раз, а в state — только preview', () => {
+    const before = state().settings.apiKeys?.length || 0
+    const r = state().addApiKey('1С обмен', ['read', 'write'])
+    expect(r.key).toMatch(/^sp_[a-f0-9]{48}$/)
+    expect(state().settings.apiKeys.length).toBe(before + 1)
+    const saved = state().settings.apiKeys[state().settings.apiKeys.length - 1]
+    expect(saved.keyPreview).toBe(r.keyPreview)
+    // Полный ключ в state НЕ хранится
+    expect(saved.key).toBeUndefined()
+    expect(saved.label).toBe('1С обмен')
+    expect(saved.scopes).toEqual(['read', 'write'])
+  })
+
+  it('removeApiKey удаляет ключ', () => {
+    const r = state().addApiKey('test')
+    const cntAfterAdd = state().settings.apiKeys.length
+    state().removeApiKey(r.id)
+    expect(state().settings.apiKeys.length).toBe(cntAfterAdd - 1)
+  })
+
+  it('addWebhook сохраняет URL и secret вида whsec_…', () => {
+    state().addWebhook('https://example.com/hook', ['order.created'])
+    const wh = state().settings.webhooks[state().settings.webhooks.length - 1]
+    expect(wh.url).toBe('https://example.com/hook')
+    expect(wh.secret).toMatch(/^whsec_[a-f0-9]{32}$/)
+    expect(wh.active).toBe(true)
+  })
+
+  it('toggleWebhook переключает active', () => {
+    const id = state().addWebhook('https://example.com/hook2')
+    expect(state().settings.webhooks.find((w) => w.id === id).active).toBe(true)
+    state().toggleWebhook(id)
+    expect(state().settings.webhooks.find((w) => w.id === id).active).toBe(false)
+  })
+})
+
 // Sanity check: seed стабилен от теста к тесту
 describe('seed / resetStore — база чиста', () => {
   it('после resetStore products и orders совпадают с seed', () => {

@@ -568,6 +568,34 @@ function Sidebar({ open, onClose }) {
   )
 }
 
+// D2: индикатор офлайн-режима. Появляется, когда navigator.onLine=false.
+// Все изменения продолжают писаться в localStorage и уходят в очередь
+// outbox (lib/outbox.js) — уйдут при возврате online. Иконка сообщает
+// пользователю почему кнопки «работают» без сетевого ответа.
+function OfflineBadge() {
+  const [online, setOnline] = useState(() => (typeof navigator !== 'undefined' ? navigator.onLine : true))
+  useEffect(() => {
+    const on = () => setOnline(true)
+    const off = () => setOnline(false)
+    window.addEventListener('online', on)
+    window.addEventListener('offline', off)
+    return () => {
+      window.removeEventListener('online', on)
+      window.removeEventListener('offline', off)
+    }
+  }, [])
+  if (online) return null
+  return (
+    <span
+      title="Офлайн-режим — изменения сохраняются локально и уйдут в облако при подключении"
+      className="h-10 px-2.5 rounded-xl bg-warn-soft text-warn text-[12px] font-semibold inline-flex items-center gap-1.5 shrink-0"
+    >
+      <CloudOff size={14} />
+      <span className="hidden sm:inline">Офлайн</span>
+    </span>
+  )
+}
+
 // Индикатор облачной синхронизации: зелёное облако — всё отправлено,
 // стрелка с числом — ожидают отправки, перечёркнутое — ошибка (клик = повторить).
 function SyncBadge() {
@@ -722,6 +750,7 @@ function Topbar({ onMenu, onSearch }) {
       </button>
 
       <CashierButton />
+      <OfflineBadge />
       <SyncBadge />
       <button
         onClick={toggleTheme}

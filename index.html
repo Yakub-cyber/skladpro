@@ -2,9 +2,17 @@
 <html lang="ru">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>СкладПро — умная система для оптового склада</title>
+    <!-- PWA: manifest+theme+iOS-совместимые метатеги. Регистрация SW —
+         в src/main.jsx (после mount, чтобы не тормозить первую отрисовку). -->
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <meta name="theme-color" content="#5b4ef0" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="СкладПро" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <link rel="apple-touch-icon" href="./favicon.svg" />
     <!--
       Яндекс.Метрика.
       ID подставляется Vite'ом из VITE_YM_ID (env). Если переменной нет, в HTML

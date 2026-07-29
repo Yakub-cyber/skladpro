@@ -25,3 +25,14 @@ ReactDOM.createRoot(document.getElementById('root')).render(
     </ErrorBoundary>
   </React.StrictMode>,
 )
+
+// D2: регистрация PWA service worker. В dev браузер сам подставит /sw.js,
+// на GH Pages сработает подпуть /skladpro/. Регистрируем после mount, чтобы
+// не тормозить первый рендер. В development SW нам мешает (кэширует
+// изменения) — регистрируем только в production build.
+if ('serviceWorker' in navigator && import.meta.env.PROD) {
+  window.addEventListener('load', () => {
+    const base = import.meta.env.BASE_URL || '/'
+    navigator.serviceWorker.register(base + 'sw.js', { scope: base }).catch(() => {})
+  })
+}

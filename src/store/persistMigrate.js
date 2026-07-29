@@ -189,6 +189,28 @@ export function persistMigrate(state, version) {
     })
   }
 
+  if (version < 18) {
+    // D1: SaaS-подписка. Стартуем 14-дневный триал для существующих
+    // пользователей автоматически, если у них ещё нет settings.subscription.
+    // Так они не увидят внезапный «downgrade to free» после апдейта.
+    // D3: пустые массивы под API-ключи и webhook-endpoints.
+    state.settings = state.settings || {}
+    if (!state.settings.subscription) {
+      const now = new Date().toISOString()
+      const end = new Date()
+      end.setDate(end.getDate() + 14)
+      state.settings.subscription = {
+        plan: 'trial',
+        trialStartAt: now,
+        trialEndAt: end.toISOString(),
+        paidUntil: null,
+        autoRenew: false,
+      }
+    }
+    if (!Array.isArray(state.settings.apiKeys)) state.settings.apiKeys = []
+    if (!Array.isArray(state.settings.webhooks)) state.settings.webhooks = []
+  }
+
   return state
 }
 

@@ -407,6 +407,23 @@ export function makeSeed() {
       aiKey: '',
       aiModel: 'gpt-4o-mini',
       aiBaseUrl: 'https://api.proxyapi.ru/openai/v1',
+      // D1: 14-дневный триал стартует у seed сразу — так демо не рушится
+      // в «free» после первого запуска. В реальном приложении подписка
+      // приходит с сервера при регистрации.
+      subscription: (() => {
+        const now = new Date().toISOString()
+        const end = new Date()
+        end.setDate(end.getDate() + 14)
+        return {
+          plan: 'trial',
+          trialStartAt: now,
+          trialEndAt: end.toISOString(),
+          paidUntil: null,
+          autoRenew: false,
+        }
+      })(),
+      apiKeys: [],
+      webhooks: [],
     },
   }
 }

@@ -9,7 +9,6 @@
 // Данные для тарифов и модулей — те же, что на Landing/Connect (не
 // импортируем, а копируем сокращённо — Connect живёт в неавторизованной
 // ветке и требует onStart/onBack, которые нам тут не нужны).
-import { useState } from 'react'
 import {
   Sparkles,
   Check,
@@ -21,9 +20,11 @@ import {
   Stethoscope,
   ShoppingBag,
   Zap,
+  AlertTriangle,
 } from 'lucide-react'
 import { Card, Section, Button, Badge, cx } from '../components/ui'
 import { useStore } from '../store/useStore'
+import { effectivePlan, trialDaysLeft, paidDaysLeft, extendPlan } from '../lib/subscription'
 
 const PLANS = [
   {
@@ -88,12 +89,32 @@ const MODULES = [
 ]
 
 export default function Subscription() {
-  // В MVP: план всегда «Демо» (Бесплатно), потому что биллинга ещё нет.
-  // Когда прикрутим оплату — придёт с сервера в settings.subscription.plan.
-  const [currentPlan] = useState('free')
+  const sub = useStore((s) => s.settings?.subscription)
+  const updateSettings = useStore((s) => s.updateSettings)
   const companyName = useStore((s) => s.companyName) || 'Ваша компания'
 
-  const cur = PLANS.find((p) => p.key === currentPlan) || PLANS[0]
+  // Эффективный план: активный триал / оплаченный / free при истечении.
+  const effective = effectivePlan(sub)
+  const daysLeftTrial = trialDaysLeft(sub)
+  const daysLeftPaid = paidDaysLeft(sub)
+  const cur = PLANS.find((p) => p.key === (sub?.plan === 'trial' ? 'business' : effective)) || PLANS[0]
+  const isTrial = sub?.plan === 'trial' && daysLeftTrial > 0
+  const isTrialExpired = sub?.plan === 'trial' && daysLeftTrial <= 0
+
+  // Демо-кнопка: включает выбранный план на 30 дней. Заменится
+  // на настоящий провайдер (Stripe / ЮKassa) при подключении биллинга.
+  const activatePlan = (planKey) => {
+    const now = new Date()
+    const end = extendPlan(null, 1, now)
+    updateSettings({
+      subscription: {
+        ...(sub || {}),
+        plan: planKey,
+        paidUntil: end,
+        autoRenew: true,
+      },
+    })
+  }
 
   return (
     <div className="animate-fadeUp space-y-5 max-w-5xl">
@@ -106,14 +127,53 @@ export default function Subscription() {
         </p>
       </div>
 
+      {/* Триал-баннер: если истёк — красный, если < 3 дней — жёлтый. */}
+      {isTrialExpired && (
+        <Card className="p-4 bg-bad-soft border-bad/40">
+          <div className="flex items-start gap-3">
+            <AlertTriangle size={18} className="text-bad shrink-0 mt-0.5" />
+            <div className="min-w-0 flex-1">
+              <div className="font-semibold text-bad">Триал закончился</div>
+              <div className="text-[13px] text-muted mt-0.5">
+                Вы сейчас на плане «Бесплатно» — с лимитами. Выберите тариф
+                ниже, чтобы вернуть полный доступ.
+              </div>
+            </div>
+          </div>
+        </Card>
+      )}
+      {isTrial && daysLeftTrial <= 3 && (
+        <Card className="p-4 bg-warn-soft border-warn/40">
+          <div className="flex items-start gap-3">
+            <AlertTriangle size={18} className="text-warn shrink-0 mt-0.5" />
+            <div className="min-w-0 flex-1">
+              <div className="font-semibold text-warn">
+                Триал заканчивается через {daysLeftTrial} {daysLeftTrial === 1 ? 'день' : 'дня'}
+              </div>
+              <div className="text-[13px] text-muted mt-0.5">
+                После окончания план автоматически станет «Бесплатным».
+              </div>
+            </div>
+          </div>
+        </Card>
+      )}
+
       {/* Текущий план */}
       <Card className="p-5 border-brand/40 bg-brand-soft/30">
         <div className="flex flex-wrap items-start gap-4">
           <div className="flex-1 min-w-0">
-            <div className="text-[13px] text-muted">Текущий план</div>
-            <div className="text-2xl font-bold mt-1">{cur.name}</div>
+            <div className="text-[13px] text-muted flex items-center gap-2">
+              Текущий план
+              {isTrial && <Badge tone="brand">Триал · {daysLeftTrial} дн.</Badge>}
+              {daysLeftPaid > 0 && <Badge tone="ok">до {new Date(sub.paidUntil).toLocaleDateString('ru-RU')}</Badge>}
+            </div>
+            <div className="text-2xl font-bold mt-1">
+              {isTrial ? 'Триал (полный доступ)' : cur.name}
+            </div>
             <div className="text-[13px] text-muted mt-1">
-              {cur.price} · {cur.period}
+              {isTrial
+                ? `Все фичи «Бизнес» бесплатно ещё ${daysLeftTrial} ${daysLeftTrial === 1 ? 'день' : 'дней'}`
+                : `${cur.price} · ${cur.period}`}
             </div>
             <ul className="mt-4 space-y-1.5 text-[13px]">
               {cur.features.map((f) => (
@@ -128,13 +188,8 @@ export default function Subscription() {
             href="#/"
             className="shrink-0"
             onClick={(e) => {
-              // Открываем Connect как отдельный экран (он живёт в неавториз.
-              // ветке для лендинга — из админки простой линк на #/ покажет
-              // ей же, потому что маршрут / — это Dashboard. Пока просто
-              // подсказка: см. модули ниже.)
               e.preventDefault()
-              const el = document.getElementById('sub-plans')
-              el?.scrollIntoView({ behavior: 'smooth' })
+              document.getElementById('sub-plans')?.scrollIntoView({ behavior: 'smooth' })
             }}
           >
             <Button icon={ArrowUpRight}>Улучшить план</Button>
@@ -154,7 +209,7 @@ export default function Subscription() {
       >
         <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3 items-stretch">
           {PLANS.map((p) => {
-            const isCur = p.key === currentPlan
+            const isCur = p.key === effective
             return (
               <div
                 key={p.key}
@@ -190,9 +245,10 @@ export default function Subscription() {
                     variant={p.featured ? 'primary' : 'soft'}
                     className="w-full mt-3"
                     size="sm"
-                    disabled
+                    onClick={() => activatePlan(p.key)}
+                    title="Демо-активация на 1 месяц (без оплаты)"
                   >
-                    Выбрать (скоро)
+                    Активировать (демо)
                   </Button>
                 )}
               </div>
@@ -230,8 +286,10 @@ export default function Subscription() {
 
       <Card className="p-4 bg-surface-2/60 border-dashed">
         <div className="text-[13px] text-muted">
-          Оплата подписки и модулей появится в следующем релизе. Сейчас все
-          возможности доступны в режиме демо для тестирования.
+          Настоящая оплата (Stripe / ЮKassa) подключится, когда добавим
+          провайдера — UI и модель подписки уже готовы. Пока «Активировать
+          (демо)» просто продлевает выбранный план на 30 дней в
+          локальном сторе, чтобы можно было пройти сценарии до конца.
         </div>
       </Card>
     </div>

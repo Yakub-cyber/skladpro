@@ -16,6 +16,8 @@ import {
   Trash2,
   Star,
   Loader2,
+  Webhook,
+  Copy,
 } from 'lucide-react'
 import { Section, Button, Field, Input, Select, Badge, cx } from '../components/ui'
 import { useConfirm } from '../components/Confirm'
@@ -237,6 +239,8 @@ export default function Settings() {
         </div>
       </Section>
 
+      <IntegrationsSection />
+
       {/* Дорожная карта */}
       <Section
         title={
@@ -450,6 +454,179 @@ function PriceTypesSection() {
         >
           Добавить
         </Button>
+      </div>
+    </Section>
+  )
+}
+
+// D3: интеграции — API-ключи и webhook-endpoints. UI-обвязка готова,
+// настоящая проверка сработает, когда добавим публичный REST API
+// (Supabase Edge) — тогда backend будет verify(hash(key)) === saved.
+function IntegrationsSection() {
+  const settings = useStore((s) => s.settings) || {}
+  const addApiKey = useStore((s) => s.addApiKey)
+  const removeApiKey = useStore((s) => s.removeApiKey)
+  const addWebhook = useStore((s) => s.addWebhook)
+  const removeWebhook = useStore((s) => s.removeWebhook)
+  const toggleWebhook = useStore((s) => s.toggleWebhook)
+  const [label, setLabel] = useState('')
+  const [freshKey, setFreshKey] = useState(null) // {label, key} — показываем 1 раз
+  const [copied, setCopied] = useState(false)
+  const [whUrl, setWhUrl] = useState('')
+
+  const keys = settings.apiKeys || []
+  const webhooks = settings.webhooks || []
+
+  const createKey = () => {
+    const res = addApiKey(label.trim() || 'Ключ', ['read'])
+    setFreshKey({ label: label.trim() || 'Ключ', key: res.key })
+    setLabel('')
+  }
+
+  const copyKey = () => {
+    if (!freshKey) return
+    navigator.clipboard?.writeText(freshKey.key)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 1500)
+  }
+
+  const createWebhook = () => {
+    const url = whUrl.trim()
+    if (!/^https?:\/\//.test(url)) return
+    addWebhook(url, ['order.created', 'order.delivered', 'product.stock_low'])
+    setWhUrl('')
+  }
+
+  return (
+    <Section
+      title={
+        <span className="flex items-center gap-2">
+          <Webhook size={16} className="text-brand" /> Интеграции (API + webhooks)
+        </span>
+      }
+      subtitle="Для подключения сторонних сервисов (1С, маркетплейсы, CRM). Пока UI-обвязка — реальный REST API появится, когда развернём Supabase Edge."
+    >
+      <div className="space-y-5">
+        {/* API-ключи */}
+        <div>
+          <div className="text-[13px] font-semibold mb-2">API-ключи</div>
+          {freshKey && (
+            <div className="mb-3 p-3 rounded-xl bg-warn-soft border border-warn/30">
+              <div className="text-[12px] font-semibold text-warn mb-1">
+                Ключ показан один раз. Сохраните его — потом не восстановить.
+              </div>
+              <div className="flex items-center gap-2">
+                <code className="flex-1 text-[12px] font-mono px-2 py-1.5 rounded bg-surface break-all">
+                  {freshKey.key}
+                </code>
+                <Button size="sm" variant="soft" icon={Copy} onClick={copyKey}>
+                  {copied ? 'Скопировано' : 'Копировать'}
+                </Button>
+                <button
+                  onClick={() => setFreshKey(null)}
+                  className="text-muted hover:text-ink p-1"
+                  title="Скрыть"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+          )}
+          <div className="flex flex-wrap items-end gap-2 mb-3">
+            <Field label="Название" className="min-w-[200px] flex-1">
+              <Input
+                value={label}
+                onChange={(e) => setLabel(e.target.value)}
+                placeholder="1С обмен / amoCRM / …"
+              />
+            </Field>
+            <Button icon={Plus} onClick={createKey}>
+              Создать ключ
+            </Button>
+          </div>
+          {keys.length === 0 ? (
+            <div className="text-[13px] text-muted italic">Пока нет ключей.</div>
+          ) : (
+            <div className="space-y-1.5">
+              {keys.map((k) => (
+                <div
+                  key={k.id}
+                  className="flex items-center gap-3 p-2.5 rounded-xl bg-surface-2"
+                >
+                  <KeyRound size={16} className="text-muted shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[13px] font-medium truncate">{k.label}</div>
+                    <div className="text-[11px] text-muted font-mono">{k.keyPreview}</div>
+                  </div>
+                  <button
+                    onClick={() => removeApiKey(k.id)}
+                    className="text-muted hover:text-bad p-1"
+                    title="Отозвать"
+                  >
+                    <Trash2 size={15} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Webhooks */}
+        <div>
+          <div className="text-[13px] font-semibold mb-2">Webhook-endpoints</div>
+          <div className="flex flex-wrap items-end gap-2 mb-3">
+            <Field label="URL приёмника" className="min-w-[280px] flex-1">
+              <Input
+                value={whUrl}
+                onChange={(e) => setWhUrl(e.target.value)}
+                placeholder="https://example.com/hook"
+              />
+            </Field>
+            <Button
+              icon={Plus}
+              onClick={createWebhook}
+              disabled={!/^https?:\/\//.test(whUrl.trim())}
+            >
+              Добавить
+            </Button>
+          </div>
+          {webhooks.length === 0 ? (
+            <div className="text-[13px] text-muted italic">
+              Пока нет webhook-endpoints. Здесь появятся URL, куда мы будем
+              отправлять POST при событиях (order.created, product.stock_low, …).
+            </div>
+          ) : (
+            <div className="space-y-1.5">
+              {webhooks.map((w) => (
+                <div
+                  key={w.id}
+                  className="flex items-center gap-3 p-2.5 rounded-xl bg-surface-2"
+                >
+                  <Webhook size={16} className={w.active ? 'text-ok' : 'text-muted'} />
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[13px] font-mono truncate">{w.url}</div>
+                    <div className="text-[11px] text-muted">
+                      {w.events.join(' · ')} · {w.active ? 'активен' : 'выключен'}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => toggleWebhook(w.id)}
+                    className="text-[12px] px-2 py-1 rounded bg-surface hover:bg-surface-3"
+                  >
+                    {w.active ? 'Выключить' : 'Включить'}
+                  </button>
+                  <button
+                    onClick={() => removeWebhook(w.id)}
+                    className="text-muted hover:text-bad p-1"
+                    title="Удалить"
+                  >
+                    <Trash2 size={15} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     </Section>
   )

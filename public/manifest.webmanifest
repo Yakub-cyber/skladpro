@@ -1,0 +1,21 @@
+{
+  "name": "СкладПро — умный склад и касса",
+  "short_name": "СкладПро",
+  "description": "Складской учёт, POS-касса, аналитика с ИИ. Работает в браузере и офлайн.",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0b0f17",
+  "theme_color": "#5b4ef0",
+  "lang": "ru-RU",
+  "categories": ["business", "productivity"],
+  "icons": [
+    {
+      "src": "favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
