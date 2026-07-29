@@ -51,6 +51,58 @@ export function isHashedPin(stored) {
   return typeof stored === 'string' && /^[0-9a-f]{64}$/.test(stored)
 }
 
+// ──────────────────────────────────────────────────────────────────────────
+//  F4-4: обфускация «плоских» секретов (aiKey, webhook.secret) в
+//  localStorage. Это НЕ криптографическая защита от компрометации устройства
+//  — только барьер против случайного подсматривания через devtools/localStorage
+//  и от копирования файла бэкапа глазами. Настоящую защиту даёт только
+//  секретный вольт на сервере, что вне scope этой сессии.
+//
+//  Формат хранения: 'obf1:' + base64(XOR(utf8(secret), key)).
+//  Префикс — маркер, чтобы отличить уже обфусцированное значение при merge.
+// ──────────────────────────────────────────────────────────────────────────
+const OBF_KEY = 'sklad-obf-v1'
+const OBF_PREFIX = 'obf1:'
+
+function xorBytes(bytes, key) {
+  const out = new Uint8Array(bytes.length)
+  for (let i = 0; i < bytes.length; i++) {
+    out[i] = bytes[i] ^ key.charCodeAt(i % key.length)
+  }
+  return out
+}
+
+function bytesToBase64(bytes) {
+  let s = ''
+  for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i])
+  return typeof btoa !== 'undefined'
+    ? btoa(s)
+    : Buffer.from(bytes).toString('base64')
+}
+
+function base64ToBytes(b64) {
+  const s = typeof atob !== 'undefined' ? atob(b64) : Buffer.from(b64, 'base64').toString('binary')
+  const out = new Uint8Array(s.length)
+  for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i)
+  return out
+}
+
+export function obfuscateSecret(plain) {
+  if (typeof plain !== 'string' || !plain) return plain
+  if (plain.startsWith(OBF_PREFIX)) return plain
+  return OBF_PREFIX + bytesToBase64(xorBytes(enc.encode(plain), OBF_KEY))
+}
+
+export function deobfuscateSecret(stored) {
+  if (typeof stored !== 'string' || !stored.startsWith(OBF_PREFIX)) return stored
+  try {
+    const bytes = base64ToBytes(stored.slice(OBF_PREFIX.length))
+    return new TextDecoder().decode(xorBytes(bytes, OBF_KEY))
+  } catch {
+    return ''
+  }
+}
+
 // Сравнить введённый PIN с сохранённым.
 // Возврат: { ok: boolean, legacy?: boolean }
 //   ok=true, legacy=true → совпало с открытым legacy-значением, вызывающая

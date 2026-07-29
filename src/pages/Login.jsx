@@ -349,9 +349,14 @@ function PinLogin({ onBack }) {
           </div>
         )}
 
-        <div className="mt-4 flex items-center justify-center gap-1.5 text-[12px] text-muted">
-          <ShieldCheck size={13} /> Демо-PIN: 1111 · 2222 · 3333 · 4444
-        </div>
+        {/* F4-3: демо-хинт с PIN'ами показываем только в dev-режиме —
+            в production билде это подсказка «войди как админ» для любого
+            посетителя. */}
+        {import.meta.env.DEV && (
+          <div className="mt-4 flex items-center justify-center gap-1.5 text-[12px] text-muted">
+            <ShieldCheck size={13} /> Демо-PIN: 1111 · 2222 · 3333 · 4444
+          </div>
+        )}
       </div>
     </div>
   )

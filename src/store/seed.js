@@ -353,12 +353,23 @@ export function makeSeed() {
     })
   }
 
-  const employees = [
-    { id: 'e1', name: 'Аюб Гадиев', role: 'admin', phone: '+7 900 000-00-01', pin: '1111', active: true },
-    { id: 'e2', name: 'Марат Хайруллин', role: 'manager', phone: '+7 900 000-00-02', pin: '2222', active: true },
-    { id: 'e3', name: 'Денис Кладов', role: 'stock', phone: '+7 900 000-00-03', pin: '3333', active: true },
-    { id: 'e4', name: 'Олег Курьеров', role: 'courier', phone: '+7 900 000-00-04', pin: '4444', active: true },
-  ]
+  // F4-3: демо-сотрудники с известными PIN'ами создаются только в dev.
+  // В production-билде (без облака) это бэкдор: любой посетитель URL войдёт
+  // админом по 1111. Оставляем только «пустого» первого админа без PIN —
+  // при первом входе он проходит по recovery-веткам, если админ выставил
+  // recoveryRequestedAt (см. hrSlice.js). Обычный сценарий production —
+  // облачный вход через Supabase; демо-данные там не нужны.
+  const isDev = typeof import.meta !== 'undefined' && import.meta.env?.DEV
+  const employees = isDev
+    ? [
+        { id: 'e1', name: 'Аюб Гадиев', role: 'admin', phone: '+7 900 000-00-01', pin: '1111', active: true },
+        { id: 'e2', name: 'Марат Хайруллин', role: 'manager', phone: '+7 900 000-00-02', pin: '2222', active: true },
+        { id: 'e3', name: 'Денис Кладов', role: 'stock', phone: '+7 900 000-00-03', pin: '3333', active: true },
+        { id: 'e4', name: 'Олег Курьеров', role: 'courier', phone: '+7 900 000-00-04', pin: '4444', active: true },
+      ]
+    : [
+        { id: 'e1', name: 'Администратор', role: 'admin', phone: '', pin: '', active: true, recoveryRequestedAt: Date.now() },
+      ]
 
   // Демо: одна закрытая смена (вчера)
   const shifts = [

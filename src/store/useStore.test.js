@@ -38,6 +38,9 @@ function resetStore() {
     _authInited: false,
     _bootBusy: false,
     _creating: false,
+    // F4-2: rate-limit накапливается между тестами (e1 после серии
+    // неверных PIN заблокирован) — чистим счётчик здесь.
+    pinFails: {},
   })
 }
 
@@ -136,43 +139,79 @@ describe('addEmployee / updateEmployee — PIN хэшируется', () => {
   })
 })
 
-describe('login — восстановление при пустом PIN', () => {
-  // Аккаунт-lockout: у сотрудника e.pin === '' (случайно стёрли в
-  // Employees). Обычный verifyPin вернёт ok:false для любого ввода,
-  // и войти будет нельзя. Восстановление: разрешить разовый вход по
-  // любому валидному 4-знач. PIN, тут же сохранить его как новый.
-  it('вход при пустом PIN с валидным 4-знач. значением → recovered:true и PIN сохранён', async () => {
+describe('login — восстановление при пустом PIN (F4-1)', () => {
+  // F4-1: восстановление возможно только по явному флагу от админа
+  // (requestPinRecovery → recoveryRequestedAt). Раньше любой сотрудник
+  // с pin === '' был «открыт» на любой 4-значный ввод — это бэкдор.
+  it('пустой PIN без recoveryRequestedAt → ok:false', async () => {
     useStore.setState((s) => ({
       employees: s.employees.map((e) =>
         e.id === 'e1' ? { ...e, pin: '' } : e,
       ),
     }))
     const r = await state().login('e1', '9999')
-    expect(r.ok).toBe(true)
-    expect(r.recovered).toBe(true)
-    expect(state().authUserId).toBe('e1')
-    // PIN сохранён как хэш, повторный вход с ним работает
-    const stored = state().employees.find((e) => e.id === 'e1').pin
-    expect(stored).toBe(await hashPin('9999'))
-    state().logout()
-    const r2 = await state().login('e1', '9999')
-    expect(r2.ok).toBe(true)
+    expect(r.ok).toBe(false)
+    expect(state().authUserId).toBeNull()
   })
 
-  it('вход при пустом PIN с невалидным вводом (не 4 цифры) → ok:false', async () => {
+  it('после requestPinRecovery + валидный 4-знач. → recovered:true, флаг сбрасывается', async () => {
     useStore.setState((s) => ({
       employees: s.employees.map((e) =>
         e.id === 'e1' ? { ...e, pin: '' } : e,
       ),
     }))
-    // 3 цифры
+    state().requestPinRecovery('e1')
+    const r = await state().login('e1', '9999')
+    expect(r.ok).toBe(true)
+    expect(r.recovered).toBe(true)
+    expect(state().authUserId).toBe('e1')
+    const emp = state().employees.find((e) => e.id === 'e1')
+    expect(emp.pin).toBe(await hashPin('9999'))
+    // Флаг recovery одноразовый — сброшен.
+    expect(emp.recoveryRequestedAt).toBeFalsy()
+    // Повторный вход по тому же PIN работает через verifyPin
+    state().logout()
+    const r2 = await state().login('e1', '9999')
+    expect(r2.ok).toBe(true)
+  })
+
+  it('recovery + невалидный ввод (не 4 цифры) → ok:false, флаг сохраняется', async () => {
+    useStore.setState((s) => ({
+      employees: s.employees.map((e) =>
+        e.id === 'e1' ? { ...e, pin: '' } : e,
+      ),
+    }))
+    state().requestPinRecovery('e1')
     expect((await state().login('e1', '123')).ok).toBe(false)
-    // буквы
     expect((await state().login('e1', 'abcd')).ok).toBe(false)
-    // пусто
-    expect((await state().login('e1', '')).ok).toBe(false)
-    // authUserId не менялся
     expect(state().authUserId).toBeNull()
+    // Флаг всё ещё стоит — можно повторить с валидным вводом.
+    expect(
+      state().employees.find((e) => e.id === 'e1').recoveryRequestedAt,
+    ).toBeTruthy()
+  })
+})
+
+describe('login — rate-limit по неверным PIN (F4-2)', () => {
+  it('5 неверных подряд → 6-й получает блок на 30 сек', async () => {
+    // e1 seed pin='1111'; кормим 5 раз неверным, потом даже верный не пустит
+    for (let i = 0; i < 5; i++) {
+      const r = await state().login('e1', '0000')
+      expect(r.ok).toBe(false)
+    }
+    // 6-я попытка — блокировка (даже верный PIN)
+    const r = await state().login('e1', '1111')
+    expect(r.ok).toBe(false)
+    expect(r.error).toMatch(/Слишком много|через/i)
+  })
+
+  it('успешный вход сбрасывает счётчик', async () => {
+    await state().login('e1', '0000')
+    await state().login('e1', '0000')
+    const ok = await state().login('e1', '1111')
+    expect(ok.ok).toBe(true)
+    // pinFails для e1 очищен
+    expect(state().pinFails?.e1).toBeFalsy()
   })
 })
 

@@ -1,11 +1,59 @@
 import { create } from 'zustand'
-import { persist } from 'zustand/middleware'
+import { persist, createJSONStorage } from 'zustand/middleware'
 import { makeSeed } from './seed'
 import { uid, nextNo } from '../lib/id'
 import { nextStatus, statusInfo, docTypeInfo, DEFAULT_WORK_ZONES } from '../lib/constants'
 import { applyDocToState } from '../lib/posting'
 import { applyOrderStock } from '../lib/orders'
 import { effectivePlan, PLAN_LIMITS } from '../lib/subscription'
+import { obfuscateSecret, deobfuscateSecret } from '../lib/crypto'
+
+// F4-4: обёртка над localStorage, которая обфусцирует aiKey и
+// webhook.secret на диске. State в памяти — plain (UI работает без
+// изменений); read/write в localStorage — прозрачно шифруется.
+const secureStorage = {
+  getItem: (name) => {
+    if (typeof window === 'undefined') return null
+    const raw = window.localStorage.getItem(name)
+    if (!raw) return null
+    try {
+      const parsed = JSON.parse(raw)
+      const s = parsed?.state?.settings
+      if (s) {
+        if (s.aiKey) s.aiKey = deobfuscateSecret(s.aiKey)
+        if (Array.isArray(s.webhooks)) {
+          s.webhooks = s.webhooks.map((w) =>
+            w?.secret ? { ...w, secret: deobfuscateSecret(w.secret) } : w,
+          )
+        }
+      }
+      return JSON.stringify(parsed)
+    } catch {
+      return raw
+    }
+  },
+  setItem: (name, value) => {
+    if (typeof window === 'undefined') return
+    try {
+      const parsed = JSON.parse(value)
+      const s = parsed?.state?.settings
+      if (s) {
+        if (s.aiKey) s.aiKey = obfuscateSecret(s.aiKey)
+        if (Array.isArray(s.webhooks)) {
+          s.webhooks = s.webhooks.map((w) =>
+            w?.secret ? { ...w, secret: obfuscateSecret(w.secret) } : w,
+          )
+        }
+      }
+      window.localStorage.setItem(name, JSON.stringify(parsed))
+    } catch {
+      window.localStorage.setItem(name, value)
+    }
+  },
+  removeItem: (name) => {
+    if (typeof window !== 'undefined') window.localStorage.removeItem(name)
+  },
+}
 
 // F3-2: разрешение имени плана и лимитов на текущий момент. Отдельная
 // функция, чтобы actions в сторе не тянули за собой знание о subscription.
@@ -1561,6 +1609,9 @@ export const useStore = create(
       partialize: persistPartialize,
       merge: persistMerge,
       migrate: persistMigrate,
+      // F4-4: storage-обёртка не меняет layout — только обфусцирует
+      // aiKey/webhook.secret на выходе и расшифровывает на входе.
+      storage: createJSONStorage(() => secureStorage),
     },
   ),
 )

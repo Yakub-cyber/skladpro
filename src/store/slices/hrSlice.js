@@ -71,6 +71,31 @@ export const createHrSlice = (set, get) => ({
       authUserId: s.authUserId === id ? null : s.authUserId,
     })),
 
+  // F4-1: явный флаг recovery — только админ выставляет `recoveryRequestedAt`
+  // (через requestPinRecovery), после чего пользователь может 1 раз войти
+  // по любому 4-значному коду и задать себе новый PIN. Раньше вход
+  // допускался при `!e.pin` — это бэкдор: любой сотрудник, у которого
+  // случайно очистили PIN, оставался входом «по любому 4-значному».
+  requestPinRecovery: (empId) => {
+    // Помечает сотрудника флагом. Ожидается, что вызывается только
+    // из UI-действия, доступного admin (см. Employees.jsx).
+    set((s) => ({
+      employees: s.employees.map((x) =>
+        x.id === empId ? { ...x, recoveryRequestedAt: Date.now() } : x,
+      ),
+    }))
+    get().logAction('Разрешено восстановление PIN', {
+      section: 'Авторизация',
+      type: 'security',
+    })
+  },
+
+  // F4-2: rate-limit. Хранится в отдельной мапе pinFails (persist), чтобы
+  // счётчик не терялся при refresh страницы. После 5 ошибок — блок 30 с,
+  // после 10 — 5 мин. Инвариант: успех сбрасывает счётчик, любое обращение
+  // к login после blockedUntil тоже сбрасывает.
+  pinFails: {},
+
   // Авторизация по PIN. verifyPin понимает и хэш, и legacy raw (демо-seed
   // или карточки до миграции); при успехе с legacy — тут же перезаписываем
   // хранимый PIN хэшем, чтобы raw не остался в localStorage навсегда.
@@ -78,17 +103,28 @@ export const createHrSlice = (set, get) => ({
     const e = get().employees.find((x) => x.id === id)
     if (!e) return { ok: false, error: 'Сотрудник не найден' }
     if (!e.active) return { ok: false, error: 'Учётная запись отключена' }
-    // Восстановление: если у сотрудника нет заданного PIN (например,
-    // случайно стёрли в форме), разрешаем разовый вход по любому 4-знач.
-    // значению и сразу сохраняем его как новый PIN. Иначе аккаунт с
-    // e.pin === '' полностью залочен: verifyPin вернёт ok:false, войти
-    // невозможно, никто уже не задаст новый PIN изнутри. Небезопасно для
-    // публичного продакшна, но для многотенантного демо это единственный
-    // способ восстановиться без прямой правки БД.
-    if (!e.pin && /^\d{4}$/.test(String(pin || ''))) {
+
+    // F4-2: проверка блокировки до любых вычислений (иначе брут может
+    // просто выжидать миллисекунды между попытками).
+    const now = Date.now()
+    const fail = (get().pinFails || {})[id]
+    if (fail?.blockedUntil && fail.blockedUntil > now) {
+      const sec = Math.ceil((fail.blockedUntil - now) / 1000)
+      return {
+        ok: false,
+        error: `Слишком много ошибок. Повторите через ${sec} сек.`,
+      }
+    }
+
+    // F4-1: recovery — только по явному флагу от админа.
+    const recoveryAllowed = !!e.recoveryRequestedAt
+    if (recoveryAllowed && !e.pin && /^\d{4}$/.test(String(pin || ''))) {
       const h = await hashPin(pin)
       set((s) => ({
-        employees: s.employees.map((x) => (x.id === id ? { ...x, pin: h } : x)),
+        employees: s.employees.map((x) =>
+          x.id === id ? { ...x, pin: h, recoveryRequestedAt: null } : x,
+        ),
+        pinFails: { ...(s.pinFails || {}), [id]: undefined },
         authUserId: e.id,
         authAt: Date.now(),
       }))
@@ -98,15 +134,46 @@ export const createHrSlice = (set, get) => ({
       })
       return { ok: true, recovered: true }
     }
+
+    // Пустой PIN без recovery — вход невозможен (админ должен либо
+    // выставить PIN, либо разрешить recovery).
+    if (!e.pin) {
+      return {
+        ok: false,
+        error: 'PIN не задан. Обратитесь к администратору для восстановления.',
+      }
+    }
+
     const v = await verifyPin(pin, e.pin)
-    if (!v.ok) return { ok: false, error: 'Неверный PIN' }
+    if (!v.ok) {
+      // F4-2: копим ошибки и, при переходе через порог, ставим блок.
+      set((s) => {
+        const prev = (s.pinFails || {})[id] || { count: 0, blockedUntil: 0 }
+        const count = prev.count + 1
+        let blockedUntil = 0
+        if (count >= 10) blockedUntil = now + 5 * 60 * 1000
+        else if (count >= 5) blockedUntil = now + 30 * 1000
+        return {
+          pinFails: {
+            ...(s.pinFails || {}),
+            [id]: { count, blockedUntil },
+          },
+        }
+      })
+      return { ok: false, error: 'Неверный PIN' }
+    }
     if (v.legacy) {
       const h = await hashPin(pin)
       set((s) => ({
         employees: s.employees.map((x) => (x.id === id ? { ...x, pin: h } : x)),
       }))
     }
-    set({ authUserId: e.id, authAt: Date.now() })
+    // Успех — сбрасываем счётчик и авторизуем.
+    set((s) => ({
+      pinFails: { ...(s.pinFails || {}), [id]: undefined },
+      authUserId: e.id,
+      authAt: Date.now(),
+    }))
     get().logAction('Вход в систему', { section: 'Авторизация', type: 'login' })
     return { ok: true }
   },
