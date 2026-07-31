@@ -4,9 +4,9 @@
 // списания и возврата поставщику блокирует превышение остатка.
 import { useState } from 'react'
 import { Check, FileEdit, MapPin } from 'lucide-react'
-import { Card, Button, Badge, Field, Select } from '../../components/ui'
-import { useStore } from '../../store/useStore'
-import { num } from '../../lib/format'
+import { Card, Button, Badge, Field, Select } from '@/shared/ui'
+import { useStore } from '@/shared/store/useStore'
+import { num } from '@/shared/lib/format'
 import { ProductSearch, Toast } from './_shared'
 
 export default function MoveForm({ docType, reasons, tone, verb, hint }) {

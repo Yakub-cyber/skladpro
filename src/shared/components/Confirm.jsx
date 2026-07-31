@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState } f
 // eslint-disable-next-line no-unused-vars
 // (useRef оставляем для ref кнопки OK; input фокусируется через autoFocus)
 import { AlertTriangle, Info, ShieldAlert } from 'lucide-react'
-import { Button, Field, Input, Modal, cx } from './ui'
+import { Button, Field, Input, Modal, cx } from '@/shared/ui'
 
 // Универсальный Confirm-диалог для деструктивных/подтверждаемых действий.
 // Заменяет `window.confirm()` и прямые вызовы delete/cancel без подтверждения.

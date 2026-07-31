@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
 import { Boxes, Delete, ArrowLeft, Lock, ShieldCheck, Mail, KeyRound, Loader2, Cloud, Building2, LogOut } from 'lucide-react'
-import { Avatar, cx, Button, Field, Input } from '../components/ui'
-import { useStore } from '../store/useStore'
-import { roleInfo } from '../lib/constants'
-import { requestPasswordReset } from '../lib/cloud'
+import { Avatar, cx, Button, Field, Input } from '@/shared/ui'
+import { useStore } from '@/shared/store/useStore'
+import { roleInfo } from '@/shared/lib/constants'
+import { requestPasswordReset } from '@/shared/lib/cloud'
 import Landing from './Landing'
 import Connect from './Connect'
 

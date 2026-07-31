@@ -3,7 +3,7 @@
 //  Прямых обращений к supabase-js больше нет — весь транспорт в lib/api.js.
 //  Оставлен, чтобы не менять множество импортов старого имени hasSupabase.
 // ──────────────────────────────────────────────────────────────────────────
-import { hasApi } from './api'
+import { hasApi } from '@/shared/api'
 
 export const hasSupabase = hasApi
 

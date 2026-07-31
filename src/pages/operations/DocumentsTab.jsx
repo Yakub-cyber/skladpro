@@ -3,13 +3,13 @@
 // проведённые — отменить (с откатом остатка).
 import { useState } from 'react'
 import { Ban, Check, FileText, Printer, Trash2 } from 'lucide-react'
-import { Card, Button, Badge, Empty, cx } from '../../components/ui'
-import { useConfirm } from '../../components/Confirm'
-import { useStore } from '../../store/useStore'
-import { num, relTime } from '../../lib/format'
-import { docTypeInfo, DOC_STATUS } from '../../lib/constants'
+import { Card, Button, Badge, Empty, cx } from '@/shared/ui'
+import { useConfirm } from '@/shared/components/Confirm'
+import { useStore } from '@/shared/store/useStore'
+import { num, relTime } from '@/shared/lib/format'
+import { docTypeInfo, DOC_STATUS } from '@/shared/lib/constants'
 import { DOC_ICON } from './_shared'
-import DocPreviewModal from '../../components/DocPreviewModal'
+import DocPreviewModal from '@/shared/components/DocPreviewModal'
 
 const REG_FILTERS = [
   { key: 'all', label: 'Все' },

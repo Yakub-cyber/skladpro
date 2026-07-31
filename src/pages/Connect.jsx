@@ -23,7 +23,7 @@ import {
   Stethoscope,
   Blocks,
 } from 'lucide-react'
-import { Button } from '../components/ui'
+import { Button } from '@/shared/ui'
 
 const STEPS = [
   {

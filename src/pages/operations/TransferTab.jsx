@@ -2,8 +2,8 @@
 // смещается только warehouseId, отметка в журнале движений (delta=0).
 import { useState } from 'react'
 import { ArrowLeftRight, ChevronRight, Trash2, FileEdit } from 'lucide-react'
-import { Card, Button, Field, Select } from '../../components/ui'
-import { useStore } from '../../store/useStore'
+import { Card, Button, Field, Select } from '@/shared/ui'
+import { useStore } from '@/shared/store/useStore'
 import { ProductSearch, Toast } from './_shared'
 
 export default function TransferTab() {

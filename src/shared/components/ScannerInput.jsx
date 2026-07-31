@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { ScanLine, Camera, X, Keyboard } from 'lucide-react'
-import { Button, cx } from './ui'
+import { Button, cx } from '@/shared/ui'
 
 // Поле приёма штрихкода. Работает с аппаратным USB-сканером (он эмулирует
 // клавиатуру + Enter) и с камерой через BarcodeDetector API (Chrome/Android).

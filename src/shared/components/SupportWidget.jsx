@@ -5,9 +5,9 @@ import {
 	apiListSupportTickets,
 	hasApi,
 	subscribeEvents,
-} from '../lib/api'
+} from '@/shared/api'
 import { useStore } from '../store/useStore'
-import { Badge, Button, Empty, Field, Modal, Textarea } from './ui'
+import { Badge, Button, Empty, Field, Modal, Textarea } from '@/shared/ui'
 
 // ── Автосбор клиентского контекста ─────────────────────────────────────────
 // Отправляем то, что помогает Claude'у найти баг без переспрашивания клиента:

@@ -4,7 +4,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 // h.impl подменяется в каждом тесте; log копит вызовы в порядке исполнения.
 const h = vi.hoisted(() => ({ impl: null }))
 
-vi.mock('./api', () => ({
+vi.mock('@/shared/api', () => ({
 	hasApi: true,
 	getSession: () => null,
 	getCompanyId: () => 'c1',

@@ -15,11 +15,11 @@ import {
   Search,
   Filter as FilterIcon,
 } from 'lucide-react'
-import { Card, Badge, Field, Input, Select, Empty, cx } from '../components/ui'
-import { useStore } from '../store/useStore'
-import { money, num } from '../lib/format'
-import { docTypeInfo, statusInfo } from '../lib/constants'
-import { rangeFor, purposeLabel } from '../lib/money'
+import { Card, Badge, Field, Input, Select, Empty, cx } from '@/shared/ui'
+import { useStore } from '@/shared/store/useStore'
+import { money, num } from '@/shared/lib/format'
+import { docTypeInfo, statusInfo } from '@/shared/lib/constants'
+import { rangeFor, purposeLabel } from '@/shared/lib/money'
 
 const PERIODS = [
   { key: 'today', label: 'Сегодня' },

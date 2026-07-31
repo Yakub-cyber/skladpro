@@ -18,10 +18,10 @@ import {
   Field,
   Input,
   Avatar,
-} from '../components/ui'
-import { useStore } from '../store/useStore'
-import { money, num } from '../lib/format'
-import { reservedByProduct, availableStock } from '../lib/orders'
+} from '@/shared/ui'
+import { useStore } from '@/shared/store/useStore'
+import { money, num } from '@/shared/lib/format'
+import { reservedByProduct, availableStock } from '@/shared/lib/orders'
 
 // Подбор поставщика под категорию товара
 function supplierFor(category, suppliers) {

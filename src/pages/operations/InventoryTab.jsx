@@ -3,9 +3,9 @@
 // товаров даёт заметный лаг ввода.
 import { useEffect, useMemo, useState } from 'react'
 import { Check, FileEdit, Search } from 'lucide-react'
-import { Card, Button, Badge } from '../../components/ui'
-import { useStore } from '../../store/useStore'
-import { num } from '../../lib/format'
+import { Card, Button, Badge } from '@/shared/ui'
+import { useStore } from '@/shared/store/useStore'
+import { num } from '@/shared/lib/format'
 import { Toast } from './_shared'
 
 const PAGE_SIZE = 100

@@ -31,7 +31,7 @@ import {
   SlidersHorizontal,
   Trash2,
 } from 'lucide-react'
-import { compressImage } from '../lib/image'
+import { compressImage } from '@/shared/lib/image'
 import {
   Card,
   Button,
@@ -43,13 +43,13 @@ import {
   Textarea,
   Empty,
   cx,
-} from '../components/ui'
-import { useStore } from '../store/useStore'
-import { money, num, plural } from '../lib/format'
-import { CATEGORIES, catInfo, PRODUCT_TYPES, isService, isKit, isRealProduct } from '../lib/constants'
-import { computeKitStock } from '../lib/kit'
-import { CELLS } from '../store/seed'
-import { printLabels, printPriceTags, barcodeSVG } from '../lib/labels'
+} from '@/shared/ui'
+import { useStore } from '@/shared/store/useStore'
+import { money, num, plural } from '@/shared/lib/format'
+import { CATEGORIES, catInfo, PRODUCT_TYPES, isService, isKit, isRealProduct } from '@/shared/lib/constants'
+import { computeKitStock } from '@/shared/lib/kit'
+import { CELLS } from '@/shared/store/seed'
+import { printLabels, printPriceTags, barcodeSVG } from '@/shared/lib/labels'
 import {
   parsePriceTable,
   SAMPLE_TEMPLATE,
@@ -58,12 +58,12 @@ import {
   autoMap,
   applyMapping,
   IMPORT_FIELDS,
-} from '../lib/importPrice'
-import { downloadCsv } from '../lib/export'
-import { reservedByProduct } from '../lib/orders'
-import { generateEan13 } from '../lib/barcode'
-import ScannerInput from '../components/ScannerInput'
-import { useConfirm } from '../components/Confirm'
+} from '@/shared/lib/importPrice'
+import { downloadCsv } from '@/shared/lib/export'
+import { reservedByProduct } from '@/shared/lib/orders'
+import { generateEan13 } from '@/shared/lib/barcode'
+import ScannerInput from '@/shared/components/ScannerInput'
+import { useConfirm } from '@/shared/components/Confirm'
 
 const CAT_ICON = { Wrench, Hammer, Zap, Droplets, PaintBucket, Package }
 

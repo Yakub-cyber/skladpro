@@ -7,10 +7,10 @@
 // клиент/скидка/кнопка «Провести».
 import { useMemo, useState } from 'react'
 import { Check, FileEdit, ShoppingCart, Trash2 } from 'lucide-react'
-import { Card, Button, Badge, Empty, Field, Select } from '../../components/ui'
-import { useStore } from '../../store/useStore'
-import { money, num } from '../../lib/format'
-import { priceFor } from '../../lib/constants'
+import { Card, Button, Badge, Empty, Field, Select } from '@/shared/ui'
+import { useStore } from '@/shared/store/useStore'
+import { money, num } from '@/shared/lib/format'
+import { priceFor } from '@/shared/lib/constants'
 import { ProductPickerGrid, Toast, useScanResolver } from './_shared'
 
 export default function SaleTab() {

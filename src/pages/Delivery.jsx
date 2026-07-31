@@ -11,11 +11,11 @@ import {
   Route as RouteIcon,
   Package,
 } from 'lucide-react'
-import { Card, Button, Badge, StatusBadge, Empty, cx } from '../components/ui'
-import DeliveryMapLeaflet from '../components/DeliveryMapLeaflet'
-import { useStore } from '../store/useStore'
-import { money, num } from '../lib/format'
-import { buildDeliveryRoute, geoLatLng, DEPOT, fetchOsrmRoute, fmtDuration } from '../lib/geo'
+import { Card, Button, Badge, StatusBadge, Empty, cx } from '@/shared/ui'
+import DeliveryMapLeaflet from '@/shared/components/DeliveryMapLeaflet'
+import { useStore } from '@/shared/store/useStore'
+import { money, num } from '@/shared/lib/format'
+import { buildDeliveryRoute, geoLatLng, DEPOT, fetchOsrmRoute, fmtDuration } from '@/shared/lib/geo'
 
 const TRUCKS = ['Газель А231 РТ', 'Газель В784 КX', 'Бортовой КамАЗ Е512', 'Каблук С310 АН']
 const DELIVERABLE = ['new', 'confirmed', 'picking', 'packed', 'shipped']

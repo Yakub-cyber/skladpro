@@ -3,6 +3,12 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import fs from 'node:fs'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+// Позволяет писать `import X from '@/shared/ui'` вместо `../../../shared/ui`.
+// Alias `@` резолвится в src/ — работает в vite dev/build и в vitest.
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const srcPath = path.resolve(__dirname, 'src')
 
 // На GitHub Pages проект живёт в подпути /skladpro/.
 // Для локального dev оставляем '/'.
@@ -34,6 +40,11 @@ export default defineConfig(({ command, mode }) => {
   return {
     base: command === 'build' ? '/skladpro/' : '/',
     plugins: [react(), tailwindcss()],
+    resolve: {
+      alias: {
+        '@': srcPath,
+      },
+    },
     server: {
       host: true,
       port: 5180,

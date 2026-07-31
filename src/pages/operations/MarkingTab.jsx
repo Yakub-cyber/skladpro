@@ -9,10 +9,10 @@ import {
   Plus,
   ShieldCheck,
 } from 'lucide-react'
-import { Card, Button, Badge, Empty } from '../../components/ui'
-import ScannerInput from '../../components/ScannerInput'
-import { useStore } from '../../store/useStore'
-import { num } from '../../lib/format'
+import { Card, Button, Badge, Empty } from '@/shared/ui'
+import ScannerInput from '@/shared/components/ScannerInput'
+import { useStore } from '@/shared/store/useStore'
+import { num } from '@/shared/lib/format'
 
 export default function MarkingTab() {
   const { products, addMarkCodes } = useStore()

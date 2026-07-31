@@ -21,11 +21,11 @@ import {
   Download,
   Settings2,
 } from 'lucide-react'
-import { Card, Section, Button, Badge, Field, Empty, cx } from '../components/ui'
-import { useStore } from '../store/useStore'
-import { money, num, dateTime, relTime } from '../lib/format'
-import { roleInfo } from '../lib/constants'
-import { downloadCsv } from '../lib/export'
+import { Card, Section, Button, Badge, Field, Empty, cx } from '@/shared/ui'
+import { useStore } from '@/shared/store/useStore'
+import { money, num, dateTime, relTime } from '@/shared/lib/format'
+import { roleInfo } from '@/shared/lib/constants'
+import { downloadCsv } from '@/shared/lib/export'
 
 const TABS = [
   { key: 'shift', label: 'Смена', icon: Clock },

@@ -18,18 +18,18 @@ import {
   Filter as FilterIcon,
   Search,
 } from 'lucide-react'
-import { Card, Button, Badge, Field, Input, Select, Modal, Empty, cx } from '../components/ui'
-import { useConfirm } from '../components/Confirm'
-import DocPreviewModal from '../components/DocPreviewModal'
-import { useStore } from '../store/useStore'
-import { money, num } from '../lib/format'
+import { Card, Button, Badge, Field, Input, Select, Modal, Empty, cx } from '@/shared/ui'
+import { useConfirm } from '@/shared/components/Confirm'
+import DocPreviewModal from '@/shared/components/DocPreviewModal'
+import { useStore } from '@/shared/store/useStore'
+import { money, num } from '@/shared/lib/format'
 import {
   accountBalances,
   MONEY_PURPOSES,
   purposeLabel,
   rangeFor,
   summarize,
-} from '../lib/money'
+} from '@/shared/lib/money'
 
 const PERIODS = [
   { key: 'today', label: 'Сегодня' },

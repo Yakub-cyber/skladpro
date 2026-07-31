@@ -14,12 +14,12 @@ import {
   Move,
   Warehouse as WhIcon,
 } from 'lucide-react'
-import { Card, Button, Badge, Empty, Modal, Field, Input, Select, cx } from '../components/ui'
-import WarehouseMap from '../components/WarehouseMap'
-import { useStore } from '../store/useStore'
-import { num } from '../lib/format'
-import { buildPickRoute } from '../lib/ai'
-import { cellById } from '../store/seed'
+import { Card, Button, Badge, Empty, Modal, Field, Input, Select, cx } from '@/shared/ui'
+import WarehouseMap from '@/shared/components/WarehouseMap'
+import { useStore } from '@/shared/store/useStore'
+import { num } from '@/shared/lib/format'
+import { buildPickRoute } from '@/shared/lib/ai'
+import { cellById } from '@/shared/store/seed'
 
 const ZONES = [
   { z: 'A–B', name: 'Крепёж', color: '#f59e0b' },

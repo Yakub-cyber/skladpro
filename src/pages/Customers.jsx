@@ -24,11 +24,11 @@ import {
   Empty,
   Progress,
   cx,
-} from '../components/ui'
-import { useStore } from '../store/useStore'
-import { money, num, dateFull, dateShort, relTime } from '../lib/format'
-import { TIERS, tierFor, statusInfo } from '../lib/constants'
-import { downloadCsv } from '../lib/export'
+} from '@/shared/ui'
+import { useStore } from '@/shared/store/useStore'
+import { money, num, dateFull, dateShort, relTime } from '@/shared/lib/format'
+import { TIERS, tierFor, statusInfo } from '@/shared/lib/constants'
+import { downloadCsv } from '@/shared/lib/export'
 
 export default function Customers() {
   const { customers, orders } = useStore()

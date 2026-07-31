@@ -12,13 +12,13 @@ import {
   Avatar,
   Empty,
   cx,
-} from '../components/ui'
-import { useConfirm } from '../components/Confirm'
-import { useStore } from '../store/useStore'
-import { ROLES, roleInfo } from '../lib/constants'
-import { NAV } from '../components/Layout'
-import { loadInvites, inviteMember, revokeInvite, loadMembers, updateMemberRole, removeMember } from '../lib/cloud'
-import { dateFull } from '../lib/format'
+} from '@/shared/ui'
+import { useConfirm } from '@/shared/components/Confirm'
+import { useStore } from '@/shared/store/useStore'
+import { ROLES, roleInfo } from '@/shared/lib/constants'
+import { NAV } from '@/app/layout/Layout'
+import { loadInvites, inviteMember, revokeInvite, loadMembers, updateMemberRole, removeMember } from '@/shared/lib/cloud'
+import { dateFull } from '@/shared/lib/format'
 
 const PERM_LABEL = NAV.reduce((m, n) => {
   m[n.perm] = n.label

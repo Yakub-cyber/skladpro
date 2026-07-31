@@ -9,7 +9,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { ShoppingCart, ArrowLeft } from 'lucide-react'
-import { cx } from '../components/ui'
+import { cx } from '@/shared/ui'
 import { TABS } from './operations/_shared'
 import SaleTab from './operations/SaleTab'
 import ReceiveTab from './operations/ReceiveTab'

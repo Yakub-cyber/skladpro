@@ -39,16 +39,16 @@ import {
   ClipboardMinus,
   FilePlus,
 } from 'lucide-react'
-import { cx, Avatar } from './ui'
-import CommandPalette from './CommandPalette'
-import { ConfirmProvider } from './Confirm'
-import SupportWidget from './SupportWidget'
-import { useStore } from '../store/useStore'
-import { canAccess, roleInfo } from '../lib/constants'
-import { reservedByProduct, availableStock } from '../lib/orders'
-import { plural } from '../lib/format'
-import { syncNow } from '../lib/cloud'
-import PageLoader from './PageLoader'
+import { cx, Avatar } from '@/shared/ui'
+import CommandPalette from '@/shared/components/CommandPalette'
+import { ConfirmProvider } from '@/shared/components/Confirm'
+import SupportWidget from '@/shared/components/SupportWidget'
+import { useStore } from '@/shared/store/useStore'
+import { canAccess, roleInfo } from '@/shared/lib/constants'
+import { reservedByProduct, availableStock } from '@/shared/lib/orders'
+import { plural } from '@/shared/lib/format'
+import { syncNow } from '@/shared/lib/cloud'
+import PageLoader from '@/shared/components/PageLoader'
 
 // текущий авторизованный сотрудник и его роль
 function useCurrentUser() {

@@ -25,11 +25,11 @@ import {
   Modal,
   Empty,
   cx,
-} from '../components/ui'
-import { useStore } from '../store/useStore'
-import { useConfirm } from '../components/Confirm'
-import DocPreviewModal from '../components/DocPreviewModal'
-import { money, num } from '../lib/format'
+} from '@/shared/ui'
+import { useStore } from '@/shared/store/useStore'
+import { useConfirm } from '@/shared/components/Confirm'
+import DocPreviewModal from '@/shared/components/DocPreviewModal'
+import { money, num } from '@/shared/lib/format'
 
 const STATUS_INFO = {
   draft: { label: 'Черновик', tone: 'warn' },

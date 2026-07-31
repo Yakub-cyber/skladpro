@@ -21,11 +21,11 @@ import {
   ShoppingBag,
   AlertTriangle,
 } from 'lucide-react'
-import { Card, Section, Badge, Button, cx } from '../components/ui'
-import { useStore } from '../store/useStore'
-import { money, num, plural, relTime } from '../lib/format'
-import { reservedByProduct, availableStock } from '../lib/orders'
-import { catInfo } from '../lib/constants'
+import { Card, Section, Badge, Button, cx } from '@/shared/ui'
+import { useStore } from '@/shared/store/useStore'
+import { money, num, plural, relTime } from '@/shared/lib/format'
+import { reservedByProduct, availableStock } from '@/shared/lib/orders'
+import { catInfo } from '@/shared/lib/constants'
 
 function ContextTile({ label, valueLine }) {
   return (

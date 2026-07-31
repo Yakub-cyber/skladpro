@@ -2,8 +2,8 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Search, Package, ClipboardList, Users, CornerDownLeft } from 'lucide-react'
 import { useStore } from '../store/useStore'
-import { NAV_ITEMS } from './Layout'
-import { cx } from './ui'
+import { NAV_ITEMS } from '@/app/layout/Layout'
+import { cx } from '@/shared/ui'
 import { money } from '../lib/format'
 
 export default function CommandPalette({ open, setOpen }) {

@@ -7,9 +7,9 @@
 // USB-сканер + камера + текстовый поиск идут в одно поле.
 import { useMemo, useState } from 'react'
 import { ArrowDownToLine, Check, FileEdit, Trash2 } from 'lucide-react'
-import { Card, Button, Badge, Empty } from '../../components/ui'
-import { useStore } from '../../store/useStore'
-import { money, num } from '../../lib/format'
+import { Card, Button, Badge, Empty } from '@/shared/ui'
+import { useStore } from '@/shared/store/useStore'
+import { money, num } from '@/shared/lib/format'
 import { ProductPickerGrid, Toast, useScanResolver } from './_shared'
 
 export default function ReceiveTab() {

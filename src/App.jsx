@@ -1,9 +1,9 @@
 import { lazy, Suspense, useEffect } from 'react'
 import { Routes, Route } from 'react-router-dom'
-import Layout from './components/Layout'
+import Layout from '@/app/layout/Layout'
 import Login, { Onboarding, ResetPassword } from './pages/Login'
-import PageLoader from './components/PageLoader'
-import { useStore } from './store/useStore'
+import PageLoader from '@/shared/components/PageLoader'
+import { useStore } from '@/shared/store/useStore'
 
 // Ленивая загрузка страниц (code-splitting): тяжёлые зависимости
 // (recharts, leaflet, jsbarcode) уезжают в отдельные чанки и не грузятся,

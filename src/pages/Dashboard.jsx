@@ -23,12 +23,12 @@ import {
   CartesianGrid,
   Legend,
 } from 'recharts'
-import { Stat, Card, Section, StatusBadge, Badge, Progress, Button, cx } from '../components/ui'
-import { useStore } from '../store/useStore'
-import { money, num, dateShort, plural } from '../lib/format'
-import { analyticsInsights, soldByProduct } from '../lib/ai'
-import { reservedByProduct, availableStock } from '../lib/orders'
-import { catInfo } from '../lib/constants'
+import { Stat, Card, Section, StatusBadge, Badge, Progress, Button, cx } from '@/shared/ui'
+import { useStore } from '@/shared/store/useStore'
+import { money, num, dateShort, plural } from '@/shared/lib/format'
+import { analyticsInsights, soldByProduct } from '@/shared/lib/ai'
+import { reservedByProduct, availableStock } from '@/shared/lib/orders'
+import { catInfo } from '@/shared/lib/constants'
 import DashboardStock from './DashboardStock'
 import DashboardCourier from './DashboardCourier'
 

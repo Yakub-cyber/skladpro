@@ -12,10 +12,10 @@ import {
   XCircle,
   Clock,
 } from 'lucide-react'
-import { Badge, Card, cx } from '../components/ui'
-import { useStore } from '../store/useStore'
-import { money, num, dateTime, dateFull } from '../lib/format'
-import { TRACK_FLOW, statusInfo } from '../lib/constants'
+import { Badge, Card, cx } from '@/shared/ui'
+import { useStore } from '@/shared/store/useStore'
+import { money, num, dateTime, dateFull } from '@/shared/lib/format'
+import { TRACK_FLOW, statusInfo } from '@/shared/lib/constants'
 
 const STEP_ICON = {
   new: FileText,

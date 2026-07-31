@@ -29,21 +29,21 @@ import {
   Select,
   Empty,
   cx,
-} from '../components/ui'
-import WarehouseMap from '../components/WarehouseMap'
-import { useConfirm } from '../components/Confirm'
-import { useStore } from '../store/useStore'
-import { money, dateTime, dateShort, plural, num } from '../lib/format'
+} from '@/shared/ui'
+import WarehouseMap from '@/shared/components/WarehouseMap'
+import { useConfirm } from '@/shared/components/Confirm'
+import { useStore } from '@/shared/store/useStore'
+import { money, dateTime, dateShort, plural, num } from '@/shared/lib/format'
 import {
   TRACK_FLOW,
   statusInfo,
   nextStatus,
   ORDER_STATUSES,
   priceFor,
-} from '../lib/constants'
-import { buildPickRoute } from '../lib/ai'
-import DocPreviewModal from '../components/DocPreviewModal'
-import { cellById } from '../store/seed'
+} from '@/shared/lib/constants'
+import { buildPickRoute } from '@/shared/lib/ai'
+import DocPreviewModal from '@/shared/components/DocPreviewModal'
+import { cellById } from '@/shared/store/seed'
 
 // «Чеки» и «Заказы» — две разные сущности в одном списке:
 //   kind='retail' — розничный чек из кассы, закрыт сразу, без воронки

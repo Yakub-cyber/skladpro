@@ -1,10 +1,10 @@
 import { useState, useRef, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { Sparkles, Send, Loader2, Bot, User, Settings as SettingsIcon, Lightbulb } from 'lucide-react'
-import { Card, Button, Badge, cx } from '../components/ui'
-import { useStore } from '../store/useStore'
-import { askLLM, aiConfig, aiEnabled, analyticsInsights } from '../lib/ai'
-import { buildAssistantContext, buildAssistantPrompt } from '../lib/assistant'
+import { Card, Button, Badge, cx } from '@/shared/ui'
+import { useStore } from '@/shared/store/useStore'
+import { askLLM, aiConfig, aiEnabled, analyticsInsights } from '@/shared/lib/ai'
+import { buildAssistantContext, buildAssistantPrompt } from '@/shared/lib/assistant'
 
 const SUGGESTIONS = [
   'Что заканчивается на складе?',

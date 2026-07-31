@@ -27,17 +27,17 @@ import {
   Printer,
   Truck,
 } from 'lucide-react'
-import { Card, Button, Badge, Field, Select, Input, Textarea, Modal, Empty, cx } from '../components/ui'
-import DocPreviewModal from '../components/DocPreviewModal'
-import { useStore } from '../store/useStore'
-import { money, num } from '../lib/format'
-import { CATEGORIES, catInfo, priceFor } from '../lib/constants'
-import { resolveScan } from '../lib/barcode'
-import { reservedByProduct } from '../lib/orders'
-import { geocodeAddress } from '../lib/geo'
-import { computeKitStock } from '../lib/kit'
-import { aiParseInvoice, aiConfig, aiEnabled } from '../lib/ai'
-import { computeVatSummary } from '../lib/vat'
+import { Card, Button, Badge, Field, Select, Input, Textarea, Modal, Empty, cx } from '@/shared/ui'
+import DocPreviewModal from '@/shared/components/DocPreviewModal'
+import { useStore } from '@/shared/store/useStore'
+import { money, num } from '@/shared/lib/format'
+import { CATEGORIES, catInfo, priceFor } from '@/shared/lib/constants'
+import { resolveScan } from '@/shared/lib/barcode'
+import { reservedByProduct } from '@/shared/lib/orders'
+import { geocodeAddress } from '@/shared/lib/geo'
+import { computeKitStock } from '@/shared/lib/kit'
+import { aiParseInvoice, aiConfig, aiEnabled } from '@/shared/lib/ai'
+import { computeVatSummary } from '@/shared/lib/vat'
 
 // Настройки кассового оборудования по умолчанию. Живут в
 // settings.pos — то есть общие для компании, но применяются только

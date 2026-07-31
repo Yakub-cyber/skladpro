@@ -23,11 +23,11 @@ import {
   UserX,
   AlertTriangle,
 } from 'lucide-react'
-import { Section, Button, Field, Input, Select, Badge, cx } from '../components/ui'
-import { useConfirm } from '../components/Confirm'
-import { useStore } from '../store/useStore'
-import { askLLM, aiConfig, aiEnabled, AI_MODELS, ENV_AI_KEY } from '../lib/ai'
-import { changePassword } from '../lib/cloud'
+import { Section, Button, Field, Input, Select, Badge, cx } from '@/shared/ui'
+import { useConfirm } from '@/shared/components/Confirm'
+import { useStore } from '@/shared/store/useStore'
+import { askLLM, aiConfig, aiEnabled, AI_MODELS, ENV_AI_KEY } from '@/shared/lib/ai'
+import { changePassword } from '@/shared/lib/cloud'
 import {
   hasApi,
   apiListApiKeys,
@@ -41,7 +41,7 @@ import {
   apiGetExportStatus,
   apiDeleteAccount,
   apiCancelDeleteAccount,
-} from '../lib/api'
+} from '@/shared/api'
 
 export default function Settings() {
   const { settings, updateSettings, resetDemo, cloud, companyName } = useStore()

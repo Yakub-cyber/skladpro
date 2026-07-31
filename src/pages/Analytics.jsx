@@ -22,11 +22,11 @@ import {
   Tooltip,
   CartesianGrid,
 } from 'recharts'
-import { Card, Section, Stat, Badge, Empty } from '../components/ui'
-import { useStore } from '../store/useStore'
-import { money, num } from '../lib/format'
-import { analyticsInsights, soldByProduct } from '../lib/ai'
-import { CATEGORIES, catInfo } from '../lib/constants'
+import { Card, Section, Stat, Badge, Empty } from '@/shared/ui'
+import { useStore } from '@/shared/store/useStore'
+import { money, num } from '@/shared/lib/format'
+import { analyticsInsights, soldByProduct } from '@/shared/lib/ai'
+import { CATEGORIES, catInfo } from '@/shared/lib/constants'
 
 const INSIGHT_ICON = { PackageMinus, TrendingDown, Flame, Snowflake }
 const SEV = {

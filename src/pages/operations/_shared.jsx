@@ -25,11 +25,11 @@ import {
   LayoutGrid,
   List as ListIcon,
 } from 'lucide-react'
-import { Empty, cx } from '../../components/ui'
-import { useStore } from '../../store/useStore'
-import { money, num } from '../../lib/format'
-import { CATEGORIES, catInfo } from '../../lib/constants'
-import { resolveScan } from '../../lib/barcode'
+import { Empty, cx } from '@/shared/ui'
+import { useStore } from '@/shared/store/useStore'
+import { money, num } from '@/shared/lib/format'
+import { CATEGORIES, catInfo } from '@/shared/lib/constants'
+import { resolveScan } from '@/shared/lib/barcode'
 
 // Иконка по типу документа — используется в реестре и журнале.
 export const DOC_ICON = {

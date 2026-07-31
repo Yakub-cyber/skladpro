@@ -5,9 +5,9 @@
 // через POST_SIGN=+1 (см. lib/posting.js).
 import { useMemo, useState } from 'react'
 import { PackagePlus, Check, FileEdit, Trash2 } from 'lucide-react'
-import { Card, Button, Badge, Empty, Field, Select } from '../../components/ui'
-import { useStore } from '../../store/useStore'
-import { money, num } from '../../lib/format'
+import { Card, Button, Badge, Empty, Field, Select } from '@/shared/ui'
+import { useStore } from '@/shared/store/useStore'
+import { money, num } from '@/shared/lib/format'
 import { ProductPickerGrid, Toast, useScanResolver } from './_shared'
 
 const REASONS = [

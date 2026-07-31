@@ -16,7 +16,7 @@ import {
   ShoppingCart,
   MonitorSmartphone,
 } from 'lucide-react'
-import { Button, cx } from '../components/ui'
+import { Button, cx } from '@/shared/ui'
 
 // Секция «Скачать»: подтягивает /downloads/latest.json (публикуется release.sh).
 // Формат: { mobile: {version, size, url}, pos: {...}, desktop: {...} } — любой

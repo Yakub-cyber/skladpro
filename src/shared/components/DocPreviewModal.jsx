@@ -17,12 +17,12 @@
 //   - кнопка «Печать» — открывает системный диалог печати из iframe
 import { useMemo, useRef, useState, useEffect } from 'react'
 import { Printer, ExternalLink } from 'lucide-react'
-import { Button, Field, Input, Select, cx } from './ui'
+import { Button, Field, Input, Select, cx } from '@/shared/ui'
 import { X } from 'lucide-react'
 import { createPortal } from 'react-dom'
 import { useStore } from '../store/useStore'
-import { PRINT_CSS } from '../lib/print'
-import { ctxFromStore, renderTemplate, TEMPLATES, printFrame, detectCategory } from '../lib/printCore'
+import { PRINT_CSS } from '../lib/print/print'
+import { ctxFromStore, renderTemplate, TEMPLATES, printFrame, detectCategory } from '../lib/print/printCore'
 
 export default function DocPreviewModal({ doc, category, onClose }) {
   const state = useStore.getState()

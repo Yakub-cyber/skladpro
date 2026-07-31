@@ -21,12 +21,12 @@ import {
   Input,
   Empty,
   cx,
-} from '../components/ui'
-import { useStore } from '../store/useStore'
-import { money, num, dateFull } from '../lib/format'
-import { parseInvoiceText, aiParseInvoice, aiEnabled, aiConfig } from '../lib/ai'
-import { priceFor } from '../lib/constants'
-import DocPreviewModal from '../components/DocPreviewModal'
+} from '@/shared/ui'
+import { useStore } from '@/shared/store/useStore'
+import { money, num, dateFull } from '@/shared/lib/format'
+import { parseInvoiceText, aiParseInvoice, aiEnabled, aiConfig } from '@/shared/lib/ai'
+import { priceFor } from '@/shared/lib/constants'
+import DocPreviewModal from '@/shared/components/DocPreviewModal'
 
 const EXAMPLES = [
   'Гвозди 100шт, Молоток слесалный 5шт, Саморез по дереву 3.5x40 20 уп',

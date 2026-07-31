@@ -28,7 +28,7 @@ import {
 	hasApi,
 	onAuthChange as apiOnAuthChange,
 	subscribeEvents,
-} from './api'
+} from '@/shared/api'
 import { createOutbox } from './outbox'
 
 const toSnake = (s) => s.replace(/[A-Z]/g, (c) => '_' + c.toLowerCase())

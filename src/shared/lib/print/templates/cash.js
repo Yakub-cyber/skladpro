@@ -6,7 +6,7 @@
 // «выдать», основание, подписи руководителя, бухгалтера, кассира и
 // (в РКО) получателя. Достаточно для внутреннего кассового учёта.
 import { esc, fmt, rublesToWords } from '../print'
-import { purposeLabel } from '../money'
+import { purposeLabel } from '@/shared/lib/money'
 
 const dateRu = (iso) => new Date(iso || Date.now()).toLocaleDateString('ru-RU')
 

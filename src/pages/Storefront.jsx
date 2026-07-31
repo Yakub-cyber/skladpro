@@ -24,11 +24,11 @@ import {
   Mail,
   Truck,
 } from 'lucide-react'
-import { Card, Button, Badge, Modal, Field, Input, Empty, cx } from '../components/ui'
-import { useStore } from '../store/useStore'
-import { money, num } from '../lib/format'
-import { CATEGORIES, catInfo, priceFor } from '../lib/constants'
-import { reservedByProduct, availableStock } from '../lib/orders'
+import { Card, Button, Badge, Modal, Field, Input, Empty, cx } from '@/shared/ui'
+import { useStore } from '@/shared/store/useStore'
+import { money, num } from '@/shared/lib/format'
+import { CATEGORIES, catInfo, priceFor } from '@/shared/lib/constants'
+import { reservedByProduct, availableStock } from '@/shared/lib/orders'
 
 const CAT_ICON = { Wrench, Hammer, Zap, Droplets, PaintBucket, Package }
 

@@ -7,7 +7,7 @@
 import { makeSeed } from '../seed'
 import { uid } from '../../lib/id'
 import { hasSupabase } from '../../lib/supabase'
-import { apiBootstrap } from '../../lib/api'
+import { apiBootstrap } from '@/shared/api'
 import { stockConsumedFromStatus } from '../../lib/orders'
 import {
   cloudLoadMerged,
@@ -227,7 +227,7 @@ export const createCloudSlice = (set, get) => ({
       // (best-effort — не роняем логин, если /v1/subscription недоступен).
       let serverSubscription = null
       try {
-        const { apiGetSubscription } = await import('../../lib/api')
+        const { apiGetSubscription } = await import('@/shared/api')
         const r = await apiGetSubscription()
         if (r?.ok && r.body) {
           serverSubscription = {
@@ -339,7 +339,7 @@ export const createCloudSlice = (set, get) => ({
   // YOOKASSA_RETURN_URL); либо периодически если хочется отражать состояние.
   refreshSubscription: async () => {
     try {
-      const { apiGetSubscription } = await import('../../lib/api')
+      const { apiGetSubscription } = await import('@/shared/api')
       const r = await apiGetSubscription()
       if (r?.ok && r.body) {
         set({

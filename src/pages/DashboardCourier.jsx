@@ -5,9 +5,9 @@
 import { useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { ArrowRight, MapPin, Navigation, PhoneCall, Route } from 'lucide-react'
-import { Card, Button, Badge, cx } from '../components/ui'
-import { useStore } from '../store/useStore'
-import { plural, money } from '../lib/format'
+import { Card, Button, Badge, cx } from '@/shared/ui'
+import { useStore } from '@/shared/store/useStore'
+import { plural, money } from '@/shared/lib/format'
 
 export default function DashboardCourier() {
   const orders = useStore((s) => s.orders) || []

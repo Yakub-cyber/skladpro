@@ -15,13 +15,13 @@ import {
   Users,
   X,
 } from 'lucide-react'
-import { Card, Button, Badge, Field, Input, Select, Modal, Empty, Avatar, cx } from '../components/ui'
-import { useConfirm } from '../components/Confirm'
-import { useStore } from '../store/useStore'
-import { money } from '../lib/format'
-import { accountBalances } from '../lib/money'
-import { roleInfo } from '../lib/constants'
-import { openPosWindow } from '../components/Layout'
+import { Card, Button, Badge, Field, Input, Select, Modal, Empty, Avatar, cx } from '@/shared/ui'
+import { useConfirm } from '@/shared/components/Confirm'
+import { useStore } from '@/shared/store/useStore'
+import { money } from '@/shared/lib/format'
+import { accountBalances } from '@/shared/lib/money'
+import { roleInfo } from '@/shared/lib/constants'
+import { openPosWindow } from '@/app/layout/Layout'
 
 export default function Cashiers() {
   const accounts = useStore((s) => s.accounts) || []

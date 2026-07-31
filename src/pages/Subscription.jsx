@@ -22,9 +22,9 @@ import {
   Zap,
   AlertTriangle,
 } from 'lucide-react'
-import { Card, Section, Button, Badge, cx } from '../components/ui'
-import { useStore } from '../store/useStore'
-import { effectivePlan, trialDaysLeft, paidDaysLeft, extendPlan } from '../lib/subscription'
+import { Card, Section, Button, Badge, cx } from '@/shared/ui'
+import { useStore } from '@/shared/store/useStore'
+import { effectivePlan, trialDaysLeft, paidDaysLeft, extendPlan } from '@/shared/lib/subscription'
 
 const PLANS = [
   {
@@ -120,7 +120,7 @@ export default function Subscription() {
     // pro/business/start — реальный checkout, остальное — легаси
     if (['start', 'business', 'pro'].includes(planKey)) {
       try {
-        const { apiCreateCheckout } = await import('../lib/api')
+        const { apiCreateCheckout } = await import('@/shared/api')
         const r = await apiCreateCheckout(planKey, 1)
         if (r?.ok && r.body?.confirmationUrl) {
           window.location.assign(r.body.confirmationUrl)
