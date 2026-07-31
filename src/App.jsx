@@ -1,36 +1,36 @@
 import { lazy, Suspense, useEffect } from 'react'
 import { Routes, Route } from 'react-router-dom'
-import Layout from './components/Layout'
-import Login, { Onboarding, ResetPassword } from './pages/Login'
-import PageLoader from './components/PageLoader'
-import { useStore } from './store/useStore'
+import Layout from '@/app/layout/Layout'
+import Login, { Onboarding, ResetPassword } from '@/features/auth/LoginPage'
+import PageLoader from '@/shared/components/PageLoader'
+import { useStore } from '@/shared/store/useStore'
 
 // Ленивая загрузка страниц (code-splitting): тяжёлые зависимости
 // (recharts, leaflet, jsbarcode) уезжают в отдельные чанки и не грузятся,
 // пока пользователь не откроет соответствующий раздел.
-const Dashboard = lazy(() => import('./pages/Dashboard'))
-const Orders = lazy(() => import('./pages/Orders'))
-const NewOrder = lazy(() => import('./pages/NewOrder'))
-const EditOrder = lazy(() => import('./pages/EditOrder'))
-const Delivery = lazy(() => import('./pages/Delivery'))
-const Products = lazy(() => import('./pages/Products'))
-const Warehouse = lazy(() => import('./pages/Warehouse'))
-const Operations = lazy(() => import('./pages/Operations'))
-const Invoices = lazy(() => import('./pages/Invoices'))
-const Customers = lazy(() => import('./pages/Customers'))
-const Suppliers = lazy(() => import('./pages/Suppliers'))
-const Analytics = lazy(() => import('./pages/Analytics'))
-const Assistant = lazy(() => import('./pages/Assistant'))
-const Storefront = lazy(() => import('./pages/Storefront'))
-const Journal = lazy(() => import('./pages/Journal'))
-const Money = lazy(() => import('./pages/Money'))
-const Cashiers = lazy(() => import('./pages/Cashiers'))
-const Movements = lazy(() => import('./pages/Movements'))
-const Subscription = lazy(() => import('./pages/Subscription'))
-const PurchaseOrders = lazy(() => import('./pages/PurchaseOrders'))
-const Employees = lazy(() => import('./pages/Employees'))
-const Settings = lazy(() => import('./pages/Settings'))
-const Tracking = lazy(() => import('./pages/Tracking'))
+const Dashboard = lazy(() => import('@/features/dashboard/DashboardPage'))
+const Orders = lazy(() => import('@/features/orders/OrdersPage'))
+const NewOrder = lazy(() => import('@/features/orders/NewOrderPage'))
+const EditOrder = lazy(() => import('@/features/orders/EditOrderPage'))
+const Delivery = lazy(() => import('@/features/delivery/DeliveryPage'))
+const Products = lazy(() => import('@/features/products/ProductsPage'))
+const Warehouse = lazy(() => import('@/features/warehouse/WarehousePage'))
+const Operations = lazy(() => import('@/features/operations/OperationsPage'))
+const Invoices = lazy(() => import('@/features/invoices/InvoicesPage'))
+const Customers = lazy(() => import('@/features/customers/CustomersPage'))
+const Suppliers = lazy(() => import('@/features/suppliers/SuppliersPage'))
+const Analytics = lazy(() => import('@/features/analytics/AnalyticsPage'))
+const Assistant = lazy(() => import('@/features/assistant/AssistantPage'))
+const Storefront = lazy(() => import('@/features/storefront/StorefrontPage'))
+const Journal = lazy(() => import('@/features/shifts/JournalPage'))
+const Money = lazy(() => import('@/features/money/MoneyPage'))
+const Cashiers = lazy(() => import('@/features/shifts/CashiersPage'))
+const Movements = lazy(() => import('@/features/movements/MovementsPage'))
+const Subscription = lazy(() => import('@/features/subscription/SubscriptionPage'))
+const PurchaseOrders = lazy(() => import('@/features/suppliers/PurchaseOrdersPage'))
+const Employees = lazy(() => import('@/features/employees/EmployeesPage'))
+const Settings = lazy(() => import('@/features/settings/SettingsPage'))
+const Tracking = lazy(() => import('@/features/tracking/TrackingPage'))
 
 function AuthGate({ children }) {
   const authUserId = useStore((s) => s.authUserId)
@@ -65,9 +65,7 @@ export default function App() {
           </Suspense>
         }
       />
-      {/* Публичная витрина — доступна клиентам без входа в админку.
-          Тот же компонент, что в /storefront, но без брендового
-          «баннера админки» — определяется по props isPublic. */}
+      {/* Публичная витрина — доступна клиентам без входа в админку. */}
       <Route
         path="/shop"
         element={
@@ -77,11 +75,7 @@ export default function App() {
         }
       />
 
-      {/* Полноэкранный POS-режим: та же NewOrder-страница, но БЕЗ Layout
-          (сайдбара/шапки/breadcrumbs). Открывается кнопкой «Касса» через
-          window.open в новом окне — это отдельный «терминал кассира», не
-          мешающий работе админа в основной вкладке. Тот же localStorage-
-          стор → синхронно виден остальным вкладкам. */}
+      {/* Полноэкранный POS-режим: та же NewOrder-страница, но БЕЗ Layout. */}
       <Route
         path="/pos"
         element={
@@ -113,8 +107,6 @@ export default function App() {
         <Route path="suppliers" element={<Suppliers />} />
         <Route path="analytics" element={<Analytics />} />
         <Route path="assistant" element={<Assistant />} />
-        {/* /storefront — предпросмотр витрины из админки; /shop — то же
-            без Layout для клиента (см. публичный маршрут выше). */}
         <Route path="storefront" element={<Storefront />} />
         <Route path="journal" element={<Journal />} />
         <Route path="money" element={<Money />} />
