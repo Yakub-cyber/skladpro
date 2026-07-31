@@ -1,4 +1,4 @@
-// Облачная авторизация и bootstrap мультитенанта Supabase.
+// Облачная авторизация и bootstrap мультитенанта.
 //
 // Особенность: attachSync/resumeSync принимают ссылку на useStore-объект
 // (им нужен .subscribe/.setState). Внутри slice useStore ещё не создан,
