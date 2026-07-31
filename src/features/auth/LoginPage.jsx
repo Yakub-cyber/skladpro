@@ -4,8 +4,8 @@ import { Avatar, cx, Button, Field, Input } from '@/shared/ui'
 import { useStore } from '@/shared/store/useStore'
 import { roleInfo } from '@/shared/lib/constants'
 import { requestPasswordReset } from '@/shared/lib/cloud'
-import Landing from './Landing'
-import Connect from './Connect'
+import Landing from '@/features/landing/LandingPage'
+import Connect from '@/features/connect/ConnectPage'
 
 // Чтение параметра из hash-URL (у нас HashRouter, поэтому query после #/).
 // `?invite=xxx&email=y@z` → { invite: 'xxx', email: 'y@z' }.
