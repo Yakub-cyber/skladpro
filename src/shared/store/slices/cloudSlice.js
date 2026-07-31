@@ -6,7 +6,7 @@
 // create() вызовом bindStore(useStore).
 import { makeSeed } from '../seed'
 import { uid } from '../../lib/id'
-import { hasSupabase } from '../../lib/supabase'
+const hasSupabase = true
 import { apiBootstrap } from '@/shared/api'
 import { stockConsumedFromStatus } from '../../lib/orders'
 import {
