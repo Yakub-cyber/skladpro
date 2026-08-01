@@ -23,18 +23,16 @@ import { useStore } from '@/shared/store/useStore'
 import { money, num } from '@/shared/lib/format'
 import { reservedByProduct, availableStock } from '@/shared/lib/orders'
 
-// Подбор поставщика под категорию товара
+// Подбор поставщика под категорию товара (динамически по совпадению
+// категории с полем supplier.category).
 function supplierFor(category, suppliers) {
-  const map = {
-    Крепёж: 'Крепёж',
-    Инструмент: 'Инструмент',
-    Электрика: 'Электрика',
-    Сантехника: 'Сантехника',
-    ЛКМ: 'ЛКМ',
-    Расходники: 'Расход',
-  }
-  const needle = map[category] || category
-  return suppliers.find((s) => s.category.includes(needle)) || suppliers[0]
+  if (!category) return suppliers[0]
+  const lc = category.toLowerCase()
+  return (
+    suppliers.find((s) => s.category?.toLowerCase().includes(lc)) ||
+    suppliers.find((s) => lc.includes(s.category?.toLowerCase())) ||
+    suppliers[0]
+  )
 }
 
 export default function Suppliers() {

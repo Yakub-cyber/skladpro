@@ -38,7 +38,7 @@ export default defineConfig(({ command, mode }) => {
     if (old !== rendered) fs.writeFileSync(swOut, rendered)
   }
   return {
-    base: command === 'build' ? '/skladpro/' : '/',
+    base: '/',
     plugins: [react(), tailwindcss()],
     resolve: {
       alias: {

@@ -27,7 +27,7 @@ import {
 import { Card, Button, Badge, Modal, Field, Input, Empty, cx } from '@/shared/ui'
 import { useStore } from '@/shared/store/useStore'
 import { money, num } from '@/shared/lib/format'
-import { CATEGORIES, catInfo, priceFor } from '@/shared/lib/constants'
+import { catInfo, priceFor } from '@/shared/lib/constants'
 import { reservedByProduct, availableStock } from '@/shared/lib/orders'
 
 const CAT_ICON = { Wrench, Hammer, Zap, Droplets, PaintBucket, Package }
@@ -36,6 +36,7 @@ const CAT_ICON = { Wrench, Hammer, Zap, Droplets, PaintBucket, Package }
 // прячем «баннер админки» и текст «Так заказывают ваши клиенты».
 export default function Storefront({ isPublic = false }) {
   const { products, priceTypes, orders, addOrder, addCustomer } = useStore()
+  const productCategories = useMemo(() => [...new Set(products.map(p => p.category).filter(Boolean))].sort(), [products])
   const defType = priceTypes.find((t) => t.default)?.id || priceTypes[0]?.id
   const [q, setQ] = useState('')
   const [cat, setCat] = useState('all')
@@ -188,9 +189,9 @@ export default function Storefront({ isPublic = false }) {
         </div>
         <div className="flex gap-1.5 overflow-x-auto no-scrollbar">
           <Chip active={cat === 'all'} onClick={() => setCat('all')}>Все</Chip>
-          {CATEGORIES.map((c) => (
-            <Chip key={c.key} active={cat === c.key} onClick={() => setCat(c.key)}>
-              {c.key}
+          {productCategories.map((c) => (
+            <Chip key={c} active={cat === c} onClick={() => setCat(c)}>
+              {c}
             </Chip>
           ))}
         </div>

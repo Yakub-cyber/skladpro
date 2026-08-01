@@ -12,7 +12,7 @@ import {
 import { Button, Input, Empty, cx } from '@/shared/ui'
 import { useStore } from '@/shared/store/useStore'
 import { money } from '@/shared/lib/format'
-import { CATEGORIES, PRODUCT_TYPES } from '@/shared/lib/constants'
+import { PRODUCT_TYPES } from '@/shared/lib/constants'
 import { downloadCsv } from '@/shared/lib/export'
 import { reservedByProduct } from '@/shared/lib/orders'
 import {
@@ -36,6 +36,7 @@ export default function Products() {
   const products = useStore((s) => s.products)
   const orders = useStore((s) => s.orders)
   const reserved = useMemo(() => reservedByProduct(orders), [orders])
+  const productCategories = useMemo(() => [...new Set(products.map(p => p.category).filter(Boolean))].sort(), [products])
   const [params] = useSearchParams()
   const [q, setQ] = useState(params.get('q') || '')
   const [cat, setCat] = useState('all')
@@ -253,9 +254,9 @@ export default function Products() {
           <Chip active={cat === 'all'} onClick={() => setCat('all')}>
             Все
           </Chip>
-          {CATEGORIES.map((c) => (
-            <Chip key={c.key} active={cat === c.key} onClick={() => setCat(c.key)}>
-              {c.key}
+          {productCategories.map((c) => (
+            <Chip key={c} active={cat === c} onClick={() => setCat(c)}>
+              {c}
             </Chip>
           ))}
         </div>

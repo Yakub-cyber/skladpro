@@ -12,7 +12,7 @@ import { Card, Button, Badge, Modal, Empty, cx } from '@/shared/ui'
 import DocPreviewModal from '@/shared/components/DocPreviewModal'
 import { useStore } from '@/shared/store/useStore'
 import { money, num } from '@/shared/lib/format'
-import { CATEGORIES, priceFor } from '@/shared/lib/constants'
+import { priceFor } from '@/shared/lib/constants'
 import { resolveScan } from '@/shared/lib/barcode'
 import { reservedByProduct } from '@/shared/lib/orders'
 import { geocodeAddress } from '@/shared/lib/geo'
@@ -34,6 +34,7 @@ export default function NewOrder({ fullscreen = false }) {
   const { customers, products, priceTypes, addOrder, addCustomer, orders } = useStore()
   const defType = priceTypes.find((t) => t.default)?.id || priceTypes[0]?.id
   const reserved = useMemo(() => reservedByProduct(orders), [orders])
+  const productCategories = useMemo(() => [...new Set(products.map(p => p.category).filter(Boolean))].sort(), [products])
   // Для kit доступный остаток вычисляется по компонентам (свой stock у
   // комплекта не хранится), для остальных — обычный p.stock − резерв.
   const availOf = (p) => {
@@ -464,9 +465,9 @@ export default function NewOrder({ fullscreen = false }) {
 
           <div className="flex gap-1.5 overflow-x-auto no-scrollbar -mx-1 px-1">
             <Chip active={cat === 'all'} onClick={() => setCat('all')}>Все</Chip>
-            {CATEGORIES.map((c) => (
-              <Chip key={c.key} active={cat === c.key} onClick={() => setCat(c.key)}>
-                {c.key}
+            {productCategories.map((c) => (
+              <Chip key={c} active={cat === c} onClick={() => setCat(c)}>
+                {c}
               </Chip>
             ))}
           </div>

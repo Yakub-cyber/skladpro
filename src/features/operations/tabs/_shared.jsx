@@ -28,7 +28,7 @@ import {
 import { Empty, cx } from '@/shared/ui'
 import { useStore } from '@/shared/store/useStore'
 import { money, num } from '@/shared/lib/format'
-import { CATEGORIES, catInfo } from '@/shared/lib/constants'
+import { catInfo } from '@/shared/lib/constants'
 import { resolveScan } from '@/shared/lib/barcode'
 
 // Иконка по типу документа — используется в реестре и журнале.
@@ -338,6 +338,7 @@ export function ProductPickerGrid({
   placeholder,
 }) {
   const products = useStore((s) => s.products)
+  const productCategories = useMemo(() => [...new Set(products.map(p => p.category).filter(Boolean))].sort(), [products])
   const [view, setView] = useState(() => {
     try {
       return localStorage.getItem(VIEW_KEY) || 'tiles'
@@ -377,9 +378,9 @@ export function ProductPickerGrid({
       <div className="flex items-center gap-1.5">
         <div className="flex gap-1.5 overflow-x-auto no-scrollbar flex-1 min-w-0">
           <Chip active={cat === 'all'} onClick={() => setCat('all')}>Все</Chip>
-          {CATEGORIES.map((c) => (
-            <Chip key={c.key} active={cat === c.key} onClick={() => setCat(c.key)}>
-              {c.key}
+          {productCategories.map((c) => (
+            <Chip key={c} active={cat === c} onClick={() => setCat(c)}>
+              {c}
             </Chip>
           ))}
         </div>

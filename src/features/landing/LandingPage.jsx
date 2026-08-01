@@ -39,9 +39,19 @@ function DownloadsSection() {
   const [state, setState] = useState('loading') // 'loading' | 'ready' | 'missing'
   useEffect(() => {
     let alive = true
-    fetch('/downloads/latest.json', { cache: 'no-cache' })
-      .then((r) => (r.ok ? r.json() : Promise.reject()))
-      .then((j) => { if (alive) { setMeta(j); setState('ready') } })
+    const apiUrl = (import.meta.env?.VITE_API_URL || '').replace(/\/+$/, '')
+    const configP = apiUrl
+      ? fetch(`${apiUrl}/v1/public/config`).then(r => r.ok ? r.json() : {})
+      : Promise.resolve({ showDownloads: true })
+    const metaP = fetch('/downloads/latest.json', { cache: 'no-cache' })
+      .then((r) => (r.ok ? r.json() : null))
+    Promise.all([configP, metaP])
+      .then(([cfg, m]) => {
+        if (!alive) return
+        if (!cfg?.showDownloads || !m) { setState('missing'); return }
+        setMeta(m)
+        setState('ready')
+      })
       .catch(() => { if (alive) setState('missing') })
     return () => { alive = false }
   }, [])
@@ -287,7 +297,7 @@ export default function Landing({ onStart, onConnect, onRegister }) {
         <div className="rounded-2xl bg-gradient-to-r from-brand to-info p-8 sm:p-12 text-center text-white relative overflow-hidden">
           <div className="relative z-10">
             <h2 className="text-2xl sm:text-3xl font-semibold">Запустите свой склад за минуту</h2>
-            <p className="text-white/85 mt-2">Зарегистрируйтесь — демо-данные уже внутри, можно сразу пробовать.</p>
+            <p className="text-white/85 mt-2">Зарегистрируйтесь и начните вести учёт за пару минут.</p>
             <Button size="lg" variant="soft" className="mt-6 !bg-white !text-brand" icon={ArrowRight} onClick={onReg}>
               Создать аккаунт
             </Button>

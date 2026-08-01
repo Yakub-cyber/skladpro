@@ -26,7 +26,7 @@ import { Card, Section, Stat, Badge, Empty } from '@/shared/ui'
 import { useStore } from '@/shared/store/useStore'
 import { money, num } from '@/shared/lib/format'
 import { analyticsInsights, soldByProduct } from '@/shared/lib/ai'
-import { CATEGORIES, catInfo } from '@/shared/lib/constants'
+import { catInfo } from '@/shared/lib/constants'
 
 const INSIGHT_ICON = { PackageMinus, TrendingDown, Flame, Snowflake }
 const SEV = {
@@ -53,11 +53,14 @@ export default function Analytics() {
         byCat[cat] = (byCat[cat] || 0) + it.qty * it.price
       }
     }
-    const pie = CATEGORIES.map((c) => ({
-      name: c.key,
-      value: Math.round(byCat[c.key] || 0),
-      color: c.color,
-    })).filter((x) => x.value > 0)
+    const pie = Object.entries(byCat)
+      .map(([name, value]) => ({
+        name,
+        value: Math.round(value),
+        color: catInfo(name).color,
+      }))
+      .filter((x) => x.value > 0)
+      .sort((a, b) => b.value - a.value)
 
     // топ товары (выручка)
     const top = products

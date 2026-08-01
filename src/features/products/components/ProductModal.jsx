@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import {
   Check,
   PackagePlus,
@@ -21,7 +21,7 @@ import {
 } from '@/shared/ui'
 import { useStore } from '@/shared/store/useStore'
 import { money } from '@/shared/lib/format'
-import { CATEGORIES, PRODUCT_TYPES } from '@/shared/lib/constants'
+import { PRODUCT_TYPES } from '@/shared/lib/constants'
 import { CELLS } from '@/shared/store/seed'
 import { barcodeSVG } from '@/shared/lib/labels'
 import { generateEan13 } from '@/shared/lib/barcode'
@@ -184,6 +184,7 @@ function CheckCard({ checked, onChange, title, hint }) {
 
 export function ProductModal({ product, onClose }) {
   const { addProduct, updateProduct, adjustStock, removeProduct, priceTypes, products: allProducts } = useStore()
+  const productCategories = useMemo(() => [...new Set(allProducts.map(p => p.category).filter(Boolean))].sort(), [allProducts])
   const confirm = useConfirm()
   const handleRemove = async () => {
     const ok = await confirm({
@@ -209,7 +210,7 @@ export function ProductModal({ product, onClose }) {
       type: 'product',
       name: '',
       sku: '',
-      category: 'Крепёж',
+      category: '',
       unit: 'шт',
       price: 0,
       cost: 0,
@@ -329,11 +330,17 @@ export function ProductModal({ product, onClose }) {
             <Input value={f.sku} onChange={(e) => set('sku', e.target.value)} />
           </Field>
           <Field label="Категория">
-            <Select value={f.category} onChange={(e) => set('category', e.target.value)}>
-              {CATEGORIES.map((c) => (
-                <option key={c.key}>{c.key}</option>
+            <Input
+              value={f.category}
+              onChange={(e) => set('category', e.target.value)}
+              list="product-categories"
+              placeholder="Введите или выберите категорию"
+            />
+            <datalist id="product-categories">
+              {productCategories.map((c) => (
+                <option key={c} value={c} />
               ))}
-            </Select>
+            </datalist>
           </Field>
         </div>
 
@@ -354,23 +361,31 @@ export function ProductModal({ product, onClose }) {
               value={f.cost}
               onChange={(e) => {
                 const cost = +e.target.value
-                setF((s) => {
-                  const price = Number(s.prices?.[defType] ?? s.price) || 0
-                  // Если задана цена продажи > 0 — держим её, пересчитываем %
-                  // при отсутствующей цене — не трогаем prices, ждём отдельной правки.
-                  return { ...s, cost }
-                })
+                setF((s) => ({ ...s, cost }))
               }}
             />
           </Field>
-          <Field label="Наценка, %" hint="изменяет цену продажи (базовую)">
+          <Field label="Цена продажи, ₽">
+            <Input
+              type="number"
+              value={priceOf(defType)}
+              onChange={(e) => {
+                const price = Number(e.target.value) || 0
+                setF((s) => ({
+                  ...s,
+                  price,
+                  prices: { ...s.prices, [defType]: price },
+                }))
+              }}
+            />
+          </Field>
+          <Field label="Наценка, %" hint="пересчитывает цену продажи">
             <Input
               type="number"
               value={(() => {
                 const price = Number(f.prices?.[defType] ?? f.price) || 0
                 const cost = Number(f.cost) || 0
                 if (!cost) return ''
-                // Округление до 0.1%: (price-cost)/cost * 100 = %.
                 return Math.round(((price - cost) / cost) * 1000) / 10
               })()}
               onChange={(e) => {

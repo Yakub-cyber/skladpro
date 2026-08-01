@@ -18,17 +18,9 @@ import { Card, Button, Badge, Empty, Modal, Field, Input, Select, cx } from '@/s
 import WarehouseMap from '@/shared/components/WarehouseMap'
 import { useStore } from '@/shared/store/useStore'
 import { num } from '@/shared/lib/format'
+import { catInfo } from '@/shared/lib/constants'
 import { buildPickRoute } from '@/shared/lib/ai'
 import { cellById } from '@/shared/store/seed'
-
-const ZONES = [
-  { z: 'A–B', name: 'Крепёж', color: '#f59e0b' },
-  { z: 'C–D', name: 'Инструмент', color: '#7c6cff' },
-  { z: 'E', name: 'Электрика', color: '#38bdf8' },
-  { z: 'F', name: 'Сантехника', color: '#10b981' },
-  { z: 'G', name: 'ЛКМ', color: '#f43f5e' },
-  { z: 'H', name: 'Расходники', color: '#94a3b8' },
-]
 
 export default function Warehouse() {
   const {
@@ -53,6 +45,37 @@ export default function Warehouse() {
 
   const whCells = cells.filter((c) => c.warehouseId === activeWarehouseId)
   const whProducts = products.filter((p) => p.warehouseId === activeWarehouseId)
+
+  // Зоны склада: группируем по первой букве ячейки, определяем
+  // доминирующую категорию в каждой зоне.
+  const zones = useMemo(() => {
+    const byZone = {}
+    for (const p of whProducts) {
+      const zone = p.cell?.[0]
+      if (!zone || !p.category) continue
+      ;(byZone[zone] ||= {}).cats ||= {}
+      byZone[zone].cats[p.category] = (byZone[zone].cats[p.category] || 0) + 1
+    }
+    // Склеиваем соседние буквы с одной категорией, иначе — по одной
+    const entries = Object.entries(byZone)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([z, { cats }]) => {
+        const top = Object.entries(cats).sort((a, b) => b[1] - a[1])[0]?.[0] || ''
+        return { z, name: top, color: catInfo(top).color }
+      })
+    // Объединяем соседние зоны с одинаковой категорией (A+B -> A–B)
+    const merged = []
+    for (const e of entries) {
+      const last = merged[merged.length - 1]
+      if (last && last.name === e.name && e.z.charCodeAt(0) === last._end + 1) {
+        last.z = `${last._start}–${e.z}`
+        last._end = e.z.charCodeAt(0)
+      } else {
+        merged.push({ ...e, _start: e.z, _end: e.z.charCodeAt(0) })
+      }
+    }
+    return merged
+  }, [whProducts])
 
   const found = useMemo(() => {
     const s = q.trim().toLowerCase()
@@ -160,7 +183,7 @@ export default function Warehouse() {
             }}
           />
           <div className="flex flex-wrap gap-x-4 gap-y-2 px-2 pt-3 mt-2 border-t border-line">
-            {ZONES.map((z) => (
+            {zones.map((z) => (
               <div key={z.z} className="flex items-center gap-1.5 text-[12px] text-muted">
                 <span className="w-3 h-3 rounded" style={{ background: z.color }} />
                 <span className="font-medium text-ink">{z.z}</span> {z.name}

@@ -1,6 +1,15 @@
 import { uid, nextNo } from '../../lib/id'
 import { docTypeInfo } from '../../lib/constants'
 import { applyDocToState } from '../../lib/posting'
+import { postDocumentCloud } from '../../lib/cloud'
+
+const DOC_TYPE_TO_CLOUD = {
+  purchase: 'receive',
+  stockin: 'receive',
+  writeoff: 'writeoff',
+  supplier_return: 'writeoff',
+  inventory: 'adjust',
+}
 
 export const createDocumentsSlice = (set, get) => ({
   // ── Документы (реестр складских документов) ───────────────
@@ -56,6 +65,11 @@ export const createDocumentsSlice = (set, get) => ({
       `Документ ${d?.no} · ${docTypeInfo(type).label} ${post ? 'проведён' : '— черновик'}`,
       { section: 'Документы', type: post ? 'create' : 'draft' },
     )
+    const cloudType = DOC_TYPE_TO_CLOUD[type]
+    if (d && post && cloudType) {
+      const cloudDoc = { ...d, type: cloudType }
+      postDocumentCloud(cloudDoc).catch(() => {})
+    }
     return id
   },
   // Провести черновик
@@ -69,6 +83,11 @@ export const createDocumentsSlice = (set, get) => ({
       ),
     }))
     get().logAction(`Документ ${d.no} проведён`, { section: 'Документы', type: 'update' })
+    const cloudType = DOC_TYPE_TO_CLOUD[d.type]
+    if (cloudType) {
+      const cloudDoc = { ...get().documents.find((x) => x.id === id), type: cloudType }
+      postDocumentCloud(cloudDoc).catch(() => {})
+    }
   },
   // Отменить проводку (откатить влияние на остатки)
   cancelDocument: (id) => {

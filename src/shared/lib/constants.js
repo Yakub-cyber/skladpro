@@ -42,18 +42,17 @@ export const DOC_STATUS = {
   cancelled: { label: 'Отменён', color: 'bad' },
 }
 
-// Категории товаров
-export const CATEGORIES = [
-  { key: 'Крепёж', color: '#f59e0b', icon: 'Wrench' },
-  { key: 'Инструмент', color: '#7c6cff', icon: 'Hammer' },
-  { key: 'Электрика', color: '#38bdf8', icon: 'Zap' },
-  { key: 'Сантехника', color: '#10b981', icon: 'Droplets' },
-  { key: 'ЛКМ', color: '#f43f5e', icon: 'PaintBucket' },
-  { key: 'Расходники', color: '#94a3b8', icon: 'Package' },
-]
+// Категории товаров — пустые по умолчанию, заполняются из данных пользователя.
+// Палитра цветов и иконок для динамических категорий.
+const CAT_COLORS = ['#f59e0b', '#7c6cff', '#38bdf8', '#10b981', '#f43f5e', '#94a3b8', '#e879f9', '#fb923c']
+const CAT_DEFAULT = { key: '', color: '#94a3b8', icon: 'Package' }
+export const CATEGORIES = []
 
-export const catInfo = (key) =>
-  CATEGORIES.find((c) => c.key === key) || CATEGORIES[5]
+export const catInfo = (key) => {
+  if (!key) return CAT_DEFAULT
+  const hash = [...key].reduce((a, c) => a + c.charCodeAt(0), 0)
+  return { key, color: CAT_COLORS[hash % CAT_COLORS.length], icon: 'Package' }
+}
 
 // Уровни лояльности по сумме покупок
 export const TIERS = [

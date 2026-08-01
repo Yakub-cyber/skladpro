@@ -4,16 +4,13 @@
 // (им нужен .subscribe/.setState). Внутри slice useStore ещё не создан,
 // поэтому мы храним ссылку в модульной переменной и связываем её после
 // create() вызовом bindStore(useStore).
-import { makeSeed } from '../seed'
 import { uid } from '../../lib/id'
 const hasSupabase = true
 import { apiBootstrap } from '@/shared/api'
 import { stockConsumedFromStatus } from '../../lib/orders'
 import {
   cloudLoadMerged,
-  cloudSeed,
   cloudUpsert,
-  remapSeedForCompany,
   attachSync,
   pauseSync,
   resumeSync,
@@ -156,25 +153,53 @@ export const createCloudSlice = (set, get) => ({
         }
       }
       if (!membership) {
-        // Пользователь без компании. Если пришёл по инвайту и accept
-        // не сработал — показываем ошибку и НЕ ведём в онбординг,
-        // иначе он создаст свою компанию и не станет сотрудником.
-        set({
-          authUserId: null,
-          needOnboarding: !inviteAttempted, // онбординг только если инвайта не было
-          inviteError: inviteError || (inviteAttempted ? 'Приглашение не найдено — попросите администратора выслать новую ссылку.' : null),
-          cloudReady: false,
-        })
-        return
+        if (inviteError) {
+          set({
+            authUserId: session.userId,
+            needOnboarding: false,
+            inviteError,
+            cloudReady: false,
+          })
+          return
+        }
+        // Автосоздание компании — без формы онбординга
+        const r = await createCompanyCloud('Моя компания')
+        if (!r.ok) {
+          set({ authUserId: session.userId, needOnboarding: true, cloudReady: false })
+          return
+        }
+        membership = await getMembership()
+        if (!membership) {
+          set({ authUserId: session.userId, needOnboarding: true, cloudReady: false })
+          return
+        }
       }
       const companyId = membership.company_id
       // cloudLoadMerged: сначала досылает локальную очередь outbox, потом
       // читает сервер; недоставленное накладывает поверх (см. cloud.js)
       let data = await cloudLoadMerged()
       if (!data) {
-        const seed = remapSeedForCompany(makeSeed(), companyId)
-        await cloudSeed(seed, companyId)
-        data = await cloudLoadMerged()
+        data = {
+          products: [],
+          customers: [],
+          suppliers: [],
+          orders: [],
+          employees: [],
+          movements: [],
+          audit: [],
+          shifts: [],
+          activeShiftId: null,
+          priceTypes: [],
+          invoices: [],
+          documents: [],
+          cells: [],
+          warehouses: [],
+          activeWarehouseId: null,
+          accounts: [],
+          moneyTx: [],
+          purchaseOrders: [],
+          settings: { company: '', currency: '₽' },
+        }
       }
       // Заказы из облака до модели резервирования приходят без stockConsumed
       // (в т.ч. пока не применён reservation_migration.sql) — выводим флаг из
