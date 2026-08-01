@@ -33,6 +33,7 @@ export const LS_COLS = 'sklad.products.visibleCols'
 export const DEFAULT_COLS = {
   image: true,      // Фото
   sku: true,        // Артикул / Код
+  barcode: true,    // Штрихкод
   category: true,   // Категория
   unit: false,      // Ед. изм.
   minStock: true,   // Мин.

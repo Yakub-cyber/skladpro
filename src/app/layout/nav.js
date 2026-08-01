@@ -52,7 +52,15 @@ export const NAV = [
       { to: '/delivery', label: 'Доставка', icon: Navigation, perm: 'delivery' },
     ],
   },
-  { to: '/movements', label: 'Движение товара', icon: BarChart3, perm: 'analytics' },
+  {
+    label: 'Движение товара',
+    icon: BarChart3,
+    key: 'movements',
+    items: [
+      { to: '/operations', label: 'Документы', icon: ClipboardCheck, perm: 'operations' },
+      { to: '/movements', label: 'Журнал движений', icon: BarChart3, perm: 'analytics' },
+    ],
+  },
   {
     label: 'Движение денег',
     icon: Wallet,

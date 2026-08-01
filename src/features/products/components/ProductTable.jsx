@@ -28,6 +28,9 @@ export function ProductTable({ shown, list, cols, selected, onToggleOne, onToggl
                 />
               </th>
               <th className="font-medium py-3 px-4">Товар</th>
+              {cols.barcode && (
+                <th className="font-medium py-3 px-3 hidden xl:table-cell">Штрихкод</th>
+              )}
               {cols.category && (
                 <th className="font-medium py-3 px-3 hidden xl:table-cell">Категория</th>
               )}
@@ -116,6 +119,13 @@ export function ProductTable({ shown, list, cols, selected, onToggleOne, onToggl
                       </div>
                     </div>
                   </td>
+                  {cols.barcode && (
+                    <td className="py-2.5 px-3 hidden xl:table-cell">
+                      <span className="text-[12px] text-muted font-mono tabular-nums">
+                        {p.barcode ? `…${p.barcode.slice(-5)}` : '—'}
+                      </span>
+                    </td>
+                  )}
                   {cols.category && (
                     <td className="py-2.5 px-3 hidden xl:table-cell">
                       <span className="text-[13px]" style={{ color: c.color }}>

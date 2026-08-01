@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { NavLink } from 'react-router-dom'
 import { Sparkles } from 'lucide-react'
 import { cx } from '@/shared/ui'
@@ -12,6 +13,7 @@ import ShiftContextTile from './ShiftContextTile'
 import { NavGroup, NavItem } from './NavItem'
 
 export default function Sidebar({ open, onClose }) {
+  const [openGroup, setOpenGroup] = useState(null)
   const orders = useStore((s) => s.orders)
   const products = useStore((s) => s.products)
   const documents = useStore((s) => s.documents) || []
@@ -60,18 +62,21 @@ export default function Sidebar({ open, onClose }) {
         </div>
         <ShiftContextTile me={me} orders={orders} documents={documents} authAt={authAt} />
         <nav className="flex-1 overflow-y-auto no-scrollbar p-3 space-y-0.5">
-          {visibleNodes.map((node) =>
-            node.items ? (
+          {visibleNodes.map((node) => {
+            const gk = node.key || node.label
+            return node.items ? (
               <NavGroup
-                key={node.key || node.label}
+                key={gk}
                 node={node}
                 counts={counts}
                 onClose={onClose}
+                open={openGroup === gk}
+                onToggle={() => setOpenGroup((v) => v === gk ? null : gk)}
               />
             ) : (
               <NavItem key={node.to} item={node} counts={counts} onClose={onClose} />
-            ),
-          )}
+            )
+          })}
         </nav>
         <div className="p-3 border-t border-line">
           <NavLink

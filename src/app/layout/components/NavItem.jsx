@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { ChevronDown, Sparkles } from 'lucide-react'
 import { cx } from '@/shared/ui'
@@ -39,32 +39,14 @@ export function NavItem({ item, counts, onClose, nested = false }) {
 // Схлопываемая группа. Активная (внутри — текущий роут) раскрывается
 // автоматически. Состояние раскрытия других групп персистится в
 // localStorage — иначе клик по любой вкладке снова закрывал бы всё.
-export function NavGroup({ node, counts, onClose }) {
+export function NavGroup({ node, counts, onClose, open, onToggle }) {
   const { pathname, search } = useLocation()
-  const key = 'sklad.nav.' + (node.key || node.label)
   const hasActive = node.items.some((it) => isNavActive(it.to, pathname, search, it.end))
-  const [open, setOpen] = useState(() => {
-    if (hasActive) return true
-    try {
-      const v = localStorage.getItem(key)
-      return v == null ? true : v === '1'
-    } catch {
-      return true
-    }
-  })
   useEffect(() => {
-    if (hasActive) setOpen(true)
+    if (hasActive && !open) onToggle()
   }, [hasActive])
 
-  const toggle = () => {
-    setOpen((v) => {
-      const next = !v
-      try {
-        localStorage.setItem(key, next ? '1' : '0')
-      } catch {}
-      return next
-    })
-  }
+  const toggle = () => onToggle()
 
   const totalCount = node.items.reduce((n, it) => n + (counts[it.to] || 0), 0)
 

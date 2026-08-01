@@ -18,6 +18,7 @@ export function ColSettingsMenu({ cols, onChange }) {
   const items = [
     ['image', 'Фотография'],
     ['sku', 'Артикул / код'],
+    ['barcode', 'Штрихкод'],
     ['category', 'Категория'],
     ['unit', 'Единица измерения'],
     ['cell', 'Ячейка'],

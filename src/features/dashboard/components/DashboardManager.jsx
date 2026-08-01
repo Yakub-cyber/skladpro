@@ -109,8 +109,6 @@ export default function DashboardManager() {
         <Stat label="Клиентов" value={num(customers.length)} sub={debt > 0 ? `дебиторка ${money(debt)}` : `средний чек ${money(m.avg)}`} icon={Users} tone={debt > 0 ? 'warn' : 'ok'} to="/customers" />
       </div>
 
-      <StockValuationSection products={products} />
-
       <div className="grid lg:grid-cols-3 gap-5">
         <Section
           className="lg:col-span-2"
@@ -191,6 +189,8 @@ export default function DashboardManager() {
           </div>
         </Section>
       </div>
+
+      <StockValuationSection products={products} />
 
       <div className="grid lg:grid-cols-3 gap-5">
         <Section
