@@ -1,4 +1,4 @@
-import { Suspense, useState } from 'react'
+import { Suspense, useEffect, useRef, useState } from 'react'
 import { Outlet, useLocation } from 'react-router-dom'
 import { ShieldX } from 'lucide-react'
 import CommandPalette from '@/shared/components/CommandPalette'
@@ -6,6 +6,8 @@ import { ConfirmProvider } from '@/shared/components/Confirm'
 import SupportWidget from '@/shared/components/SupportWidget'
 import PageLoader from '@/shared/components/PageLoader'
 import { canAccess, roleInfo } from '@/shared/lib/constants'
+import { apiFetch, hasApi } from '@/shared/api'
+import { useStore } from '@/shared/store/useStore'
 import { NAV_ITEMS } from './nav'
 import { useCurrentUser } from './utils'
 import Sidebar from './components/Sidebar'
@@ -22,6 +24,17 @@ export default function Layout() {
   const [cmdOpen, setCmdOpen] = useState(false)
   const { pathname } = useLocation()
   const me = useCurrentUser()
+  const cloud = useStore((s) => s.cloud)
+  const lastTracked = useRef('')
+
+  useEffect(() => {
+    if (!cloud || !hasApi || pathname === lastTracked.current) return
+    lastTracked.current = pathname
+    const t = setTimeout(() => {
+      apiFetch('POST', '/v1/track', { page: pathname }).catch(() => {})
+    }, 1000)
+    return () => clearTimeout(t)
+  }, [pathname, cloud])
 
   const item = NAV_ITEMS.find((n) =>
     n.end ? n.to === pathname : n.to !== '/' && pathname.startsWith(n.to),
