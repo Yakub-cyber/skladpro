@@ -211,6 +211,18 @@ export function persistMigrate(state, version) {
     if (!Array.isArray(state.settings.webhooks)) state.settings.webhooks = []
   }
 
+  if (version < 19) {
+    state.settings = state.settings || {}
+    if (!state.settings.featureGates) {
+      state.settings.featureGates = {
+        storefront: { enabled: true, message: '' },
+        invoices:   { enabled: true, message: '' },
+        analytics:  { enabled: true, message: '' },
+        assistant:  { enabled: true, message: '' },
+      }
+    }
+  }
+
   return state
 }
 

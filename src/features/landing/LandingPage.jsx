@@ -277,7 +277,7 @@ export default function Landing({ onStart, onConnect, onRegister }) {
           ))}
         </div>
         <p className="text-center text-[12px] text-muted mt-6">
-          Оплата подключается на следующем этапе. Сейчас все тарифы доступны для теста.
+          14 дней бесплатно на любом платном тарифе. Отмена в один клик.
         </p>
         <p className="text-center text-sm mt-3 space-x-4">
           <button className="text-brand font-medium hover:underline" onClick={onConnect}>

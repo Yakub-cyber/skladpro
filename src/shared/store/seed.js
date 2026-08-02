@@ -435,6 +435,12 @@ export function makeSeed() {
       })(),
       apiKeys: [],
       webhooks: [],
+      featureGates: {
+        storefront: { enabled: true, message: '' },
+        invoices:   { enabled: true, message: '' },
+        analytics:  { enabled: true, message: '' },
+        assistant:  { enabled: true, message: '' },
+      },
     },
   }
 }

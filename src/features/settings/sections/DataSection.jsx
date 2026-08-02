@@ -1,15 +1,7 @@
-import { Database, Download, RotateCcw } from 'lucide-react'
+import { Database, Download } from 'lucide-react'
 import { Section, Button } from '@/shared/ui'
-import { useConfirm } from '@/shared/components/Confirm'
-import { useStore } from '@/shared/store/useStore'
 
-// Управление локальными данными: бэкап в JSON и сброс к демо. Настоящий
-// экспорт компании через сервер лежит в GdprSection (с одноразовым токеном
-// и лимитом ссылки 48ч). Этот здесь — быстрый локальный дамп для отладки
-// и переноса demo-данных между устройствами.
 export default function DataSection({ cloud }) {
-  const confirm = useConfirm()
-  const resetDemo = useStore((s) => s.resetDemo)
 
   const exportData = () => {
     // F1-7: маскируем секреты перед выгрузкой. Раньше webhooks[].secret,
@@ -39,18 +31,6 @@ export default function DataSection({ cloud }) {
     URL.revokeObjectURL(url)
   }
 
-  const reset = async () => {
-    const ok = await confirm({
-      title: 'Сбросить все данные?',
-      body: 'Текущие товары, заказы, клиенты, документы и настройки будут стёрты. Вернётся демо-набор.',
-      details: 'Действие безвозвратно. Сделайте бэкап через «Скачать резервную копию», если он вам ещё пригодится.',
-      tone: 'danger',
-      okLabel: 'Сбросить',
-      requireInput: 'СБРОСИТЬ',
-    })
-    if (ok) resetDemo()
-  }
-
   return (
     <Section
       title={
@@ -67,9 +47,6 @@ export default function DataSection({ cloud }) {
       <div className="flex flex-wrap gap-2">
         <Button variant="soft" icon={Download} onClick={exportData}>
           Экспорт в JSON
-        </Button>
-        <Button variant="ghost" icon={RotateCcw} className="text-bad" onClick={reset}>
-          Сбросить к демо
         </Button>
       </div>
     </Section>

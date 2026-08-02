@@ -3,6 +3,7 @@ import { Routes, Route } from 'react-router-dom'
 import Layout from '@/app/layout/Layout'
 import Login, { Onboarding, ResetPassword } from '@/features/auth/LoginPage'
 import PageLoader from '@/shared/components/PageLoader'
+import FeatureGate from '@/shared/components/FeatureGate'
 import { useStore } from '@/shared/store/useStore'
 
 // Ленивая загрузка страниц (code-splitting): тяжёлые зависимости
@@ -70,7 +71,9 @@ export default function App() {
         path="/shop"
         element={
           <Suspense fallback={<PageLoader />}>
-            <Storefront isPublic />
+            <FeatureGate feature="storefront">
+              <Storefront isPublic />
+            </FeatureGate>
           </Suspense>
         }
       />
@@ -102,12 +105,12 @@ export default function App() {
         <Route path="products" element={<Products />} />
         <Route path="warehouse" element={<Warehouse />} />
         <Route path="operations" element={<Operations />} />
-        <Route path="invoices" element={<Invoices />} />
+        <Route path="invoices" element={<FeatureGate feature="invoices"><Invoices /></FeatureGate>} />
         <Route path="customers" element={<Customers />} />
         <Route path="suppliers" element={<Suppliers />} />
-        <Route path="analytics" element={<Analytics />} />
-        <Route path="assistant" element={<Assistant />} />
-        <Route path="storefront" element={<Storefront />} />
+        <Route path="analytics" element={<FeatureGate feature="analytics"><Analytics /></FeatureGate>} />
+        <Route path="assistant" element={<FeatureGate feature="assistant"><Assistant /></FeatureGate>} />
+        <Route path="storefront" element={<FeatureGate feature="storefront"><Storefront /></FeatureGate>} />
         <Route path="journal" element={<Journal />} />
         <Route path="money" element={<Money />} />
         <Route path="cashiers" element={<Cashiers />} />

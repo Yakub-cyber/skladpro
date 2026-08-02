@@ -116,7 +116,7 @@ export const useStore = create(
     }),
     {
       name: 'sklad.db',
-      version: 18,
+      version: 19,
       partialize: persistPartialize,
       merge: persistMerge,
       migrate: persistMigrate,

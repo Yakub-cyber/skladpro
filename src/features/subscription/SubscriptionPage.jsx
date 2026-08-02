@@ -128,7 +128,7 @@ export default function Subscription() {
         }
         if (r?.status === 503 || r?.body?.error?.code === 'BILLING_DISABLED') {
           // eslint-disable-next-line no-alert
-          alert('Приём онлайн-платежей ещё не подключён на сервере. Ниже — демо-режим для проверки лимитов.')
+          alert('Онлайн-оплата временно недоступна. Свяжитесь с поддержкой для активации тарифа.')
         } else if (r?.body?.error?.message) {
           // eslint-disable-next-line no-alert
           alert(r.body.error.message)
@@ -136,7 +136,7 @@ export default function Subscription() {
         }
       } catch { /* fallback ниже */ }
     }
-    // Демо / fallback — работает до подключения ЮKassa.
+    // Fallback — локальная активация до подключения платёжного провайдера.
     const now = new Date()
     const end = extendPlan(null, 1, now)
     updateSettings({
@@ -240,7 +240,7 @@ export default function Subscription() {
             <Zap size={16} className="text-brand" /> Все тарифы
           </span>
         }
-        subtitle="Оплата пока не подключена — тарифы доступны для теста."
+        subtitle="Выберите подходящий тариф для вашего бизнеса."
       >
         <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3 items-stretch">
           {PLANS.map((p) => {
@@ -285,9 +285,8 @@ export default function Subscription() {
                     className="w-full mt-3"
                     size="sm"
                     onClick={() => activatePlan(p.key)}
-                    title="Демо-активация на 1 месяц (без оплаты)"
                   >
-                    Активировать (демо)
+                    Выбрать тариф
                   </Button>
                 )}
               </div>
@@ -303,7 +302,7 @@ export default function Subscription() {
             <Sparkles size={16} className="text-brand" /> Дополнительные модули
           </span>
         }
-        subtitle="Подключаются поверх любого платного тарифа. Полный список — в PRICING.md."
+        subtitle="Подключаются поверх любого платного тарифа."
       >
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
           {MODULES.map((m) => (
@@ -323,14 +322,6 @@ export default function Subscription() {
         </div>
       </Section>
 
-      <Card className="p-4 bg-surface-2/60 border-dashed">
-        <div className="text-[13px] text-muted">
-          Настоящая оплата (Stripe / ЮKassa) подключится, когда добавим
-          провайдера — UI и модель подписки уже готовы. Пока «Активировать
-          (демо)» просто продлевает выбранный план на 30 дней в
-          локальном сторе, чтобы можно было пройти сценарии до конца.
-        </div>
-      </Card>
     </div>
   )
 }
