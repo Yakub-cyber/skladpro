@@ -1,9 +1,8 @@
 import { uid, nextNo } from '../../lib/id'
 import { docTypeInfo } from '../../lib/constants'
 import { applyDocToState } from '../../lib/posting'
-import { postDocumentCloud } from '../../lib/cloud'
+import { enqueueDocument } from '../../lib/cloud'
 import { normalizeItems } from '../../lib/units'
-import { pushEvent } from '../../lib/diagRing'
 
 const DOC_TYPE_TO_CLOUD = {
   purchase: 'receive',
@@ -11,6 +10,7 @@ const DOC_TYPE_TO_CLOUD = {
   writeoff: 'writeoff',
   supplier_return: 'writeoff',
   inventory: 'adjust',
+  transfer: 'transfer',
 }
 
 export const createDocumentsSlice = (set, get) => ({
@@ -70,14 +70,11 @@ export const createDocumentsSlice = (set, get) => ({
     const cloudType = DOC_TYPE_TO_CLOUD[type]
     if (d && post && cloudType) {
       const cloudDoc = { ...d, type: cloudType }
-      postDocumentCloud(cloudDoc).then(r => {
-        if (r && !r.ok) {
-          pushEvent('doc_sync_error', { docId: id, code: r.code, error: r.error, traceId: r.traceId })
-          set((s) => ({ syncError: r.error || r.code || 'Ошибка синхронизации документа' }))
-        }
-      }).catch(err => {
-        pushEvent('doc_sync_error', { docId: id, error: err?.message || 'network' })
-      })
+      if (type === 'transfer') {
+        cloudDoc.warehouseToId = d.toWarehouseId
+        cloudDoc.warehouseId = d.items?.[0]?.fromWh || undefined
+      }
+      enqueueDocument(cloudDoc)
     }
     return id
   },
@@ -95,14 +92,11 @@ export const createDocumentsSlice = (set, get) => ({
     const cloudType = DOC_TYPE_TO_CLOUD[d.type]
     if (cloudType) {
       const cloudDoc = { ...get().documents.find((x) => x.id === id), type: cloudType }
-      postDocumentCloud(cloudDoc).then(r => {
-        if (r && !r.ok) {
-          pushEvent('doc_sync_error', { docId: id, code: r.code, error: r.error, traceId: r.traceId })
-          set((s) => ({ syncError: r.error || r.code || 'Ошибка синхронизации документа' }))
-        }
-      }).catch(err => {
-        pushEvent('doc_sync_error', { docId: id, error: err?.message || 'network' })
-      })
+      if (d.type === 'transfer') {
+        cloudDoc.warehouseToId = d.toWarehouseId
+        cloudDoc.warehouseId = d.items?.[0]?.fromWh || undefined
+      }
+      enqueueDocument(cloudDoc)
     }
   },
   // Отменить проводку (откатить влияние на остатки)

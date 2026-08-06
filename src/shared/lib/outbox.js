@@ -113,11 +113,19 @@ export function createOutbox({
   }
 
   function status() {
-    return {
-      pending: items.length,
-      state: lastError ? 'error' : flushing ? 'syncing' : items.length ? 'pending' : 'ok',
-      error: lastError,
-    }
+    const quarantined = items.filter((it) => it._quarantined).length
+    const active = items.length - quarantined
+    // 'attention' — если есть карантинные (нужно ручное вмешательство).
+    // Приоритет: attention > error > syncing > pending > ok. Карантин остаётся
+    // видимым, даже когда транзиентная очередь пуста, — потерянный чек не должен
+    // молча исчезать со счётчика.
+    let state
+    if (quarantined) state = 'attention'
+    else if (lastError) state = 'error'
+    else if (flushing) state = 'syncing'
+    else if (active) state = 'pending'
+    else state = 'ok'
+    return { pending: items.length, quarantined, state, error: lastError }
   }
 
   function notify() {
@@ -153,6 +161,9 @@ export function createOutbox({
   }
 
   // Отправить всё, что накопилось. Очередь чистится только по подтверждению.
+  // Карантинные элементы (_quarantined=true) — терминально сломанные бизнес-
+  // операции. Автоматически не ретраятся; либо человек разбирается и вызывает
+  // retryQuarantined, либо удаляет через removeItem.
   async function flushNow() {
     if (flushing) {
       rerun = true
@@ -162,7 +173,8 @@ export function createOutbox({
       clearTimeout(timer)
       timer = null
     }
-    if (!items.length) {
+    const active = items.filter((it) => !it._quarantined)
+    if (!active.length) {
       lastError = null
       notify()
       return true
@@ -171,7 +183,7 @@ export function createOutbox({
     flushing = new Promise((r) => (resolveDone = r))
     notify() // state: syncing
     let ok = false
-    const batch = items.slice()
+    const batch = active.slice()
     try {
       const res = (await send(batch)) || {}
       const gone = new Set([...(res.sent || []), ...(res.dropped || [])].map(itemKey))
@@ -182,10 +194,10 @@ export function createOutbox({
       if (res.error) throw res.error
       // сбрасываем per-item попытки на успешном flush (переживший элемент —
       // это тот, что был компактирован во время отправки, а не «плохой»)
-      for (const it of items) delete it._attempts
+      for (const it of items) if (!it._quarantined) delete it._attempts
       attempts = 0
       lastError = null
-      ok = items.length === 0
+      ok = items.filter((it) => !it._quarantined).length === 0
     } catch (e) {
       attempts += 1
       lastError = e?.message || String(e)
@@ -211,7 +223,8 @@ export function createOutbox({
     }
     flushing = null
     resolveDone(ok)
-    if (rerun || (items.length && !lastError && !timer)) {
+    const activeLeft = items.filter((it) => !it._quarantined).length
+    if (rerun || (activeLeft && !lastError && !timer)) {
       rerun = false
       schedule(debounceMs)
     }
@@ -244,11 +257,48 @@ export function createOutbox({
     detachStorage = () => window.removeEventListener('storage', onStorage)
   }
 
+  // Пометить элемент карантинным (terminal-error): остаётся в очереди для
+  // ручного разбора, автоматически не ретраится. Персистится через persist().
+  function quarantine(id, key, reason) {
+    const it = items.find((x) => x.id === id && x.key === key)
+    if (!it) return false
+    it._quarantined = true
+    it._quarantineReason = reason || {}
+    persist()
+    notify()
+    return true
+  }
+  // Ручной ретрай: снимаем флаг, следующий flushNow подхватит.
+  function retryQuarantined(id, key) {
+    const it = items.find((x) => x.id === id && x.key === key)
+    if (!it || !it._quarantined) return false
+    delete it._quarantined
+    delete it._quarantineReason
+    delete it._attempts
+    persist()
+    if (!timer && !flushing) schedule(0)
+    notify()
+    return true
+  }
+  // Ручное удаление карантинного (пользователь решил, что чек не нужно
+  // досылать — например, продублировал вручную в другом инструменте).
+  function removeQuarantined(id, key) {
+    const before = items.length
+    items = items.filter((x) => !(x.id === id && x.key === key && x._quarantined))
+    if (items.length === before) return false
+    persist()
+    notify()
+    return true
+  }
   return {
     enqueue,
     flushNow,
     status,
     items: () => items.slice(),
+    quarantined: () => items.filter((it) => it._quarantined).slice(),
+    quarantine,
+    retryQuarantined,
+    removeQuarantined,
     onChange: (cb) => {
       listeners.add(cb)
       cb(status())

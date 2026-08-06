@@ -13,6 +13,7 @@ import {
 	apiDocument,
 	apiFetch,
 	apiListMemberships,
+	apiOrderStatus,
 	apiPinVerify,
 	apiPutSettings,
 	apiRequestPasswordReset,
@@ -71,6 +72,13 @@ const ORDER_SERVER_ONLY = new Set(['status', 'items'])
 
 // Таблицы, которые новый sync/push не принимает вообще.
 const PUSH_FORBIDDEN_TABLES = new Set(['movements', 'audit', 'documents'])
+
+// Ключи бизнес-операций в outbox — идут не в sync/push, а в свои
+// эндпоинты (/v1/sales, /v1/orders/:id/status, /v1/documents/post).
+// Каждый item несёт полный payload и обрабатывается транзакционно
+// на сервере (post_doc/unpost_doc). Ретрай через outbox переживает
+// перезагрузку вкладки, оффлайн и падение сети.
+const BUSINESS_KEYS = new Set(['sale', 'order_status', 'doc_post'])
 
 function toRow(obj, cfg) {
 	const drop = LOCAL_ONLY_FIELDS[cfg.key]
@@ -228,6 +236,47 @@ export function remapSeedForCompany(state, companyId) {
 // syncError и показывает UpgradeModal.
 const TERMINAL_CODES = new Set(['STALE', 'TABLE_FORBIDDEN', 'BAD_ID', 'TOMBSTONE_LOCKED', 'HAS_STOCK_MOVEMENT', 'SUBSCRIPTION_LIMIT_EXCEEDED'])
 
+// Бизнес-операция из outbox → соответствующий эндпоинт.
+// Возвращает { ok } | { ok:false, quarantine, code, error, status, traceId }.
+// quarantine=true → операция не пройдёт повтором (валидация, дубль, конфликт),
+// НО терять её нельзя: чек напечатан, деньги взяты. Такой item помечается
+// _quarantined в очереди — остаётся видимым в панели диагностики с полным
+// payload+traceId, пока человек не решит вручную (пересоздать/отменить).
+// quarantine=false → транзиент (сеть/5xx), ретрай через exponential backoff.
+async function sendBusinessOp(it) {
+	try {
+		const payload = it.obj || {}
+		let res
+		if (it.key === 'sale') {
+			res = await apiSale(payload, `sale-${it.id}`)
+		} else if (it.key === 'doc_post') {
+			res = await apiDocument(payload, `doc-${it.id}`)
+		} else if (it.key === 'order_status') {
+			res = await apiOrderStatus(payload.orderId, payload.status, `ost-${payload.orderId}-${payload.status}`)
+		} else {
+			return { ok: false, quarantine: true, code: 'UNKNOWN_KEY', error: `unknown business key ${it.key}` }
+		}
+		if (res.ok) return { ok: true }
+		// idempotency-replayed → уже применено на сервере, считаем успехом
+		const replayed = res.headers?.['idempotency-replayed'] === 'true'
+		if (replayed) return { ok: true }
+		const status = res.status ?? 0
+		const code = res.error?.code
+		// 4xx (кроме 408/429) — не починится повтором: карантин.
+		const isQuarantine = status >= 400 && status < 500 && status !== 408 && status !== 429
+		return {
+			ok: false,
+			quarantine: isQuarantine,
+			code,
+			status,
+			traceId: res.traceId,
+			error: res.error?.message || `${it.key} failed (${status})`,
+		}
+	} catch (e) {
+		return { ok: false, quarantine: false, code: 'NETWORK', error: e?.message || 'network' }
+	}
+}
+
 async function sendBatch(items) {
 	const sent = []
 	const dropped = []
@@ -235,9 +284,48 @@ async function sendBatch(items) {
 
 	// Отдельно settings — они идут через /v1/settings.
 	const settingsItems = items.filter((it) => it.key === 'settings')
-	const syncItems = items.filter((it) => it.key !== 'settings' && !PUSH_FORBIDDEN_TABLES.has(byKey[it.key]?.table))
-	const forbidden = items.filter((it) => it.key !== 'settings' && PUSH_FORBIDDEN_TABLES.has(byKey[it.key]?.table))
+	// Бизнес-операции (продажа/статус/документ) — свои эндпоинты.
+	const businessItems = items.filter((it) => BUSINESS_KEYS.has(it.key))
+	const syncItems = items.filter(
+		(it) => it.key !== 'settings'
+			&& !BUSINESS_KEYS.has(it.key)
+			&& !PUSH_FORBIDDEN_TABLES.has(byKey[it.key]?.table),
+	)
+	const forbidden = items.filter(
+		(it) => it.key !== 'settings'
+			&& !BUSINESS_KEYS.has(it.key)
+			&& PUSH_FORBIDDEN_TABLES.has(byKey[it.key]?.table),
+	)
 	dropped.push(...forbidden) // movements/audit/documents — только через бизнес-эндпоинты
+
+	// Бизнес-операции: последовательно, каждая — со своим idempotency-key.
+	// Порядок важен: sale перед order_status(cancelled) по тому же orderId,
+	// иначе отмена придёт до того, как заказ вообще появится на сервере.
+	// Компакция outbox по (key,id) сохраняет один item на операцию.
+	// Карантин: 4xx НЕ удаляет item. Помечаем _quarantined через syncOutbox
+	// после цикла (mutate внутри — простая ссылка, persist сделает сам).
+	// Ретрай карантинного — только вручную (retryQuarantined).
+	const toQuarantine = []
+	for (const it of businessItems) {
+		if (error) break
+		const r = await sendBusinessOp(it)
+		if (r.ok) sent.push(it)
+		else if (r.quarantine) {
+			// Не в dropped — иначе outbox сотрёт элемент, чек испарится.
+			// Не в sent — сервер операцию не принял.
+			// Помечаем карантинным ниже: элемент остаётся в очереди для
+			// разбора, автоматических ретраев не будет.
+			pushEvent(`${it.key}_quarantined`, {
+				id: it.id, code: r.code, status: r.status, error: r.error, traceId: r.traceId,
+			})
+			toQuarantine.push({ it, reason: { code: r.code, status: r.status, error: r.error, traceId: r.traceId } })
+		} else {
+			error = new Error(r.error || `${it.key} failed`)
+			break
+		}
+	}
+	// Пометка после цикла (не вклиниваемся в filter'ы outbox во время flush).
+	for (const q of toQuarantine) syncOutbox.quarantine(q.it.id, q.it.key, q.reason)
 
 	// settings: последний upsert по компании.
 	if (settingsItems.length) {
@@ -303,6 +391,22 @@ if (typeof window !== 'undefined') {
 	window.addEventListener('online', () => syncOutbox.flushNow())
 }
 
+// ── Бизнес-операции в outbox: переживают перезагрузку, оффлайн и сбой сети ─
+// Компакция по (key, id): повторный enqueue заменяет предыдущий (полезно, если
+// заказ отредактирован до отправки). После успешной отправки item уходит из
+// очереди; при 4xx помечается dropped, при сети/5xx ретраится с бэкоффом.
+export function enqueueSale(order) {
+	syncOutbox.enqueue([{ op: 'create', key: 'sale', id: order.id, obj: order }])
+}
+export function enqueueDocument(document) {
+	syncOutbox.enqueue([{ op: 'create', key: 'doc_post', id: document.id, obj: document }])
+}
+// Один item на (orderId,status): если пользователь дважды жмёт «Отменить» —
+// идемпотентность по key на клиенте и Idempotency-Key на сервере отсекают.
+export function enqueueOrderStatus(orderId, status) {
+	syncOutbox.enqueue([{ op: 'update', key: 'order_status', id: `${orderId}:${status}`, obj: { orderId, status } }])
+}
+
 let attached = false
 let paused = false
 let prev = null
@@ -311,6 +415,29 @@ let prevSettings = null
 const snap = (state) =>
 	Object.fromEntries(TABLES.map((t) => [t.key, new Map((state[t.key] || []).map((o) => [o.id, o]))]))
 
+// Что из таблицы cfg.key имеет право уехать через sync/push.
+// Retail-заказы — исключены (уходят через /v1/sales и /v1/orders/:id/status).
+// Функция чистая: одинаково применяется к prev и next в attachSync — иначе
+// асимметрия сотрёт данные с сервера через detect-delete.
+function pushableForKey(key) {
+	if (key === 'orders') return (o) => o?.kind !== 'retail'
+	return () => true
+}
+function filterMap(m, pred) {
+	const out = new Map()
+	for (const [k, v] of m) if (pred(v)) out.set(k, v)
+	return out
+}
+
+// Только для vitest: между тестами модульный singleton attached удерживает
+// первую подписку и игнорирует повторный attachSync. В продакшене вызывается
+// один раз за жизнь вкладки.
+export function __resetSyncForTests() {
+	attached = false
+	paused = false
+	prev = null
+	prevSettings = null
+}
 export function pauseSync() { paused = true }
 export function resumeSync(useStore) {
 	paused = false
@@ -326,8 +453,13 @@ export function attachSync(useStore) {
 	const st = useStore.getState()
 	prev = snap(st)
 	prevSettings = st.settings
-	syncOutbox.onChange(({ pending, state, error }) =>
-		useStore.setState({ syncPending: pending, syncState: state, syncError: error }),
+	syncOutbox.onChange(({ pending, quarantined, state, error }) =>
+		useStore.setState({
+			syncPending: pending,
+			syncQuarantined: quarantined || 0,
+			syncState: state,
+			syncError: error,
+		}),
 	)
 	useStore.subscribe((state) => {
 		if (paused) return
@@ -336,8 +468,15 @@ export function attachSync(useStore) {
 		const batch = []
 		for (const cfg of TABLES) {
 			if (PUSH_FORBIDDEN_TABLES.has(cfg.table)) continue
-			const next = new Map((state[cfg.key] || []).map((o) => [o.id, o]))
-			const old = prev[cfg.key]
+			// Retail-чеки идут через /v1/sales, а не через sync/push. Фильтр
+			// применяется СИММЕТРИЧНО к next и old — иначе delete-цикл увидит
+			// «был в prev, нет в next» и отправит delete на сервер, стирая
+			// заказ, который туда положил /v1/sales. Сохранение фильтра в
+			// одном месте — единый предикат isPushable.
+			const isPushable = pushableForKey(cfg.key)
+			const nextAll = new Map((state[cfg.key] || []).map((o) => [o.id, o]))
+			const next = filterMap(nextAll, isPushable)
+			const old = filterMap(prev[cfg.key] || new Map(), isPushable)
 			for (const [id, obj] of next) {
 				const before = old.get(id)
 				if (!before || before !== obj) batch.push({ op: 'upsert', key: cfg.key, id, obj, companyId })

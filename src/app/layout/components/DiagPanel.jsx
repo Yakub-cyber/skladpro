@@ -1,8 +1,17 @@
-import { useState } from 'react'
-import { Copy, Check, X } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { Copy, Check, X, RotateCw, Trash2 } from 'lucide-react'
 import { useStore } from '@/shared/store/useStore'
 import { getLastError, buildDiagText } from '@/shared/lib/diagRing'
-import { syncNow } from '@/shared/lib/cloud'
+import { syncNow, syncOutbox } from '@/shared/lib/cloud'
+
+// Метки для карантинных ключей — из «sale» получается «Продажа»,
+// из «order_status» — «Отмена/статус заказа», и т.д. Пользователь не должен
+// гадать, что за операция «висит».
+const KEY_LABEL = {
+  sale: 'Продажа',
+  doc_post: 'Документ (приход/списание/перемещение)',
+  order_status: 'Статус заказа',
+}
 
 export function DiagPanel({ onClose }) {
   const pending = useStore((s) => s.syncPending || 0)
@@ -10,6 +19,12 @@ export function DiagPanel({ onClose }) {
   const syncError = useStore((s) => s.syncError)
   const companyId = useStore((s) => s.companyId)
   const [copied, setCopied] = useState(false)
+  const [quarantined, setQuarantined] = useState(() => syncOutbox.quarantined())
+
+  // Подписываемся на изменения outbox — карантин может пополниться в фоне.
+  useEffect(() => {
+    return syncOutbox.onChange(() => setQuarantined(syncOutbox.quarantined()))
+  }, [])
 
   const lastErr = getLastError()
 
@@ -53,6 +68,49 @@ export function DiagPanel({ onClose }) {
           <div>{lastErr?.error || syncError}</div>
           {lastErr?.traceId && <div className="text-muted font-mono truncate">trace: {lastErr.traceId}</div>}
           {lastErr?.ts && <div className="text-muted">{new Date(lastErr.ts).toLocaleString()}</div>}
+        </div>
+      )}
+
+      {quarantined.length > 0 && (
+        <div className="mt-3">
+          <div className="text-xs font-semibold text-bad mb-2">
+            Отклонено сервером ({quarantined.length}) — требует разбора
+          </div>
+          <div className="space-y-2 max-h-64 overflow-y-auto">
+            {quarantined.map((it) => {
+              const r = it._quarantineReason || {}
+              const label = KEY_LABEL[it.key] || it.key
+              return (
+                <div key={`${it.key}:${it.id}`} className="p-2.5 rounded-lg bg-bad/10 text-xs space-y-1">
+                  <div className="font-medium text-bad">{label} · {it.id}</div>
+                  {r.code && <div className="text-bad">Код: <code className="font-mono">{r.code}</code>{r.status ? ` (HTTP ${r.status})` : ''}</div>}
+                  {r.error && <div className="text-bad">{r.error}</div>}
+                  {r.traceId && <div className="text-muted font-mono truncate">trace: {r.traceId}</div>}
+                  <div className="flex gap-1.5 mt-1.5">
+                    <button
+                      onClick={() => { syncOutbox.retryQuarantined(it.id, it.key); setQuarantined(syncOutbox.quarantined()) }}
+                      className="h-7 px-2 rounded-md border border-edge text-ink hover:bg-surface-2 inline-flex items-center gap-1"
+                      title="Отправить ещё раз (если причина устранена)"
+                    >
+                      <RotateCw size={11} /> Повторить
+                    </button>
+                    <button
+                      onClick={() => {
+                        if (confirm(`Удалить «${label} · ${it.id}» из очереди? Операция НЕ будет отправлена. Убедитесь, что чек не потеряется.`)) {
+                          syncOutbox.removeQuarantined(it.id, it.key)
+                          setQuarantined(syncOutbox.quarantined())
+                        }
+                      }}
+                      className="h-7 px-2 rounded-md border border-edge text-bad hover:bg-bad/10 inline-flex items-center gap-1"
+                      title="Убрать из очереди (осторожно)"
+                    >
+                      <Trash2 size={11} /> Удалить
+                    </button>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
         </div>
       )}
 

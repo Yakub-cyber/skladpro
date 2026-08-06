@@ -2,6 +2,7 @@ import { uid, nextNo } from '../../lib/id'
 import { nextStatus, statusInfo } from '../../lib/constants'
 import { applyOrderStock } from '../../lib/orders'
 import { normalizeItems } from '../../lib/units'
+import { enqueueSale, enqueueOrderStatus } from '../../lib/cloud'
 
 export const createOrdersSlice = (set, get) => ({
   // ── Заказы ───────────────────────────────────────────────
@@ -117,6 +118,32 @@ export const createOrdersSlice = (set, get) => ({
       section: 'Заказы',
       type: 'create',
     })
+    // Розничный чек: серверная продажа через outbox. Заказ пробит в кассе,
+    // товар физически ушёл — операция должна доехать до сервера даже если
+    // вкладку закрыли до отправки. Поэтому не .then(), а persistent queue.
+    // Заказ доставки (kind='order') пока идёт через sync/push как строка —
+    // отдельный этап на будущее.
+    if (o && kind === 'retail') {
+      const saleItems = (o.items || []).map(it => ({
+        productId: it.productId,
+        name: it.name,
+        qty: Number(it.qty) || 0,
+        price: Number(it.price) || 0,
+      }))
+      const saleSubtotal = saleItems.reduce((a, it) => a + it.qty * it.price, 0)
+      enqueueSale({
+        id: o.id,
+        no: o.no,
+        customerId: o.customerId || undefined,
+        customerName: o.customerName || undefined,
+        items: saleItems,
+        discount: Math.max(0, Math.round((saleSubtotal - (o.total || 0)) * 100) / 100),
+        onCredit: !!o.onCredit,
+        priceTypeId: o.priceTypeId || undefined,
+        shiftId: o.shiftId || undefined,
+        track: o.track || undefined,
+      })
+    }
     return { ok: true, id }
   },
   setOrderStatus: (id, status, note) => {
@@ -252,6 +279,10 @@ export const createOrdersSlice = (set, get) => ({
     // F2-9: если отменили заказ уже закрытой смены — пересчитать
     // её snapshot revenue.
     if (o.shiftId) get().recalcClosedShift(o.shiftId)
+    // Отмена — через outbox: если сеть моргнула, заказ на сервере останется
+    // отгруженным, остатки не вернутся. Персистентная очередь ретраит.
+    // Только для retail: у order (доставка) сервер узнаёт статус через sync/push.
+    if (o.kind === 'retail') enqueueOrderStatus(id, 'cancelled')
     get().logAction(
       `Отменён заказ ${o.no} · ${o.stockConsumed ? 'остатки возвращены' : 'резерв снят'}`,
       { section: 'Заказы', type: 'delete' },

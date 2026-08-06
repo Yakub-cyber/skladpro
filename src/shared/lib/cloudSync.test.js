@@ -15,8 +15,9 @@ vi.mock('@/shared/api', () => ({
 	apiListMemberships: () => Promise.resolve({ ok: true, body: { memberships: [] } }),
 	apiCreateCompany: () => Promise.resolve({ ok: true, body: {} }),
 	apiPinVerify: () => Promise.resolve({ ok: false, error: { code: 'PIN_INVALID' } }),
-	apiSale: () => Promise.resolve({ ok: true, body: {} }),
-	apiDocument: () => Promise.resolve({ ok: true, body: {} }),
+	apiSale: (...args) => (h.impl.apiSale ? h.impl.apiSale(...args) : Promise.resolve({ ok: true, body: {} })),
+	apiDocument: (...args) => (h.impl.apiDocument ? h.impl.apiDocument(...args) : Promise.resolve({ ok: true, body: {} })),
+	apiOrderStatus: (...args) => (h.impl.apiOrderStatus ? h.impl.apiOrderStatus(...args) : Promise.resolve({ ok: true, body: {} })),
 	apiReturn: () => Promise.resolve({ ok: true, body: {} }),
 	apiFetch: (...args) => h.impl.apiFetch(...args),
 	apiSyncPull: (...args) => h.impl.apiSyncPull(...args),
@@ -294,5 +295,303 @@ describe('attachSync штампует updatedAt при отправке', () => 
 		const s = items.find((it) => it.key === 'settings')
 		if (s) expect(s.obj.updatedAt).toBeUndefined()
 		syncOutbox.reset()
+	})
+})
+
+// ── Retail-заказы не должны попадать в sync/push ни как upsert, ни как delete ─
+// Без симметричного фильтра detect-delete увидел бы «был в prev, нет в next»
+// и стёр бы заказ на сервере, куда его положил /v1/sales. Проверяем оба конца.
+describe('attachSync: retail-заказы исключены СИММЕТРИЧНО (upsert + delete)', () => {
+	beforeEach(async () => {
+		const mod = await import('./cloud.js')
+		mod.__resetSyncForTests()
+		syncOutbox.reset()
+	})
+	function makeStore(initial) {
+		const listeners = new Set()
+		let state = {
+			companyId: 'c1',
+			settings: { company: 'X' },
+		}
+		for (const k of [
+			'priceTypes', 'warehouses', 'cells', 'products', 'customers', 'suppliers',
+			'employees', 'orders', 'invoices', 'documents', 'movements', 'shifts', 'audit',
+		]) state[k] = []
+		state = { ...state, ...initial }
+		return {
+			get state() { return state },
+			getState: () => state,
+			setState: (patch) => {
+				state = { ...state, ...(typeof patch === 'function' ? patch(state) : patch) }
+			},
+			subscribe: (cb) => { listeners.add(cb); return () => listeners.delete(cb) },
+			trigger: () => { for (const cb of listeners) cb(state) },
+			setOrders: (orders) => {
+				state = { ...state, orders }
+				for (const cb of listeners) cb(state)
+			},
+		}
+	}
+
+	it('удаление retail-заказа из state НЕ создаёт delete-op в очереди', async () => {
+		syncOutbox.reset()
+		const { attachSync } = await import('./cloud.js')
+		h.impl = makeApi()
+		const store = makeStore({
+			orders: [
+				{ id: 'r1', kind: 'retail', status: 'delivered', total: 100 },
+				{ id: 'r2', kind: 'retail', status: 'delivered', total: 200 },
+				{ id: 'd1', kind: 'order', status: 'new', total: 300 },
+			],
+		})
+		attachSync(store)
+		// Симулируем физическое исчезновение retail-заказа r1 из state
+		// (например, cloud-load вернул меньше заказов — набор компаний
+		// сменился, или разработчик почистил стор).
+		store.setOrders([
+			{ id: 'r2', kind: 'retail', status: 'delivered', total: 200 },
+			{ id: 'd1', kind: 'order', status: 'new', total: 300 },
+		])
+		const items = syncOutbox.items()
+		// Ни одного delete по orders вообще быть не должно — r1 retail,
+		// сервер владеет им сам через /v1/sales/status.
+		const deletes = items.filter((it) => it.op === 'delete' && it.key === 'orders')
+		expect(deletes).toEqual([])
+		syncOutbox.reset()
+	})
+
+	it('удаление НЕ-retail заказа (kind=order) по-прежнему создаёт delete', async () => {
+		syncOutbox.reset()
+		const { attachSync } = await import('./cloud.js')
+		h.impl = makeApi()
+		const store = makeStore({
+			orders: [{ id: 'd1', kind: 'order', status: 'new', total: 300 }],
+		})
+		attachSync(store)
+		store.setOrders([]) // удалили delivery-заказ
+		const items = syncOutbox.items()
+		const deletes = items.filter((it) => it.op === 'delete' && it.key === 'orders')
+		expect(deletes).toHaveLength(1)
+		expect(deletes[0].id).toBe('d1')
+		syncOutbox.reset()
+	})
+
+	it('новая retail-продажа в state — НЕ уезжает через sync/push (upsert подавлен)', async () => {
+		syncOutbox.reset()
+		const { attachSync } = await import('./cloud.js')
+		h.impl = makeApi()
+		const store = makeStore({ orders: [] })
+		attachSync(store)
+		store.setOrders([
+			{ id: 'r_new', kind: 'retail', status: 'delivered', total: 500 },
+		])
+		const items = syncOutbox.items()
+		const upserts = items.filter((it) => it.op === 'upsert' && it.key === 'orders')
+		expect(upserts).toEqual([])
+		syncOutbox.reset()
+	})
+
+	it('добавление delivery-заказа (kind=order) — upsert летит как обычно', async () => {
+		syncOutbox.reset()
+		const { attachSync } = await import('./cloud.js')
+		h.impl = makeApi()
+		const store = makeStore({ orders: [] })
+		attachSync(store)
+		store.setOrders([
+			{ id: 'd_new', kind: 'order', status: 'new', total: 500, no: 'ЗК-42' },
+		])
+		const items = syncOutbox.items()
+		const upserts = items.filter((it) => it.op === 'upsert' && it.key === 'orders')
+		expect(upserts).toHaveLength(1)
+		expect(upserts[0].id).toBe('d_new')
+		syncOutbox.reset()
+	})
+})
+
+// ── Бизнес-очередь: продажа/отмена/документ через outbox ────────────────────
+// Смысл этой очереди — гарантировать доставку после закрытия вкладки.
+// Fire-and-forget (sellCloud().then()) терял операцию при закрытии страницы;
+// сейчас каждая продажа/отмена/документ живёт в localStorage до подтверждения.
+describe('outbox: бизнес-операции (sale/order_status/doc_post)', () => {
+	it('enqueueSale → apiSale вызывается с order + idempotency-ключом', async () => {
+		const { enqueueSale } = await import('./cloud.js')
+		const calls = []
+		h.impl = {
+			...makeApi(),
+			apiSale: async (order, idemKey) => {
+				calls.push({ order, idemKey })
+				return { ok: true, body: {} }
+			},
+		}
+		enqueueSale({ id: 'o1', no: 'ЧК-1', items: [{ productId: 'p1', qty: 1, price: 100 }], discount: 0 })
+		await syncOutbox.flushNow()
+		expect(calls).toHaveLength(1)
+		expect(calls[0].order.id).toBe('o1')
+		expect(calls[0].idemKey).toBe('sale-o1')
+		expect(syncOutbox.status().pending).toBe(0)
+	})
+
+	it('enqueueOrderStatus → apiOrderStatus, ключ по (orderId, status)', async () => {
+		const { enqueueOrderStatus } = await import('./cloud.js')
+		const calls = []
+		h.impl = {
+			...makeApi(),
+			apiOrderStatus: async (orderId, status, idemKey) => {
+				calls.push({ orderId, status, idemKey })
+				return { ok: true, body: {} }
+			},
+		}
+		enqueueOrderStatus('o1', 'cancelled')
+		await syncOutbox.flushNow()
+		expect(calls).toEqual([{ orderId: 'o1', status: 'cancelled', idemKey: 'ost-o1-cancelled' }])
+	})
+
+	it('sale → 5xx: элемент остаётся в очереди для ретрая', async () => {
+		const { enqueueSale } = await import('./cloud.js')
+		let attempts = 0
+		h.impl = {
+			...makeApi(),
+			apiSale: async () => {
+				attempts += 1
+				return { ok: false, status: 502, error: { code: 'BAD_GATEWAY', message: '502' } }
+			},
+		}
+		enqueueSale({ id: 'o1', items: [{ productId: 'p1', qty: 1, price: 100 }], discount: 0 })
+		await syncOutbox.flushNow()
+		expect(attempts).toBe(1)
+		expect(syncOutbox.status()).toMatchObject({ pending: 1, state: 'error' })
+	})
+
+	it('sale → сеть: остаётся в очереди', async () => {
+		const { enqueueSale } = await import('./cloud.js')
+		h.impl = {
+			...makeApi(),
+			apiSale: async () => { throw new Error('fetch failed') },
+		}
+		enqueueSale({ id: 'o1', items: [{ productId: 'p1', qty: 1, price: 100 }], discount: 0 })
+		await syncOutbox.flushNow()
+		expect(syncOutbox.status()).toMatchObject({ pending: 1, state: 'error' })
+	})
+
+	it('sale → 400: карантин (payload сохранён с traceId), НЕ silent drop', async () => {
+		const { enqueueSale } = await import('./cloud.js')
+		h.impl = {
+			...makeApi(),
+			apiSale: async () => ({
+				ok: false, status: 400, traceId: 'trace-xyz',
+				error: { code: 'VALIDATION', message: 'discount > total' },
+			}),
+		}
+		enqueueSale({ id: 'o1', items: [{ productId: 'p1', qty: 1, price: 100 }], discount: 999 })
+		await syncOutbox.flushNow()
+		const status = syncOutbox.status()
+		// Item остаётся в очереди — чек не должен исчезнуть.
+		expect(status.quarantined).toBe(1)
+		expect(status.state).toBe('attention')
+		const q = syncOutbox.quarantined()
+		expect(q).toHaveLength(1)
+		expect(q[0].key).toBe('sale')
+		expect(q[0].id).toBe('o1')
+		expect(q[0]._quarantineReason.code).toBe('VALIDATION')
+		expect(q[0]._quarantineReason.status).toBe(400)
+		expect(q[0]._quarantineReason.traceId).toBe('trace-xyz')
+		// Полный payload сохранён — оператор может пересоздать чек вручную.
+		expect(q[0].obj.items[0].qty).toBe(1)
+	})
+
+	it('карантин не ретраится автоматически на следующем flush', async () => {
+		const { enqueueSale } = await import('./cloud.js')
+		let calls = 0
+		h.impl = {
+			...makeApi(),
+			apiSale: async () => {
+				calls += 1
+				return { ok: false, status: 400, error: { code: 'VALIDATION', message: 'bad' } }
+			},
+		}
+		enqueueSale({ id: 'o1', items: [{ productId: 'p1', qty: 1, price: 100 }], discount: 0 })
+		await syncOutbox.flushNow()
+		await syncOutbox.flushNow()
+		await syncOutbox.flushNow()
+		expect(calls).toBe(1) // после карантина повторных запросов нет
+	})
+
+	it('retryQuarantined снимает флаг → следующий flush отправляет снова', async () => {
+		const { enqueueSale } = await import('./cloud.js')
+		let attempt = 0
+		h.impl = {
+			...makeApi(),
+			apiSale: async () => {
+				attempt += 1
+				// Первый раз — 400 (карантин). Второй — ok (после ручного retry).
+				return attempt === 1
+					? { ok: false, status: 400, error: { code: 'VALIDATION', message: 'bad' } }
+					: { ok: true, body: {} }
+			},
+		}
+		enqueueSale({ id: 'o1', items: [{ productId: 'p1', qty: 1, price: 100 }], discount: 0 })
+		await syncOutbox.flushNow()
+		expect(syncOutbox.status().quarantined).toBe(1)
+		syncOutbox.retryQuarantined('o1', 'sale')
+		await syncOutbox.flushNow()
+		expect(attempt).toBe(2)
+		expect(syncOutbox.status()).toMatchObject({ pending: 0, quarantined: 0, state: 'ok' })
+	})
+
+	it('idempotency-replayed → считается успехом', async () => {
+		const { enqueueSale } = await import('./cloud.js')
+		h.impl = {
+			...makeApi(),
+			apiSale: async () => ({
+				ok: false, status: 200, headers: { 'idempotency-replayed': 'true' },
+				error: { code: 'REPLAY', message: 'already applied' },
+			}),
+		}
+		enqueueSale({ id: 'o1', items: [{ productId: 'p1', qty: 1, price: 100 }], discount: 0 })
+		await syncOutbox.flushNow()
+		expect(syncOutbox.status().pending).toBe(0)
+	})
+
+	it('sale переживает неудачную отправку и лежит в очереди с полным payload', async () => {
+		const { enqueueSale, syncOutbox: box } = await import('./cloud.js')
+		h.impl = {
+			...makeApi(),
+			apiSale: async () => { throw new Error('offline') },
+		}
+		enqueueSale({ id: 'o1', items: [{ productId: 'p1', qty: 1, price: 100 }], discount: 0 })
+		await box.flushNow()
+		expect(box.status().pending).toBe(1)
+		const items = box.items()
+		const it = items.find((i) => i.key === 'sale' && i.id === 'o1')
+		expect(it).toBeTruthy()
+		expect(it.obj.items[0].qty).toBe(1) // payload сохранён для повторной отправки
+	})
+
+	it('компакция: повторный enqueueSale по тому же orderId заменяет payload', async () => {
+		const { enqueueSale } = await import('./cloud.js')
+		const calls = []
+		h.impl = {
+			...makeApi(),
+			apiSale: async (order) => { calls.push(order); return { ok: true, body: {} } },
+		}
+		enqueueSale({ id: 'o1', items: [{ productId: 'p1', qty: 1, price: 100 }], discount: 0 })
+		enqueueSale({ id: 'o1', items: [{ productId: 'p1', qty: 2, price: 100 }], discount: 0 })
+		await syncOutbox.flushNow()
+		expect(calls).toHaveLength(1)
+		expect(calls[0].items[0].qty).toBe(2)
+	})
+
+	it('порядок: sale уходит раньше order_status(cancelled) по тому же заказу', async () => {
+		const { enqueueSale, enqueueOrderStatus } = await import('./cloud.js')
+		const seq = []
+		h.impl = {
+			...makeApi(),
+			apiSale: async () => { seq.push('sale'); return { ok: true, body: {} } },
+			apiOrderStatus: async (_id, status) => { seq.push(`status:${status}`); return { ok: true, body: {} } },
+		}
+		enqueueSale({ id: 'o1', items: [{ productId: 'p1', qty: 1, price: 100 }], discount: 0 })
+		enqueueOrderStatus('o1', 'cancelled')
+		await syncOutbox.flushNow()
+		expect(seq).toEqual(['sale', 'status:cancelled'])
 	})
 })

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Cloud, CloudOff, CloudUpload, ShoppingCart } from 'lucide-react'
+import { AlertTriangle, Cloud, CloudOff, CloudUpload, ShoppingCart } from 'lucide-react'
 import { cx } from '@/shared/ui'
 import { useStore } from '@/shared/store/useStore'
 import { canAccess } from '@/shared/lib/constants'
@@ -42,6 +42,7 @@ export function SyncBadge() {
   const cloud = useStore((s) => s.cloud)
   const ready = useStore((s) => s.cloudReady)
   const pending = useStore((s) => s.syncPending || 0)
+  const quarantined = useStore((s) => s.syncQuarantined || 0)
   const state = useStore((s) => s.syncState || 'ok')
   const [open, setOpen] = useState(false)
   const ref = useRef(null)
@@ -52,16 +53,37 @@ export function SyncBadge() {
     return () => document.removeEventListener('mousedown', handler)
   }, [open])
   if (!cloud || !ready) return null
+  // 'attention' — есть карантинные операции (продажи/документы с 4xx).
+  // Красный треугольник, не «облако с ошибкой», чтобы владелец сразу отличил
+  // «сеть моргнула, ретрай сам сделает» от «чек не принят, надо смотреть».
+  // Карантинных показываем отдельным числом, а не общим pending — этот
+  // счётчик и цвет должны отличаться от «сеть тормозит».
   const cfg =
-    state === 'error'
+    state === 'attention'
       ? {
-          Icon: CloudOff,
+          Icon: AlertTriangle,
           cls: 'text-bad',
-          title: `Ошибка синхронизации, изменений в очереди: ${pending}. Нажмите для подробностей`,
+          badge: quarantined,
+          badgeCls: 'bg-bad',
+          title: `Отклонено сервером: ${quarantined}. Требует ручного разбора — нажмите`,
         }
-      : pending > 0
-        ? { Icon: CloudUpload, cls: 'text-warn', title: `Ожидает отправки: ${pending}. Нажмите для подробностей` }
-        : { Icon: Cloud, cls: 'text-ok', title: 'Синхронизировано с облаком' }
+      : state === 'error'
+        ? {
+            Icon: CloudOff,
+            cls: 'text-bad',
+            badge: pending,
+            badgeCls: 'bg-warn',
+            title: `Ошибка синхронизации, изменений в очереди: ${pending}. Нажмите для подробностей`,
+          }
+        : pending > 0
+          ? {
+              Icon: CloudUpload,
+              cls: 'text-warn',
+              badge: pending,
+              badgeCls: 'bg-warn',
+              title: `Ожидает отправки: ${pending}. Нажмите для подробностей`,
+            }
+          : { Icon: Cloud, cls: 'text-ok', badge: 0, title: 'Синхронизировано с облаком' }
   return (
     <div ref={ref} className="relative shrink-0">
       <button
@@ -73,9 +95,14 @@ export function SyncBadge() {
         )}
       >
         <cfg.Icon size={19} />
-        {pending > 0 && (
-          <span className="absolute -top-0.5 -right-0.5 text-[10px] font-semibold min-w-4 h-4 px-1 grid place-items-center rounded-full bg-warn text-white">
-            {pending > 99 ? '99+' : pending}
+        {cfg.badge > 0 && (
+          <span
+            className={cx(
+              'absolute -top-0.5 -right-0.5 text-[10px] font-semibold min-w-4 h-4 px-1 grid place-items-center rounded-full text-white',
+              cfg.badgeCls,
+            )}
+          >
+            {cfg.badge > 99 ? '99+' : cfg.badge}
           </span>
         )}
       </button>
