@@ -1,6 +1,7 @@
 import { uid, nextNo } from '../../lib/id'
 import { nextStatus, statusInfo } from '../../lib/constants'
 import { applyOrderStock } from '../../lib/orders'
+import { normalizeItems } from '../../lib/units'
 
 export const createOrdersSlice = (set, get) => ({
   // ── Заказы ───────────────────────────────────────────────
@@ -38,6 +39,9 @@ export const createOrdersSlice = (set, get) => ({
           }
         }
       }
+    }
+    if (order.items) {
+      order = { ...order, items: normalizeItems(order.items, get().products) }
     }
     const id = uid('o')
     const kind = order.kind || 'order'
@@ -161,12 +165,11 @@ export const createOrdersSlice = (set, get) => ({
     if (o.stockConsumed || o.status === 'cancelled') {
       return { ok: false, error: 'Заказ уже отгружен или отменён — редактирование недоступно' }
     }
+    if (patch.items) {
+      patch = { ...patch, items: normalizeItems(patch.items, get().products) }
+    }
     set((s) => {
       const next = { ...o, ...patch }
-      // B6: если patch менял items или discount — пересчитываем
-      // subtotal/total из позиций. Раньше total клался как есть,
-      // а debtDelta пытался использовать «замороженное» число →
-      // customer.balance расходился с фактом.
       const itemsChanged = 'items' in patch
       const discChanged = 'discount' in patch
       if (itemsChanged || discChanged) {

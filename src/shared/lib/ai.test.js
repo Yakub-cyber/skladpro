@@ -102,6 +102,36 @@ describe('soldByProduct / analyticsInsights', () => {
     expect(insights.some((i) => i.id === 'low')).toBe(true)
   })
 
+  it('parseLine: unitFactor из карточки товара умножает qty', () => {
+    const catalog = [
+      { id: 'cola', name: 'Кола', unit: 'шт', price: 50,
+        units: [{ unit: 'шт', factor: 1 }, { unit: 'уп', factor: 12 }], tags: [] },
+    ]
+    const [item] = parseInvoiceText('Кола 20 уп', catalog)
+    expect(item.qty).toBe(240)
+    expect(item.inputQty).toBe(20)
+    expect(item.inputUnit).toBe('уп')
+    expect(item.unitFactor).toBe(12)
+    expect(item.productId).toBe('cola')
+  })
+
+  it('parseLine: неизвестная единица при наличии units → needsReview', () => {
+    const catalog = [
+      { id: 'cola', name: 'Кола', unit: 'шт', price: 50,
+        units: [{ unit: 'шт', factor: 1 }, { unit: 'уп', factor: 12 }], tags: [] },
+    ]
+    const [item] = parseInvoiceText('Кола 5 пал', catalog)
+    expect(item.needsReview).toBe(true)
+    expect(item.qty).toBe(5)
+  })
+
+  it('parseLine: товар без units → qty без изменений, нет needsReview', () => {
+    const [item] = parseInvoiceText('Молоток 3 шт', CATALOG)
+    expect(item.qty).toBe(3)
+    expect(item.needsReview).toBeUndefined()
+    expect(item.unitFactor).toBeUndefined()
+  })
+
   it('«ниже минимума» учитывает резерв открытых заказов (по доступному)', () => {
     // Физически 15 > мин 10 (не низкий), но открытый заказ резервирует 10 →
     // доступно 5 ≤ 10 → должен попасть в инсайт о закупке.

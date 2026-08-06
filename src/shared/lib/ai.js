@@ -6,6 +6,7 @@
 //  для локальной разработки). В публичный бандл ключ из Настроек не попадает.
 // ──────────────────────────────────────────────────────────────────────────
 import { reservedByProduct, availableStock } from './orders'
+import { unitFactor } from './units'
 
 // Единицы измерения и их синонимы → нормализованная форма
 const UNIT_MAP = {
@@ -144,10 +145,17 @@ function parseLine(raw, products) {
 
   const match = matchProduct(name, products)
   const product = match?.product
+  const resolvedUnit = unit || product?.unit || 'шт'
+  const rawQty = qty == null ? 1 : qty
+  const f = unitFactor(product, resolvedUnit)
+  const hasUnitsConfig = product?.units?.length > 0
+  const unitKnown = !hasUnitsConfig || product.units.some((u) => u.unit === resolvedUnit)
   return {
     name: product?.name || capitalize(name),
-    qty: qty == null ? 1 : qty,
-    unit: unit || product?.unit || 'шт',
+    qty: f !== 1 ? rawQty * f : rawQty,
+    unit: resolvedUnit,
+    ...(f !== 1 ? { inputQty: rawQty, inputUnit: resolvedUnit, unitFactor: f } : {}),
+    ...(hasUnitsConfig && !unitKnown ? { needsReview: true } : {}),
     sku: product?.sku || null,
     price: product?.price ?? null,
     productId: product?.id || null,

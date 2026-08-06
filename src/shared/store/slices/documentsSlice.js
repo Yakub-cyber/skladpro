@@ -2,6 +2,7 @@ import { uid, nextNo } from '../../lib/id'
 import { docTypeInfo } from '../../lib/constants'
 import { applyDocToState } from '../../lib/posting'
 import { postDocumentCloud } from '../../lib/cloud'
+import { normalizeItems } from '../../lib/units'
 
 const DOC_TYPE_TO_CLOUD = {
   purchase: 'receive',
@@ -21,7 +22,7 @@ export const createDocumentsSlice = (set, get) => ({
   addDocument: (doc, opts = {}) => {
     const post = opts.post !== false
     const type = doc.type
-    const items = doc.items || []
+    const items = normalizeItems(doc.items || [], get().products)
     // Предпроверка остатков — только для типов, которые списывают со
     // склада, и только при проведении. Draft можно сохранить в минус.
     if (post && (type === 'sale' || type === 'writeoff' || type === 'supplier_return')) {

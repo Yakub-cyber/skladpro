@@ -804,6 +804,109 @@ describe('addDocument — предпроверка остатка', () => {
   })
 })
 
+describe('К4: unitFactor — упаковки умножают qty в движке', () => {
+  it('приход 20 уп (factor=12) → остаток +240', () => {
+    const p = state().products[0]
+    useStore.setState((s) => ({
+      products: s.products.map((x) =>
+        x.id === p.id
+          ? {
+              ...x,
+              stock: 0,
+              batches: [],
+              units: [
+                { unit: 'шт', factor: 1 },
+                { unit: 'уп', factor: 12 },
+              ],
+            }
+          : x,
+      ),
+    }))
+    state().addDocument({
+      type: 'purchase',
+      items: [{ productId: p.id, name: p.name, unit: 'уп', qty: 20, cost: 600 }],
+    })
+    expect(productById(p.id).stock).toBe(240)
+  })
+
+  it('заказ 5 уп (factor=12) → списание 60 шт при отгрузке', () => {
+    const p = state().products[0]
+    useStore.setState((s) => ({
+      products: s.products.map((x) =>
+        x.id === p.id
+          ? { ...x, stock: 240, batches: null, marked: false,
+              units: [{ unit: 'шт', factor: 1 }, { unit: 'уп', factor: 12 }] }
+          : x,
+      ),
+    }))
+    state().addOrder({
+      customerId: state().customers[0].id,
+      items: [{ productId: p.id, name: p.name, unit: 'уп', qty: 5, price: 600 }],
+      total: 3000,
+    })
+    const orderId = state().orders[0].id
+    state().setOrderStatus(orderId, 'shipped')
+    expect(productById(p.id).stock).toBe(240 - 60)
+  })
+
+  it('parseLine → receiveStock: "20 уп" даёт остаток +240', async () => {
+    const { parseInvoiceText } = await import('../lib/ai')
+    const p = state().products[0]
+    useStore.setState((s) => ({
+      products: s.products.map((x) =>
+        x.id === p.id
+          ? { ...x, stock: 0, batches: [],
+              units: [{ unit: 'шт', factor: 1 }, { unit: 'уп', factor: 12 }] }
+          : x,
+      ),
+    }))
+    const parsed = parseInvoiceText(`${p.name} 20 уп`, state().products)
+    expect(parsed[0].qty).toBe(240)
+    state().receiveStock(
+      parsed.filter((it) => it.productId).map((it) => ({ productId: it.productId, qty: it.qty })),
+    )
+    expect(productById(p.id).stock).toBe(240)
+  })
+
+  it('без units → qty без изменений (обратная совместимость)', () => {
+    const p = state().products[0]
+    useStore.setState((s) => ({
+      products: s.products.map((x) =>
+        x.id === p.id ? { ...x, stock: 100, batches: null, marked: false } : x,
+      ),
+    }))
+    state().addOrder({
+      customerId: state().customers[0].id,
+      items: [{ productId: p.id, name: p.name, unit: 'шт', qty: 10, price: 100 }],
+      total: 1000,
+    })
+    const orderId = state().orders[0].id
+    state().setOrderStatus(orderId, 'shipped')
+    expect(productById(p.id).stock).toBe(90)
+  })
+
+  it('позиция сохраняет inputQty/inputUnit для отображения', () => {
+    const p = state().products[0]
+    useStore.setState((s) => ({
+      products: s.products.map((x) =>
+        x.id === p.id
+          ? { ...x, units: [{ unit: 'шт', factor: 1 }, { unit: 'кор', factor: 144 }] }
+          : x,
+      ),
+    }))
+    state().addDocument({
+      type: 'purchase',
+      items: [{ productId: p.id, name: p.name, unit: 'кор', qty: 2, cost: 1000 }],
+    })
+    const doc = state().documents[0]
+    const item = doc.items[0]
+    expect(item.qty).toBe(288)
+    expect(item.inputQty).toBe(2)
+    expect(item.inputUnit).toBe('кор')
+    expect(item.unitFactor).toBe(144)
+  })
+})
+
 describe('applyInventory — инвентаризация фиксирует излишек/недостачу', () => {
   it('фактический остаток замещает учётный + запись в movements', () => {
     const p = state().products[0]
