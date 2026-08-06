@@ -12,13 +12,23 @@ export default class ErrorBoundary extends Component {
     return { error }
   }
 
+  componentDidMount() {
+    this._onHashChange = () => {
+      if (this.state.error) this.setState({ error: null })
+    }
+    window.addEventListener('hashchange', this._onHashChange)
+  }
+
+  componentWillUnmount() {
+    window.removeEventListener('hashchange', this._onHashChange)
+  }
+
   componentDidCatch(error, info) {
     console.error('Необработанная ошибка приложения:', error, info?.componentStack)
     reportError(error, info) // Sentry (no-op без VITE_SENTRY_DSN)
   }
 
   handleReload = () => {
-    // Сбрасываем на дашборд и перезагружаем — чаще всего лечит частный сбой.
     window.location.hash = '#/'
     window.location.reload()
   }

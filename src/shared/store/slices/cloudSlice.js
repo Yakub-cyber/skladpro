@@ -126,6 +126,7 @@ export const createCloudSlice = (set, get) => ({
           }
         }, 60)
       })
+      return
     }
     set({ _bootBusy: true })
     try {

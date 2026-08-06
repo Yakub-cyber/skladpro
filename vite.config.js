@@ -49,6 +49,15 @@ export default defineConfig(({ command, mode }) => {
       host: true,
       port: 5180,
     },
+    build: {
+      rollupOptions: {
+        output: {
+          manualChunks: {
+            'lucide': ['lucide-react'],
+          },
+        },
+      },
+    },
     // Vitest: юнит-тесты чистой логики (lib/*). DOM не требуется.
     test: {
       environment: 'node',

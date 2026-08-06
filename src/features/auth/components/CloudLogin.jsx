@@ -47,6 +47,8 @@ export default function CloudLogin({ onBack, initialMode = 'signin' }) {
       return
     }
     if (!email || !pass) return setErr('Заполните email и пароль')
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return setErr('Введите корректный email')
+    if (mode === 'signup' && pass.length < 8) return setErr('Пароль должен быть не менее 8 символов')
     setBusy(true)
     setErr('')
     const r =
