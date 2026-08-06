@@ -4,110 +4,121 @@ import { applyOrderStock } from '../../lib/orders'
 import { normalizeItems } from '../../lib/units'
 import { enqueueSale, enqueueOrderStatus } from '../../lib/cloud'
 
+// ── Общие проверки заявки и продажи ─────────────────────────
+// Живут на уровне модуля, а не в двух экшенах: правка шлюза
+// делается один раз (тот же принцип, что и с отправкой на сервер).
+
+// B5: оплата покрывает сумму. Единственный шлюз раньше был в
+// PaymentModal.canConfirm — из кода легко обойти (тесты, cloud
+// sync, batch-импорт), и заказ уходил с недостачей выручки.
+function paymentShortfall(order) {
+  const p = order.payment || {}
+  const total = Number(order.total) || 0
+  if (p.method && p.method !== 'credit') {
+    const paid = (Number(p.cashPaid) || 0) + (Number(p.cardPaid) || 0)
+    if (paid + 0.01 < total) return `Оплачено ${paid}₽ из ${total}₽ — недостаточно`
+  }
+  return null
+}
+
+// C1: кредитный лимит клиента. При продаже «в долг» смотрим, не выйдет
+// ли текущий долг + новая продажа за customer.creditLimit. 0 — лимита нет.
+function creditLimitError(s, order) {
+  if (!(order.onCredit && order.customerId)) return null
+  const cust = s.customers.find((c) => c.id === order.customerId)
+  const limit = Number(cust?.creditLimit) || 0
+  if (limit > 0) {
+    const newDebt = (Number(cust?.balance) || 0) + (Number(order.total) || 0)
+    if (newDebt > limit) {
+      return `Кредитный лимит превышен: долг стал бы ${newDebt}₽ при лимите ${limit}₽`
+    }
+  }
+  return null
+}
+
+// moneyTx для non-credit платежей: cash → счёт кассы (или счёт смены),
+// card → банковский счёт. Для «в долг» деньги не пришли — tx не создаём
+// (customer.balance начисляется в момент создания заказа/продажи).
+function recordPaymentTx(get, orderId, orderNo, payment) {
+  const p = payment || {}
+  if (!p.method || p.method === 'credit') return
+  const st = get()
+  const shift = st.activeShiftId
+    ? st.shifts.find((sh) => sh.id === st.activeShiftId)
+    : null
+  const cashAccountId =
+    shift?.cashAccountId || st.accounts.find((a) => a.kind === 'cash')?.id
+  const bankAccountId = st.accounts.find((a) => a.kind === 'bank')?.id
+  const cashPaid = Number(p.cashPaid) || 0
+  const cardPaid = Number(p.cardPaid) || 0
+  if (cashPaid > 0 && cashAccountId) {
+    get().addMoneyTx({
+      type: 'in',
+      accountId: cashAccountId,
+      amount: cashPaid,
+      purpose: 'sale-cash',
+      orderId,
+      note: `Продажа ${orderNo}`,
+    })
+  }
+  if (cardPaid > 0 && bankAccountId) {
+    get().addMoneyTx({
+      type: 'in',
+      accountId: bankAccountId,
+      amount: cardPaid,
+      purpose: 'sale-card',
+      orderId,
+      note: `Продажа ${orderNo}`,
+    })
+  }
+}
+
 export const createOrdersSlice = (set, get) => ({
   // ── Движок продажи ────────────────────────────────────────
   // createSaleDocument — единственное место, где продажа становится
-  // документом отгрузки для сервера. Собирает payload для /v1/sales
-  // и кладёт в персистентную очередь (outbox). Проводку (post_doc)
-  // делает СЕРВЕР — клиент только собирает и ставит в очередь,
-  // поэтому «create», а не «post».
+  // учётным фактом. Заявка (addOrder) — «клиент попросил»; продажа —
+  // «товар ушёл, деньги пришли». В рознице оба события совпадают по
+  // времени, поэтому касса зовёт только этот движок.
   //
-  // Экраны (касса, форма документа) не строят payload сами — они
-  // зовут этот движок. Пока его зовёт addOrder (kind='retail');
-  // следующие шаги переводят кассу и SaleTab на прямой вызов.
+  // Движок делает ВСЁ: заказ-обёртку (для истории и чека), локальное
+  // списание (FIFO + маркировка), moneyTx, и документ для сервера в
+  // персистентной очереди. Экраны только передают данные.
+  // Проводку (post_doc) делает СЕРВЕР — поэтому «create», а не «post».
   //
-  // Возвращает { ok, docId }. docId = `sale-${order.id}` — этот же id
-  // сервер использует для docs (см. sales.ts), поэтому маркер
-  // shipmentDocId на заказе однозначно связывает заявку с документом.
-  createSaleDocument: (order) => {
-    const saleItems = (order.items || []).map((it) => ({
-      productId: it.productId,
-      name: it.name,
-      qty: Number(it.qty) || 0,
-      price: Number(it.price) || 0,
-    }))
-    const saleSubtotal = saleItems.reduce((a, it) => a + it.qty * it.price, 0)
-    const docId = `sale-${order.id}`
-    enqueueSale({
-      id: order.id,
-      no: order.no,
-      customerId: order.customerId || undefined,
-      customerName: order.customerName || undefined,
-      items: saleItems,
-      discount: Math.max(0, Math.round((saleSubtotal - (order.total || 0)) * 100) / 100),
-      onCredit: !!order.onCredit,
-      priceTypeId: order.priceTypeId || undefined,
-      shiftId: order.shiftId || undefined,
-      track: order.track || undefined,
-    })
-    return { ok: true, docId }
-  },
-
-  // ── Заказы ───────────────────────────────────────────────
-  // `kind` разделяет два принципиально разных сценария:
-  //   'retail' — розничный чек из кассы. Товар отдан покупателю
-  //              прямо сейчас: заказ создаётся и СРАЗУ закрывается
-  //              (delivered + физическое списание). Воронка
-  //              «подтверждён → сборка → в пути» для него не нужна.
-  //   'order'  — заказ с доставкой/самовывозом (по умолчанию).
-  //              Идёт по обычной воронке статусов. Заявка, не продажа:
-  //              остаток не двигает, максимум резервирует.
-  addOrder: (order) => {
-    // B5: валидация суммы оплаты. Единственный шлюз раньше был в
-    // PaymentModal.canConfirm — из кода легко обойти (тесты, cloud
-    // sync, batch-импорт), и заказ уходил с недостачей выручки.
-    const p = order.payment || {}
-    const total = Number(order.total) || 0
-    if (p.method && p.method !== 'credit') {
-      const paid = (Number(p.cashPaid) || 0) + (Number(p.cardPaid) || 0)
-      if (paid + 0.01 < total) {
-        return { ok: false, error: `Оплачено ${paid}₽ из ${total}₽ — недостаточно` }
-      }
-    }
-    // C1: кредитный лимит клиента. При продаже «в долг» смотрим,
-    // не выйдет ли текущий долг + новая продажа за customer.creditLimit.
-    // 0 или отсутствует — лимита нет.
-    if (order.onCredit && order.customerId) {
-      const cust = get().customers.find((c) => c.id === order.customerId)
-      const limit = Number(cust?.creditLimit) || 0
-      if (limit > 0) {
-        const newDebt = (Number(cust?.balance) || 0) + total
-        if (newDebt > limit) {
-          return {
-            ok: false,
-            error: `Кредитный лимит превышен: долг стал бы ${newDebt}₽ при лимите ${limit}₽`,
-          }
-        }
-      }
-    }
+  // Возвращает { ok, id, docId }. docId = `sale-${id}` — тот же id
+  // сервер использует для docs (см. sales.ts), маркер shipmentDocId
+  // на заказе однозначно связывает его с документом.
+  createSaleDocument: (input) => {
+    const shortfall = paymentShortfall(input)
+    if (shortfall) return { ok: false, error: shortfall }
+    const overLimit = creditLimitError(get(), input)
+    if (overLimit) return { ok: false, error: overLimit }
+    let order = input
     if (order.items) {
       order = { ...order, items: normalizeItems(order.items, get().products) }
     }
     const id = uid('o')
-    const kind = order.kind || 'order'
+    const docId = `sale-${id}`
     set((s) => {
-      const prefix = kind === 'retail' ? 'ЧК' : 'ЗК'
       const o = {
         id,
-        no: nextNo(s.orders, prefix),
+        no: nextNo(s.orders, 'ЧК'),
         status: 'new',
         createdAt: new Date().toISOString(),
         track: [{ status: 'new', at: new Date().toISOString() }],
         priority: false,
         shiftId: s.activeShiftId || null,
-        stockConsumed: false, // физически спишется при отгрузке
+        stockConsumed: false, // спишет setOrderStatus('delivered') ниже
         ...order,
-        kind,
-        // Маркер «заказ ушёл серверным путём» — id связанного документа
-        // отгрузки. Ставится В ТОМ ЖЕ set(), что создаёт заказ: attachSync
-        // срабатывает на каждый set, и заказ без маркера в первом же окне
-        // улетел бы в sync/push (гонка с /v1/sales).
+        kind: 'retail',
+        // Маркер «ушёл серверным путём» — id связанного документа отгрузки.
+        // Ставится В ТОМ ЖЕ set(), что создаёт заказ: attachSync срабатывает
+        // на каждый set, и заказ без маркера в первом же окне улетел бы в
+        // sync/push (гонка с /v1/sales).
         // stockConsumed — про другое: «товар списан ЛОКАЛЬНО». Не смешивать.
-        shipmentDocId: kind === 'retail' ? `sale-${id}` : null,
+        shipmentDocId: docId,
       }
-      // Заказ резервирует остаток (через открытый статус), физически со
-      // склада не списывает — это произойдёт при отгрузке. Долг «в долг»
-      // начисляем сразу.
+      // Долг «в долг» начисляем сразу.
       let customers = s.customers
       if (o.onCredit && o.customerId) {
         customers = s.customers.map((c) =>
@@ -116,59 +127,88 @@ export const createOrdersSlice = (set, get) => ({
       }
       return { orders: [o, ...s.orders], customers }
     })
-    // Розничный чек закрываем сразу: товар физически ушёл с покупателем,
-    // держать его в «резерве» и гонять по воронке бессмысленно.
+    // Товар физически ушёл с покупателем — закрываем сразу.
     // setOrderStatus сам применит applyOrderStock (FIFO + маркировка).
-    if (kind === 'retail') get().setOrderStatus(id, 'delivered')
+    get().setOrderStatus(id, 'delivered')
     const o = get().orders.find((x) => x.id === id)
-    // Автоматическое создание moneyTx для non-credit платежей.
-    // Раньше `/money` не видел выручку от кассы (POS писал только
-    // `order.payment`), теперь при cash/card/mixed балансы касс
-    // растут сразу же. Для «в долг» — деньги не пришли, tx не
-    // создаём (customer.balance уже прирос выше). `p` уже
-    // объявлен в валидации выше (B5).
-    if (p.method && p.method !== 'credit') {
-      const st = get()
-      const shift = st.activeShiftId
-        ? st.shifts.find((sh) => sh.id === st.activeShiftId)
-        : null
-      const cashAccountId =
-        shift?.cashAccountId ||
-        st.accounts.find((a) => a.kind === 'cash')?.id
-      const bankAccountId = st.accounts.find((a) => a.kind === 'bank')?.id
-      const cashPaid = Number(p.cashPaid) || 0
-      const cardPaid = Number(p.cardPaid) || 0
-      if (cashPaid > 0 && cashAccountId) {
-        get().addMoneyTx({
-          type: 'in',
-          accountId: cashAccountId,
-          amount: cashPaid,
-          purpose: 'sale-cash',
-          orderId: id,
-          note: `Продажа ${o?.no}`,
-        })
-      }
-      if (cardPaid > 0 && bankAccountId) {
-        get().addMoneyTx({
-          type: 'in',
-          accountId: bankAccountId,
-          amount: cardPaid,
-          purpose: 'sale-card',
-          orderId: id,
-          note: `Продажа ${o?.no}`,
-        })
-      }
+    recordPaymentTx(get, id, o?.no, input.payment)
+    // Документ для сервера — в персистентную очередь: переживает
+    // закрытие вкладки и оффлайн, в отличие от fire-and-forget промиса.
+    const saleItems = (o?.items || []).map((it) => ({
+      productId: it.productId,
+      name: it.name,
+      qty: Number(it.qty) || 0,
+      price: Number(it.price) || 0,
+    }))
+    const saleSubtotal = saleItems.reduce((a, it) => a + it.qty * it.price, 0)
+    enqueueSale({
+      id,
+      no: o?.no,
+      customerId: o?.customerId || undefined,
+      customerName: o?.customerName || undefined,
+      items: saleItems,
+      discount: Math.max(0, Math.round((saleSubtotal - (o?.total || 0)) * 100) / 100),
+      onCredit: !!o?.onCredit,
+      priceTypeId: o?.priceTypeId || undefined,
+      shiftId: o?.shiftId || undefined,
+      track: o?.track || undefined,
+    })
+    get().logAction(`Продажа ${o?.no} на ${o?.total || 0} ₽`, {
+      section: 'Заказы',
+      type: 'create',
+    })
+    return { ok: true, id, docId }
+  },
+
+  // ── Заказы (заявки) ──────────────────────────────────────
+  // Заказ — это НЕ продажа. Это заявка: клиент попросил, вы приняли,
+  // собираете, везёте. Живёт по воронке статусов, остаток не двигает —
+  // максимум резервирует (через открытый статус). Учётный факт
+  // (списание, долг, деньги) появится при отгрузке.
+  //
+  // kind='retail' здесь — обратная совместимость: розница целиком
+  // делегируется движку createSaleDocument, т.к. в рознице заявка и
+  // отгрузка — одно событие.
+  addOrder: (order) => {
+    if ((order.kind || 'order') === 'retail') return get().createSaleDocument(order)
+    const shortfall = paymentShortfall(order)
+    if (shortfall) return { ok: false, error: shortfall }
+    const overLimit = creditLimitError(get(), order)
+    if (overLimit) return { ok: false, error: overLimit }
+    if (order.items) {
+      order = { ...order, items: normalizeItems(order.items, get().products) }
     }
+    const id = uid('o')
+    set((s) => {
+      const o = {
+        id,
+        no: nextNo(s.orders, 'ЗК'),
+        status: 'new',
+        createdAt: new Date().toISOString(),
+        track: [{ status: 'new', at: new Date().toISOString() }],
+        priority: false,
+        shiftId: s.activeShiftId || null,
+        stockConsumed: false, // физически спишется при отгрузке
+        ...order,
+        kind: 'order',
+        shipmentDocId: null, // заявка не отгружена — документа нет
+      }
+      // Долг «в долг» начисляем сразу (предоплата долга при приёме заявки).
+      let customers = s.customers
+      if (o.onCredit && o.customerId) {
+        customers = s.customers.map((c) =>
+          c.id === o.customerId ? { ...c, balance: (c.balance || 0) + (o.total || 0) } : c,
+        )
+      }
+      return { orders: [o, ...s.orders], customers }
+    })
+    const o = get().orders.find((x) => x.id === id)
+    // Предоплата при приёме заявки (клиент заплатил вперёд) — в кассу сразу.
+    recordPaymentTx(get, id, o?.no, order.payment)
     get().logAction(`Создан заказ ${o?.no} на ${order.total || 0} ₽ (резерв)`, {
       section: 'Заказы',
       type: 'create',
     })
-    // Розничный чек — это продажа, а не заявка: товар физически ушёл.
-    // Документ отгрузки строит движок createSaleDocument и кладёт в
-    // персистентную очередь (переживает закрытие вкладки, в отличие от
-    // fire-and-forget промиса). Заказ доставки (kind='order') — заявка,
-    // документ появится при отгрузке, отдельный этап.
-    if (o && kind === 'retail') get().createSaleDocument(o)
     return { ok: true, id }
   },
   setOrderStatus: (id, status, note) => {

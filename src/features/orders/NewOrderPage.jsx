@@ -31,7 +31,7 @@ import Chip from '@/features/orders/components/Chip'
 
 export default function NewOrder({ fullscreen = false }) {
   const nav = useNavigate()
-  const { customers, products, priceTypes, addOrder, addCustomer, orders } = useStore()
+  const { customers, products, priceTypes, addOrder, createSaleDocument, addCustomer, orders } = useStore()
   const defType = priceTypes.find((t) => t.default)?.id || priceTypes[0]?.id
   const reserved = useMemo(() => reservedByProduct(orders), [orders])
   const productCategories = useMemo(() => [...new Set(products.map(p => p.category).filter(Boolean))].sort(), [products])
@@ -273,11 +273,7 @@ export default function NewOrder({ fullscreen = false }) {
   // payment: { method: 'cash'|'card'|'credit'|'mixed', cashPaid, cardPaid, change }
   const finalSubmit = (payment) => {
     const cust = customers.find((c) => c.id === customerId)
-    const r = addOrder({
-      // Без галочки «Доставка» — обычный розничный чек: закрывается
-      // сразу, товар физически ушёл, воронка статусов не нужна.
-      // С галочкой — заказ с доставкой, идёт по воронке.
-      kind: asOrder ? 'order' : 'retail',
+    const data = {
       customerId: cust?.id || 'retail',
       customerName: cust?.name || 'Розничный покупатель',
       items: rows,
@@ -285,7 +281,7 @@ export default function NewOrder({ fullscreen = false }) {
       discount: Number(discount) || 0,
       total,
       priceTypeId,
-      // Долг — теперь производная от способа оплаты (для обратной совместимости
+      // Долг — производная от способа оплаты (для обратной совместимости
       // с существующей логикой резервов/долгов клиента в сторе).
       onCredit: payment.method === 'credit',
       payment,
@@ -297,7 +293,14 @@ export default function NewOrder({ fullscreen = false }) {
       // месте, а не в хешированной точке рядом с центром города.
       geo: geo ? { lat: geo.lat, lng: geo.lng } : undefined,
       courier: 'Самовывоз',
-    })
+    }
+    // Без галочки «Доставка» — розничная продажа: заявка и отгрузка
+    // совпадают, движок createSaleDocument делает всё одним вызовом.
+    // С галочкой — заявка (заказ с доставкой), идёт по воронке;
+    // учётный факт появится при отгрузке.
+    const r = asOrder
+      ? addOrder({ kind: 'order', ...data })
+      : createSaleDocument(data)
     if (r && r.ok === false) {
       // B5 сработал: сумма оплаты меньше total (или другая валидация).
       // PaymentModal остаётся открытым — покажем алерт.
