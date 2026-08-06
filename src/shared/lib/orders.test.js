@@ -6,6 +6,7 @@ import {
   OPEN_STATUSES,
   stockConsumedFromStatus,
   migrateReservationV8,
+  isReceipt,
 } from './orders'
 
 const baseState = () => ({
@@ -163,5 +164,22 @@ describe('migrateReservationV8 — миграция на модель резер
     }
     const r = migrateReservationV8(state)
     expect(prod(r, 'p1').stock).toBe(50) // не трогаем — уже новая модель
+  })
+})
+
+// isReceipt: kind — клиентское поле, умирает при pull. Признак чека обязан
+// работать и по серверным данным (номер ЧК-).
+describe('isReceipt — чек определяется и без kind', () => {
+  it('kind=retail → чек', () => {
+    expect(isReceipt({ kind: 'retail', no: 'ЧК-2026-0001' })).toBe(true)
+  })
+  it('pull-заказ без kind, но с ЧК-номером → чек', () => {
+    expect(isReceipt({ no: 'ЧК-2026-0005', status: 'delivered' })).toBe(true)
+  })
+  it('заявка ЗК → не чек', () => {
+    expect(isReceipt({ no: 'ЗК-2026-0101', kind: 'order' })).toBe(false)
+  })
+  it('возврат ВЧК → не чек', () => {
+    expect(isReceipt({ no: 'ВЧК-2026-0001', kind: 'refund' })).toBe(false)
   })
 })

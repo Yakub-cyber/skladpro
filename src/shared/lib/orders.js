@@ -24,6 +24,15 @@ export const OPEN_STATUSES = ['new', 'confirmed', 'picking', 'packed']
 // Статусы, в которых остаток уже физически списан со склада.
 export const CONSUMED_STATUSES = ['shipped', 'delivered']
 
+// Чек (розничная продажа) или заявка? kind — клиентское поле и НЕ переживает
+// pull (сервер его не хранит), поэтому одного kind недостаточно: свежая
+// вкладка видела бы чек как заявку — с воронкой статусов и без кнопки
+// «Аннулировать». Номер (ЧК-…) приходит с сервера и переживает всё.
+// ВЧК (возврат) не подпадает: startsWith('ЧК') === false.
+export function isReceipt(o) {
+  return o?.kind === 'retail' || String(o?.no || '').startsWith('ЧК')
+}
+
 // Флаг «остаток физически списан» из статуса — для заказов, пришедших без него
 // (данные до модели резервирования: из облака или старого persist).
 export function stockConsumedFromStatus(status) {

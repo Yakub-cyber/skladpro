@@ -5,8 +5,9 @@ import { Button, Card, Empty, Modal, StatusBadge } from '@/shared/ui'
 import { useStore } from '@/shared/store/useStore'
 import OrderDetail from './components/OrderDetail'
 import OrdersList from './components/OrdersList'
-
-const isReceipt = (o) => o.kind === 'retail'
+// Общий isReceipt: kind не переживает pull, локальное определение по kind
+// показывало бы чек из свежей вкладки как заявку.
+import { isReceipt } from '@/shared/lib/orders'
 
 export default function Orders() {
   const allOrders = useStore((s) => s.orders)

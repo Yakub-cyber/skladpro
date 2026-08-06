@@ -22,8 +22,7 @@ import { cellById } from '@/shared/store/seed'
 import OrderItemsTable from './OrderItemsTable'
 import OrderRoutePanel from './OrderRoutePanel'
 import RefundModal from './RefundModal'
-
-const isReceipt = (o) => o.kind === 'retail'
+import { isReceipt } from '@/shared/lib/orders'
 
 export default function OrderDetail({ order }) {
   const nav = useNavigate()

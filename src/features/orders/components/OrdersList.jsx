@@ -1,8 +1,7 @@
 import { Flag, Search } from 'lucide-react'
 import { Badge, Empty, Input, StatusBadge, cx } from '@/shared/ui'
 import { dateShort, money } from '@/shared/lib/format'
-
-const isReceipt = (o) => o.kind === 'retail'
+import { isReceipt } from '@/shared/lib/orders'
 
 export const FILTERS = [
   { key: 'all', label: 'Все' },
