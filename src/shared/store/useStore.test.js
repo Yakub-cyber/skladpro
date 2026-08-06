@@ -475,6 +475,30 @@ describe('addOrder — kind retail vs order (POS-2)', () => {
     expect(state().orders[0].no).toMatch(/^ЧК-/)
   })
 
+  it('kind=retail: shipmentDocId = sale-<id> — маркер серверного пути', () => {
+    // Маркер связывает заявку с документом отгрузки. По нему attachSync
+    // исключает заказ из sync/push (второй писатель), а cancelOrder
+    // понимает, что серверу нужен unpost_doc.
+    state().addOrder({
+      kind: 'retail',
+      customerId: state().customers[0].id,
+      items: [{ productId: state().products[0].id, name: 'X', qty: 1, price: 50 }],
+      total: 50,
+      payment: { method: 'cash', cashPaid: 50, cardPaid: 0 },
+    })
+    const o = state().orders[0]
+    expect(o.shipmentDocId).toBe(`sale-${o.id}`)
+  })
+
+  it('kind=order: shipmentDocId нет — заявка не отгружена, документа нет', () => {
+    state().addOrder({
+      customerId: state().customers[0].id,
+      items: [{ productId: state().products[0].id, name: 'X', qty: 1, price: 50 }],
+      total: 50,
+    })
+    expect(state().orders[0].shipmentDocId).toBeNull()
+  })
+
   it('kind=order (по умолчанию): статус new, остаток только в резерве', () => {
     const p = state().products.find((x) => x.stock >= 10)
     const before = productById(p.id).stock

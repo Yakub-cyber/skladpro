@@ -416,11 +416,14 @@ const snap = (state) =>
 	Object.fromEntries(TABLES.map((t) => [t.key, new Map((state[t.key] || []).map((o) => [o.id, o]))]))
 
 // Что из таблицы cfg.key имеет право уехать через sync/push.
-// Retail-заказы — исключены (уходят через /v1/sales и /v1/orders/:id/status).
+// Заказы с документом отгрузки (shipmentDocId) — исключены: они ушли
+// серверным путём (/v1/sales), sync/push стал бы вторым писателем.
+// kind='retail' без маркера — legacy-чеки до появления shipmentDocId:
+// их тоже не трогаем (они на сервере от /v1/sales или старого push).
 // Функция чистая: одинаково применяется к prev и next в attachSync — иначе
 // асимметрия сотрёт данные с сервера через detect-delete.
 function pushableForKey(key) {
-	if (key === 'orders') return (o) => o?.kind !== 'retail'
+	if (key === 'orders') return (o) => !o?.shipmentDocId && o?.kind !== 'retail'
 	return () => true
 }
 function filterMap(m, pred) {

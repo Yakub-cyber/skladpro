@@ -5,6 +5,44 @@ import { normalizeItems } from '../../lib/units'
 import { enqueueSale, enqueueOrderStatus } from '../../lib/cloud'
 
 export const createOrdersSlice = (set, get) => ({
+  // ── Движок продажи ────────────────────────────────────────
+  // createSaleDocument — единственное место, где продажа становится
+  // документом отгрузки для сервера. Собирает payload для /v1/sales
+  // и кладёт в персистентную очередь (outbox). Проводку (post_doc)
+  // делает СЕРВЕР — клиент только собирает и ставит в очередь,
+  // поэтому «create», а не «post».
+  //
+  // Экраны (касса, форма документа) не строят payload сами — они
+  // зовут этот движок. Пока его зовёт addOrder (kind='retail');
+  // следующие шаги переводят кассу и SaleTab на прямой вызов.
+  //
+  // Возвращает { ok, docId }. docId = `sale-${order.id}` — этот же id
+  // сервер использует для docs (см. sales.ts), поэтому маркер
+  // shipmentDocId на заказе однозначно связывает заявку с документом.
+  createSaleDocument: (order) => {
+    const saleItems = (order.items || []).map((it) => ({
+      productId: it.productId,
+      name: it.name,
+      qty: Number(it.qty) || 0,
+      price: Number(it.price) || 0,
+    }))
+    const saleSubtotal = saleItems.reduce((a, it) => a + it.qty * it.price, 0)
+    const docId = `sale-${order.id}`
+    enqueueSale({
+      id: order.id,
+      no: order.no,
+      customerId: order.customerId || undefined,
+      customerName: order.customerName || undefined,
+      items: saleItems,
+      discount: Math.max(0, Math.round((saleSubtotal - (order.total || 0)) * 100) / 100),
+      onCredit: !!order.onCredit,
+      priceTypeId: order.priceTypeId || undefined,
+      shiftId: order.shiftId || undefined,
+      track: order.track || undefined,
+    })
+    return { ok: true, docId }
+  },
+
   // ── Заказы ───────────────────────────────────────────────
   // `kind` разделяет два принципиально разных сценария:
   //   'retail' — розничный чек из кассы. Товар отдан покупателю
@@ -12,7 +50,8 @@ export const createOrdersSlice = (set, get) => ({
   //              (delivered + физическое списание). Воронка
   //              «подтверждён → сборка → в пути» для него не нужна.
   //   'order'  — заказ с доставкой/самовывозом (по умолчанию).
-  //              Идёт по обычной воронке статусов.
+  //              Идёт по обычной воронке статусов. Заявка, не продажа:
+  //              остаток не двигает, максимум резервирует.
   addOrder: (order) => {
     // B5: валидация суммы оплаты. Единственный шлюз раньше был в
     // PaymentModal.canConfirm — из кода легко обойти (тесты, cloud
@@ -59,6 +98,12 @@ export const createOrdersSlice = (set, get) => ({
         stockConsumed: false, // физически спишется при отгрузке
         ...order,
         kind,
+        // Маркер «заказ ушёл серверным путём» — id связанного документа
+        // отгрузки. Ставится В ТОМ ЖЕ set(), что создаёт заказ: attachSync
+        // срабатывает на каждый set, и заказ без маркера в первом же окне
+        // улетел бы в sync/push (гонка с /v1/sales).
+        // stockConsumed — про другое: «товар списан ЛОКАЛЬНО». Не смешивать.
+        shipmentDocId: kind === 'retail' ? `sale-${id}` : null,
       }
       // Заказ резервирует остаток (через открытый статус), физически со
       // склада не списывает — это произойдёт при отгрузке. Долг «в долг»
@@ -118,32 +163,12 @@ export const createOrdersSlice = (set, get) => ({
       section: 'Заказы',
       type: 'create',
     })
-    // Розничный чек: серверная продажа через outbox. Заказ пробит в кассе,
-    // товар физически ушёл — операция должна доехать до сервера даже если
-    // вкладку закрыли до отправки. Поэтому не .then(), а persistent queue.
-    // Заказ доставки (kind='order') пока идёт через sync/push как строка —
-    // отдельный этап на будущее.
-    if (o && kind === 'retail') {
-      const saleItems = (o.items || []).map(it => ({
-        productId: it.productId,
-        name: it.name,
-        qty: Number(it.qty) || 0,
-        price: Number(it.price) || 0,
-      }))
-      const saleSubtotal = saleItems.reduce((a, it) => a + it.qty * it.price, 0)
-      enqueueSale({
-        id: o.id,
-        no: o.no,
-        customerId: o.customerId || undefined,
-        customerName: o.customerName || undefined,
-        items: saleItems,
-        discount: Math.max(0, Math.round((saleSubtotal - (o.total || 0)) * 100) / 100),
-        onCredit: !!o.onCredit,
-        priceTypeId: o.priceTypeId || undefined,
-        shiftId: o.shiftId || undefined,
-        track: o.track || undefined,
-      })
-    }
+    // Розничный чек — это продажа, а не заявка: товар физически ушёл.
+    // Документ отгрузки строит движок createSaleDocument и кладёт в
+    // персистентную очередь (переживает закрытие вкладки, в отличие от
+    // fire-and-forget промиса). Заказ доставки (kind='order') — заявка,
+    // документ появится при отгрузке, отдельный этап.
+    if (o && kind === 'retail') get().createSaleDocument(o)
     return { ok: true, id }
   },
   setOrderStatus: (id, status, note) => {
@@ -281,8 +306,10 @@ export const createOrdersSlice = (set, get) => ({
     if (o.shiftId) get().recalcClosedShift(o.shiftId)
     // Отмена — через outbox: если сеть моргнула, заказ на сервере останется
     // отгруженным, остатки не вернутся. Персистентная очередь ретраит.
-    // Только для retail: у order (доставка) сервер узнаёт статус через sync/push.
-    if (o.kind === 'retail') enqueueOrderStatus(id, 'cancelled')
+    // Кому нужна серверная отмена: заказам с документом отгрузки
+    // (shipmentDocId) — сервер сделает unpost_doc. kind='retail' без
+    // маркера — legacy-чеки, созданные до маркера: они тоже на сервере.
+    if (o.shipmentDocId || o.kind === 'retail') enqueueOrderStatus(id, 'cancelled')
     get().logAction(
       `Отменён заказ ${o.no} · ${o.stockConsumed ? 'остатки возвращены' : 'резерв снят'}`,
       { section: 'Заказы', type: 'delete' },

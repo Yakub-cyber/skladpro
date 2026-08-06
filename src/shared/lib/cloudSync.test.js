@@ -391,6 +391,23 @@ describe('attachSync: retail-заказы исключены СИММЕТРИЧ�
 		syncOutbox.reset()
 	})
 
+	it('заказ с shipmentDocId (любой kind) — не уходит ни upsert, ни delete', async () => {
+		syncOutbox.reset()
+		const { attachSync } = await import('./cloud.js')
+		h.impl = makeApi()
+		// kind='order', но отгружен серверным путём: маркер, не тип, решает.
+		const shipped = { id: 'd_ship', kind: 'order', status: 'delivered', shipmentDocId: 'sale-d_ship', total: 700 }
+		const store = makeStore({ orders: [shipped] })
+		attachSync(store)
+		// Изменение полей — upsert подавлен.
+		store.setOrders([{ ...shipped, total: 800 }])
+		// Исчезновение — delete подавлен.
+		store.setOrders([])
+		const items = syncOutbox.items()
+		expect(items.filter((it) => it.key === 'orders')).toEqual([])
+		syncOutbox.reset()
+	})
+
 	it('добавление delivery-заказа (kind=order) — upsert летит как обычно', async () => {
 		syncOutbox.reset()
 		const { attachSync } = await import('./cloud.js')
