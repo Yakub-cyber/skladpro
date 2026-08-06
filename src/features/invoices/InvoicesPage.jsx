@@ -35,7 +35,7 @@ const EXAMPLES = [
 ]
 
 export default function Invoices() {
-  const { products, customers, suppliers, invoices, settings, priceTypes, addInvoice, receiveStock } =
+  const { products, customers, suppliers, invoices, settings, priceTypes, addInvoice, addDocument } =
     useStore()
   const defType = priceTypes.find((t) => t.default)?.id || priceTypes[0]?.id
   const [kind, setKind] = useState('out') // out — расход (клиенту), in — приход (от поставщика)
@@ -141,11 +141,21 @@ export default function Invoices() {
     }
     addInvoice(inv)
     if (kind === 'in' && applyStock) {
-      receiveStock(
-        items
+      addDocument({
+        type: 'purchase',
+        items: items
           .filter((it) => it.productId)
-          .map((it) => ({ productId: it.productId, qty: it.qty })),
-      )
+          .map((it) => ({
+            productId: it.productId,
+            name: it.name,
+            unit: it.unit,
+            qty: it.qty,
+            cost: it.price || 0,
+            ...(it.unitFactor != null
+              ? { unitFactor: it.unitFactor, inputQty: it.inputQty, inputUnit: it.inputUnit }
+              : {}),
+          })),
+      })
     }
     setItems(null)
     setText('')

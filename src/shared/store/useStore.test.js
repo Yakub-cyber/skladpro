@@ -849,23 +849,37 @@ describe('К4: unitFactor — упаковки умножают qty в движ�
     expect(productById(p.id).stock).toBe(240 - 60)
   })
 
-  it('parseLine → receiveStock: "20 уп" даёт остаток +240', async () => {
+  it('parseLine → addDocument: "20 уп" даёт остаток +240, батч, movement, cost', async () => {
     const { parseInvoiceText } = await import('../lib/ai')
     const p = state().products[0]
     useStore.setState((s) => ({
       products: s.products.map((x) =>
         x.id === p.id
-          ? { ...x, stock: 0, batches: [],
+          ? { ...x, stock: 0, cost: 0, batches: [],
               units: [{ unit: 'шт', factor: 1 }, { unit: 'уп', factor: 12 }] }
           : x,
       ),
     }))
     const parsed = parseInvoiceText(`${p.name} 20 уп`, state().products)
     expect(parsed[0].qty).toBe(240)
-    state().receiveStock(
-      parsed.filter((it) => it.productId).map((it) => ({ productId: it.productId, qty: it.qty })),
-    )
+    expect(parsed[0].unitFactor).toBe(12)
+    state().addDocument({
+      type: 'purchase',
+      items: parsed
+        .filter((it) => it.productId)
+        .map((it) => ({
+          productId: it.productId, name: it.name, unit: it.unit,
+          qty: it.qty, cost: 50,
+          ...(it.unitFactor != null
+            ? { unitFactor: it.unitFactor, inputQty: it.inputQty, inputUnit: it.inputUnit }
+            : {}),
+        })),
+    })
     expect(productById(p.id).stock).toBe(240)
+    expect(productById(p.id).batches.length).toBeGreaterThan(0)
+    expect(productById(p.id).cost).toBe(50)
+    expect(state().movements.length).toBeGreaterThan(0)
+    expect(state().documents[0].type).toBe('purchase')
   })
 
   it('без units → qty без изменений (обратная совместимость)', () => {
