@@ -143,6 +143,9 @@ export default function Invoices() {
     if (kind === 'in' && applyStock) {
       addDocument({
         type: 'purchase',
+        // Поставщик из накладной — без него сервер проведёт приход как
+        // stock_income (без взаиморасчётов), и долг поставщику не вырастет.
+        supplierId: party || undefined,
         items: items
           .filter((it) => it.productId)
           .map((it) => ({

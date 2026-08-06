@@ -1506,6 +1506,63 @@ describe('createSaleDocument — движок продажи', () => {
   })
 })
 
+// ── Legacy-чеки: отказ вместо молчаливой локальной отмены ──────────────
+describe('cancelOrder — legacy-чек без маркера', () => {
+  it('чек без shipmentDocId и kind: отказ, статус не меняется', () => {
+    // Симулируем заказ старой сборки: ЧК-номер, но ни kind, ни маркера.
+    useStore.setState((s) => ({
+      orders: [
+        {
+          id: 'o-legacy',
+          no: 'ЧК-2026-0099',
+          status: 'delivered',
+          stockConsumed: true,
+          items: [],
+          total: 100,
+        },
+        ...s.orders,
+      ],
+    }))
+    const r = state().cancelOrder('o-legacy')
+    expect(r.ok).toBe(false)
+    expect(r.error).toMatch(/старой версией/)
+    expect(state().orders.find((x) => x.id === 'o-legacy').status).toBe('delivered')
+  })
+
+  it('заявка (ЗК) без маркера отменяется как раньше', () => {
+    state().addOrder({
+      customerId: state().customers[0].id,
+      items: [{ productId: state().products[0].id, name: 'X', qty: 1, price: 50 }],
+      total: 50,
+    })
+    const o = state().orders[0]
+    expect(o.no).toMatch(/^ЗК-/)
+    const r = state().cancelOrder(o.id)
+    expect(r.ok).toBe(true)
+    expect(state().orders.find((x) => x.id === o.id).status).toBe('cancelled')
+  })
+})
+
+// ── Черновики документов не теряют шапку ───────────────────────────────
+describe('addDocument — сохранение полей шапки', () => {
+  it('purchase: supplierId доходит до заголовка и до payload очереди', async () => {
+    const { syncOutbox } = await import('../lib/cloud')
+    syncOutbox.reset()
+    const sup = state().suppliers[0]
+    const p = state().products[0]
+    const docId = state().addDocument({
+      type: 'purchase',
+      supplierId: sup.id,
+      items: [{ productId: p.id, name: p.name, unit: p.unit, qty: 1, cost: 10 }],
+    })
+    expect(state().documents.find((d) => d.id === docId).supplierId).toBe(sup.id)
+    const queued = syncOutbox.items().find((it) => it.key === 'doc_post' && it.id === docId)
+    expect(queued).toBeTruthy()
+    expect(queued.obj.supplierId).toBe(sup.id)
+    syncOutbox.reset()
+  })
+})
+
 // Sanity check: seed стабилен от теста к тесту
 describe('seed / resetStore — база чиста', () => {
   it('после resetStore products и orders совпадают с seed', () => {

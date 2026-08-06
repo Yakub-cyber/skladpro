@@ -54,6 +54,10 @@ export const createDocumentsSlice = (set, get) => ({
         reason: doc.reason || '',
         note: doc.note || '',
         totalQty: items.reduce((a, x) => a + (Number(x.qty) || 0), 0),
+        // Поставщик закупки. Раньше header его отбрасывал: сервер получал
+        // receive без supplierId → stock_income вместо purchase_receipt,
+        // долг поставщику не рос. Черновик терял поставщика молча.
+        supplierId: doc.supplierId ?? null,
         by: s.authUserId,
         createdAt: new Date().toISOString(),
         postedAt: post ? new Date().toISOString() : null,

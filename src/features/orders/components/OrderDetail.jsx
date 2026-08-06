@@ -76,7 +76,12 @@ export default function OrderDetail({ order }) {
       okLabel: 'Отменить заказ',
       cancelLabel: 'Не отменять',
     })
-    if (ok) cancel(order.id)
+    if (ok) {
+      // Legacy-чек не может быть отменён серверно — отказ показываем,
+      // а не глотаем: молча «Отменён» без учёта хуже честного «нельзя».
+      const r = cancel(order.id)
+      if (r && r.ok === false) alert(r.error)
+    }
   }
 
   return (
