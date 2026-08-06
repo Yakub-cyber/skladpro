@@ -1231,22 +1231,23 @@ describe('D3: API-ключи и webhook-endpoints', () => {
 })
 
 describe('Round-trip: операция + обратная не создают деньги/товар из ничего', () => {
-  it('предоплата → покупка в долг: баланс возвращается в 0', () => {
+  it('предоплата (addMoneyTx) → отмена (cancelMoneyTx): баланс возвращается в 0', () => {
     const cust = state().customers[0]
+    const cashAccId = state().accounts.find((a) => a.kind === 'cash').id
     useStore.setState((s) => ({
       customers: s.customers.map((c) =>
-        c.id === cust.id ? { ...c, balance: 0, creditLimit: 0 } : c,
+        c.id === cust.id ? { ...c, balance: 0 } : c,
       ),
     }))
-    state().addPayment(cust.id, 5000)
-    expect(state().customers.find((c) => c.id === cust.id).balance).toBe(-5000)
-    state().addOrder({
+    const txId = state().addMoneyTx({
+      type: 'in',
+      accountId: cashAccId,
+      amount: 5000,
+      purpose: 'debt-in',
       customerId: cust.id,
-      items: [{ productId: state().products[0].id, name: 'X', qty: 1, price: 5000 }],
-      total: 5000,
-      onCredit: true,
-      payment: { method: 'credit', cashPaid: 0, cardPaid: 0 },
     })
+    expect(state().customers.find((c) => c.id === cust.id).balance).toBe(-5000)
+    state().cancelMoneyTx(txId)
     expect(state().customers.find((c) => c.id === cust.id).balance).toBe(0)
   })
 
