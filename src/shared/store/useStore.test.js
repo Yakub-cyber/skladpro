@@ -1412,6 +1412,62 @@ describe('Round-trip: операция + обратная не создают д
   })
 })
 
+// ── Движок createSaleDocument: один вызов = весь учётный факт ──────────
+// Касса и SaleTab зовут одну функцию; этот блок фиксирует её контракт,
+// чтобы будущая правка не разъехалась по экранам.
+describe('createSaleDocument — движок продажи', () => {
+  it('один вызов: заказ ЧК delivered + списание + маркер + документ в очереди', async () => {
+    const { syncOutbox } = await import('../lib/cloud')
+    syncOutbox.reset()
+    const p = state().products.find((x) => x.stock >= 10)
+    const before = productById(p.id).stock
+    const r = state().createSaleDocument({
+      customerId: state().customers[0].id,
+      items: [{ productId: p.id, name: p.name, unit: p.unit, qty: 2, price: 100 }],
+      subtotal: 200,
+      total: 200,
+      payment: { method: 'cash', cashPaid: 200, cardPaid: 0 },
+    })
+    expect(r.ok).toBe(true)
+    const o = state().orders.find((x) => x.id === r.id)
+    expect(o.no).toMatch(/^ЧК-/)
+    expect(o.status).toBe('delivered')
+    expect(o.stockConsumed).toBe(true)
+    expect(o.shipmentDocId).toBe(r.docId)
+    expect(productById(p.id).stock).toBe(before - 2)
+    // Документ лёг в персистентную очередь — доедет даже после закрытия вкладки.
+    const saleItem = syncOutbox.items().find((it) => it.key === 'sale' && it.id === r.id)
+    expect(saleItem).toBeTruthy()
+    expect(saleItem.obj.items[0].qty).toBe(2)
+    syncOutbox.reset()
+  })
+
+  it('«в долг»: долг начислен движком (экранам не нужно трогать клиента)', () => {
+    const cust = state().customers[0]
+    const before = Number(cust.balance) || 0
+    const r = state().createSaleDocument({
+      customerId: cust.id,
+      items: [{ productId: state().products[0].id, name: 'X', qty: 1, price: 500 }],
+      total: 500,
+      onCredit: true,
+      payment: { method: 'credit' },
+    })
+    expect(r.ok).toBe(true)
+    expect(state().customers.find((c) => c.id === cust.id).balance).toBe(before + 500)
+  })
+
+  it('B5 внутри движка: недоплата отклоняется до любых изменений', () => {
+    const ordersBefore = state().orders.length
+    const r = state().createSaleDocument({
+      items: [{ productId: state().products[0].id, name: 'X', qty: 1, price: 100 }],
+      total: 100,
+      payment: { method: 'cash', cashPaid: 50, cardPaid: 0 },
+    })
+    expect(r.ok).toBe(false)
+    expect(state().orders.length).toBe(ordersBefore)
+  })
+})
+
 // Sanity check: seed стабилен от теста к тесту
 describe('seed / resetStore — база чиста', () => {
   it('после resetStore products и orders совпадают с seed', () => {

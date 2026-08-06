@@ -1,7 +1,9 @@
-// Продажа-документ. В отличие от кассы (мгновенная розничная продажа
-// через /orders/new), это документ опта: выбор клиента, редактируемая
-// цена, скидка, «в долг». Проводится через addDocument(type='sale') —
-// движок posting.js списывает остатки по FIFO и пишет COGS в movement.
+// Продажа-документ. Другая ФОРМА ввода, чем касса (выбор клиента,
+// редактируемая цена, скидка, «в долг»), но тот же РЕЗУЛЬТАТ в учёте:
+// проведение зовёт движок createSaleDocument — тот же код, что и касса.
+// Один движок, сколько угодно экранов; правка учёта делается один раз.
+// Черновик — исключение: локальная заготовка через addDocument без
+// учётного факта.
 //
 // UX похож на CloudShop: слева каталог с ценами, справа лента чека +
 // клиент/скидка/кнопка «Провести».
@@ -18,7 +20,7 @@ export default function SaleTab() {
   const customers = useStore((s) => s.customers)
   const priceTypes = useStore((s) => s.priceTypes) || []
   const addDocument = useStore((s) => s.addDocument)
-  const updateCustomer = useStore((s) => s.updateCustomer)
+  const createSaleDocument = useStore((s) => s.createSaleDocument)
 
   const defType = priceTypes.find((t) => t.default)?.id || priceTypes[0]?.id || ''
   const [items, setItems] = useState([])
@@ -94,64 +96,74 @@ export default function SaleTab() {
     [items],
   )
 
-  const submit = (post) => {
-    setErr('')
-    const cust = customers.find((c) => c.id === customerId)
-    // C1: гейт кредитного лимита. Не даём провести продажу «в долг»,
-    // если долг после продажи вылетит за customer.creditLimit.
-    if (post && onCredit && cust?.id) {
-      const limit = Number(cust.creditLimit) || 0
-      if (limit > 0) {
-        const newDebt = (Number(cust.balance) || 0) + total
-        if (newDebt > limit) {
-          setErr(
-            `Кредитный лимит превышен: долг стал бы ${money(newDebt)} при лимите ${money(limit)}`,
-          )
-          return
-        }
-      }
-    }
-    const r = addDocument(
-      {
-        type: 'sale',
-        reason: 'Продажа',
-        customerId: cust?.id,
-        customerName: cust?.name || 'Розничный',
-        priceTypeId,
-        discount: Number(discount) || 0,
-        subtotal,
-        total,
-        onCredit,
-        items: items.map((it) => ({
-          productId: it.productId,
-          name: it.name,
-          unit: it.unit,
-          qty: it.qty,
-          price: it.price,
-        })),
-      },
-      { post },
-    )
-    if (r && typeof r === 'object' && r.ok === false) {
-      setErr(r.error)
-      return
-    }
-    // При «в долг» с выбранным клиентом — увеличиваем его баланс.
-    // (В addDocument нет знания о клиенте — оно есть только в addOrder,
-    // поэтому обновляем контрагента здесь напрямую.)
-    if (post && onCredit && cust?.id) {
-      updateCustomer(cust.id, { balance: (cust.balance || 0) + total })
-    }
-    setDone(
-      post
-        ? `Продано ${count} ед. в ${items.length} поз. на ${money(total)}`
-        : `Черновик продажи на ${items.length} поз.`,
-    )
+  const resetForm = () => {
     setItems([])
     setCustomerId('')
     setDiscount(0)
     setOnCredit(false)
     setTimeout(() => setDone(''), 3000)
+  }
+
+  const submit = (post) => {
+    setErr('')
+    const cust = customers.find((c) => c.id === customerId)
+    const docItems = items.map((it) => ({
+      productId: it.productId,
+      name: it.name,
+      unit: it.unit,
+      qty: it.qty,
+      price: it.price,
+    }))
+    // Черновик — локальная заготовка без учётного факта: лежит в реестре
+    // документов, остатки/деньги/сервер не трогает.
+    if (!post) {
+      const r = addDocument(
+        {
+          type: 'sale',
+          reason: 'Продажа',
+          customerId: cust?.id,
+          customerName: cust?.name || 'Розничный',
+          priceTypeId,
+          discount: Number(discount) || 0,
+          subtotal,
+          total,
+          onCredit,
+          items: docItems,
+        },
+        { post: false },
+      )
+      if (r && typeof r === 'object' && r.ok === false) {
+        setErr(r.error)
+        return
+      }
+      setDone(`Черновик продажи на ${items.length} поз.`)
+      resetForm()
+      return
+    }
+    // Проведение — движок createSaleDocument: тот же код, что у кассы.
+    // B5/C1, списание, долг «в долг», moneyTx, документ на сервер — всё
+    // внутри движка, экран только передаёт данные. Здесь нет формы
+    // способа оплаты: не «в долг» — значит оплачено наличными целиком
+    // (сервер для не-credit продажи так же гасит долг мгновенным payment_in).
+    const r = createSaleDocument({
+      customerId: cust?.id || 'retail',
+      customerName: cust?.name || 'Розничный',
+      items: docItems,
+      subtotal,
+      discount: Number(discount) || 0,
+      total,
+      onCredit,
+      priceTypeId,
+      payment: onCredit
+        ? { method: 'credit' }
+        : { method: 'cash', cashPaid: total, cardPaid: 0 },
+    })
+    if (r && r.ok === false) {
+      setErr(r.error)
+      return
+    }
+    setDone(`Продано ${count} ед. в ${items.length} поз. на ${money(total)}`)
+    resetForm()
   }
 
   return (
