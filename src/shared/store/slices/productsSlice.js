@@ -104,20 +104,6 @@ export const createProductsSlice = (set, get) => ({
     if (p) get().logAction(`Удалён товар «${p.name}»`, { section: 'Товары', type: 'delete' })
     return { ok: true }
   },
-  adjustStock: (id, delta) =>
-    set((s) => ({
-      products: s.products.map((p) =>
-        p.id === id ? { ...p, stock: p.stock + delta } : p,
-      ),
-    })),
-  // Приёмка: применить позиции накладной к остаткам
-  receiveStock: (items) =>
-    set((s) => ({
-      products: s.products.map((p) => {
-        const it = items.find((x) => x.productId === p.id)
-        return it ? { ...p, stock: p.stock + it.qty } : p
-      }),
-    })),
 
   // ── Маркировка «Честный знак» ────────────────────────────
   // Приёмка кодов маркировки (DataMatrix) в пул товара

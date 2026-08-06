@@ -183,7 +183,7 @@ function CheckCard({ checked, onChange, title, hint }) {
 }
 
 export function ProductModal({ product, onClose }) {
-  const { addProduct, updateProduct, adjustStock, removeProduct, priceTypes, products: allProducts } = useStore()
+  const { addProduct, updateProduct, addDocument, removeProduct, priceTypes, products: allProducts } = useStore()
   const productCategories = useMemo(() => [...new Set(allProducts.map(p => p.category).filter(Boolean))].sort(), [allProducts])
   const confirm = useConfirm()
   const handleRemove = async () => {
@@ -243,7 +243,10 @@ export function ProductModal({ product, onClose }) {
   const doReceive = () => {
     const n = parseInt(receive)
     if (n > 0) {
-      adjustStock(product.id, n)
+      addDocument({
+        type: 'stockin',
+        items: [{ productId: product.id, name: product.name, unit: product.unit, qty: n }],
+      })
       onClose()
     }
   }
