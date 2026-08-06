@@ -58,6 +58,22 @@ export const createDocumentsSlice = (set, get) => ({
         createdAt: new Date().toISOString(),
         postedAt: post ? new Date().toISOString() : null,
         cancelledAt: null,
+        // Черновик продажи хранит коммерческие поля целиком — иначе
+        // проведение из реестра (postDocument → createSaleDocument)
+        // потеряло бы клиента/скидку/способ оплаты и провело бы не то,
+        // что оператор сохранял.
+        ...(type === 'sale'
+          ? {
+              customerId: doc.customerId ?? null,
+              customerName: doc.customerName ?? null,
+              priceTypeId: doc.priceTypeId ?? null,
+              discount: Number(doc.discount) || 0,
+              subtotal: doc.subtotal ?? null,
+              total: doc.total ?? null,
+              onCredit: !!doc.onCredit,
+              payMethod: doc.payMethod ?? null,
+            }
+          : {}),
       }
       const base = { documents: [header, ...s.documents] }
       return post ? { ...base, ...applyDocToState(s, header, 1, s.authUserId) } : base
@@ -82,6 +98,50 @@ export const createDocumentsSlice = (set, get) => ({
   postDocument: (id) => {
     const d = get().documents.find((x) => x.id === id)
     if (!d || d.status !== 'draft') return
+    // Продажа проводится ТОЛЬКО движком createSaleDocument. Старый путь
+    // (applyDocToState) двигал остатки локально, но не знал ни сервера,
+    // ни денег, ни долга — черновик выглядел проведённым, а учёта не было.
+    if (d.type === 'sale') {
+      if (!d.payMethod) {
+        // Черновик до появления селектора оплаты: способа оплаты и клиента
+        // в нём нет — угадывать нельзя. Честный отказ вместо молчаливо
+        // неполной проводки.
+        return {
+          ok: false,
+          error: `Черновик ${d.no} создан в старом формате (без способа оплаты). Создайте продажу заново из формы — черновик можно удалить.`,
+        }
+      }
+      const total = Number(d.total) || (d.items || []).reduce(
+        (a, x) => a + (Number(x.qty) || 0) * (Number(x.price) || 0), 0,
+      )
+      const r = get().createSaleDocument({
+        customerId: d.customerId || 'retail',
+        customerName: d.customerName || 'Розничный',
+        items: d.items,
+        subtotal: d.subtotal ?? undefined,
+        discount: Number(d.discount) || 0,
+        total,
+        onCredit: d.payMethod === 'credit',
+        priceTypeId: d.priceTypeId || undefined,
+        payment:
+          d.payMethod === 'credit'
+            ? { method: 'credit' }
+            : {
+                method: d.payMethod,
+                cashPaid: d.payMethod === 'cash' ? total : 0,
+                cardPaid: d.payMethod === 'card' ? total : 0,
+              },
+      })
+      if (r && r.ok === false) return r
+      // Черновик стал продажей (ЧК-заказ) — заготовку убираем, чтобы
+      // одна продажа не отображалась двумя записями.
+      set((s) => ({ documents: s.documents.filter((x) => x.id !== id) }))
+      get().logAction(`Черновик ${d.no} проведён как продажа`, {
+        section: 'Документы',
+        type: 'update',
+      })
+      return r
+    }
     set((s) => ({
       ...applyDocToState(s, d, 1, s.authUserId),
       documents: s.documents.map((x) =>

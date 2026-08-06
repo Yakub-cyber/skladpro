@@ -29,7 +29,9 @@ export default function SaleTab() {
   const [customerId, setCustomerId] = useState('')
   const [priceTypeId, setPriceTypeId] = useState(defType)
   const [discount, setDiscount] = useState(0)
-  const [onCredit, setOnCredit] = useState(false)
+  // Способ оплаты — явный выбор оператора, не угадывание. «В долг»
+  // доступен только с выбранным клиентом (розничному некому начислять).
+  const [payMethod, setPayMethod] = useState('cash')
   const [msg, setMsg] = useState('')
   const [done, setDone] = useState('')
   const [err, setErr] = useState('')
@@ -82,6 +84,9 @@ export default function SaleTab() {
   }
   const selectCustomer = (id) => {
     setCustomerId(id)
+    // Сняли клиента при выбранном «В долг» — долг больше некому
+    // начислять, откатываемся на наличные.
+    if (!id && payMethod === 'credit') setPayMethod('cash')
     const c = customers.find((x) => x.id === id)
     if (c?.priceTypeId) changePriceType(c.priceTypeId)
   }
@@ -100,7 +105,7 @@ export default function SaleTab() {
     setItems([])
     setCustomerId('')
     setDiscount(0)
-    setOnCredit(false)
+    setPayMethod('cash')
     setTimeout(() => setDone(''), 3000)
   }
 
@@ -115,7 +120,8 @@ export default function SaleTab() {
       price: it.price,
     }))
     // Черновик — локальная заготовка без учётного факта: лежит в реестре
-    // документов, остатки/деньги/сервер не трогает.
+    // документов, остатки/деньги/сервер не трогает. payMethod сохраняем,
+    // чтобы проведение из реестра (postDocument → движок) не угадывало.
     if (!post) {
       const r = addDocument(
         {
@@ -127,7 +133,8 @@ export default function SaleTab() {
           discount: Number(discount) || 0,
           subtotal,
           total,
-          onCredit,
+          onCredit: payMethod === 'credit',
+          payMethod,
           items: docItems,
         },
         { post: false },
@@ -142,9 +149,8 @@ export default function SaleTab() {
     }
     // Проведение — движок createSaleDocument: тот же код, что у кассы.
     // B5/C1, списание, долг «в долг», moneyTx, документ на сервер — всё
-    // внутри движка, экран только передаёт данные. Здесь нет формы
-    // способа оплаты: не «в долг» — значит оплачено наличными целиком
-    // (сервер для не-credit продажи так же гасит долг мгновенным payment_in).
+    // внутри движка, экран только передаёт данные. Способ оплаты оператор
+    // выбрал явно — движок не угадывает, пришли деньги или нет.
     const r = createSaleDocument({
       customerId: cust?.id || 'retail',
       customerName: cust?.name || 'Розничный',
@@ -152,11 +158,16 @@ export default function SaleTab() {
       subtotal,
       discount: Number(discount) || 0,
       total,
-      onCredit,
+      onCredit: payMethod === 'credit',
       priceTypeId,
-      payment: onCredit
-        ? { method: 'credit' }
-        : { method: 'cash', cashPaid: total, cardPaid: 0 },
+      payment:
+        payMethod === 'credit'
+          ? { method: 'credit' }
+          : {
+              method: payMethod,
+              cashPaid: payMethod === 'cash' ? total : 0,
+              cardPaid: payMethod === 'card' ? total : 0,
+            },
     })
     if (r && r.ok === false) {
       setErr(r.error)
@@ -295,15 +306,19 @@ export default function SaleTab() {
               className="w-14 h-8 px-2 rounded-lg bg-surface-2 border border-line text-sm text-center"
             />
             <span className="text-[12px] text-muted">%</span>
-            <label className="ml-auto flex items-center gap-1.5 text-[12px] text-muted cursor-pointer">
-              <input
-                type="checkbox"
-                checked={onCredit}
-                disabled={!customerId}
-                onChange={(e) => setOnCredit(e.target.checked)}
-                className="accent-[var(--brand)]"
-              />
-              В долг
+            <label className="ml-auto flex items-center gap-1.5 text-[12px] text-muted">
+              Оплата
+              <select
+                value={payMethod}
+                onChange={(e) => setPayMethod(e.target.value)}
+                className="h-8 px-2 rounded-lg bg-surface-2 border border-line text-sm"
+              >
+                <option value="cash">Наличные</option>
+                <option value="card">Карта</option>
+                <option value="credit" disabled={!customerId}>
+                  В долг
+                </option>
+              </select>
             </label>
           </div>
           <div className="flex justify-between items-center">

@@ -116,7 +116,17 @@ export default function DocumentsTab() {
                   <Badge tone={st.color}>{st.label}</Badge>
                   <div className="flex items-center gap-1">
                     {d.status === 'draft' && (
-                      <Button size="sm" variant="primary" icon={Check} onClick={() => postDocument(d.id)}>
+                      <Button
+                        size="sm"
+                        variant="primary"
+                        icon={Check}
+                        onClick={() => {
+                          // Движок может отказать (B5/C1/старый формат) —
+                          // молча проглотить отказ нельзя.
+                          const r = postDocument(d.id)
+                          if (r && r.ok === false) alert(r.error)
+                        }}
+                      >
                         Провести
                       </Button>
                     )}

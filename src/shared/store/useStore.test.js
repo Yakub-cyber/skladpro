@@ -1466,6 +1466,44 @@ describe('createSaleDocument — движок продажи', () => {
     expect(r.ok).toBe(false)
     expect(state().orders.length).toBe(ordersBefore)
   })
+
+  it('черновик продажи проводится движком: ЧК-заказ + списание, заготовка удалена', () => {
+    const p = state().products.find((x) => x.stock >= 10)
+    const before = productById(p.id).stock
+    const draftId = state().addDocument(
+      {
+        type: 'sale',
+        customerName: 'Розничный',
+        payMethod: 'cash',
+        total: 300,
+        items: [{ productId: p.id, name: p.name, unit: p.unit, qty: 3, price: 100 }],
+      },
+      { post: false },
+    )
+    expect(productById(p.id).stock).toBe(before) // черновик остаток не трогает
+    const r = state().postDocument(draftId)
+    expect(r.ok).toBe(true)
+    expect(state().documents.find((d) => d.id === draftId)).toBeUndefined()
+    const o = state().orders.find((x) => x.id === r.id)
+    expect(o.no).toMatch(/^ЧК-/)
+    expect(o.status).toBe('delivered')
+    expect(productById(p.id).stock).toBe(before - 3)
+  })
+
+  it('legacy-черновик продажи без payMethod: честный отказ, черновик остаётся', () => {
+    const p = state().products[0]
+    const draftId = state().addDocument(
+      {
+        type: 'sale',
+        items: [{ productId: p.id, name: p.name, qty: 1, price: 100 }],
+      },
+      { post: false },
+    )
+    const r = state().postDocument(draftId)
+    expect(r.ok).toBe(false)
+    expect(r.error).toMatch(/старом формате/)
+    expect(state().documents.find((d) => d.id === draftId)?.status).toBe('draft')
+  })
 })
 
 // Sanity check: seed стабилен от теста к тесту
