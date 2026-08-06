@@ -187,7 +187,7 @@ export const createOrdersSlice = (set, get) => ({
       if (debtDelta !== 0 && next.customerId) {
         customers = s.customers.map((c) =>
           c.id === next.customerId
-            ? { ...c, balance: Math.max(0, (c.balance || 0) + debtDelta) }
+            ? { ...c, balance: (c.balance || 0) + debtDelta }
             : c,
         )
       }
@@ -213,7 +213,7 @@ export const createOrdersSlice = (set, get) => ({
       let customers = s.customers
       if (o.onCredit && o.customerId) {
         customers = s.customers.map((c) =>
-          c.id === o.customerId ? { ...c, balance: Math.max(0, (c.balance || 0) - (o.total || 0)) } : c,
+          c.id === o.customerId ? { ...c, balance: (c.balance || 0) - (o.total || 0) } : c,
         )
       }
       return {
@@ -355,7 +355,7 @@ export const createOrdersSlice = (set, get) => ({
       set((st) => ({
         customers: st.customers.map((c) =>
           c.id === orig.customerId
-            ? { ...c, balance: Math.max(0, (c.balance || 0) - refundTotal) }
+            ? { ...c, balance: (c.balance || 0) - refundTotal }
             : c,
         ),
       }))

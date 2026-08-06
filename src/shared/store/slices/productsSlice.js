@@ -107,7 +107,7 @@ export const createProductsSlice = (set, get) => ({
   adjustStock: (id, delta) =>
     set((s) => ({
       products: s.products.map((p) =>
-        p.id === id ? { ...p, stock: Math.max(0, p.stock + delta) } : p,
+        p.id === id ? { ...p, stock: p.stock + delta } : p,
       ),
     })),
   // Приёмка: применить позиции накладной к остаткам

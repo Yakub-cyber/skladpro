@@ -12,7 +12,7 @@ const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100
 export function weightedCost(oldStock, oldCost, qtyIn, costIn) {
   const oc = Number(oldCost) || 0
   if (costIn == null || costIn === '' || Number.isNaN(Number(costIn))) return oc
-  const os = Math.max(0, Number(oldStock) || 0)
+  const os = Number(oldStock) || 0
   const qi = Number(qtyIn) || 0
   const ci = Number(costIn)
   if (qi <= 0) return oc

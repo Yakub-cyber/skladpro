@@ -64,9 +64,9 @@ describe('applyOrderStock — отгрузка (dir=-1)', () => {
     const res = applyOrderStock(baseState(), { items: [{ productId: 'p1', qty: 10 }] }, -1)
     expect(stock(res, 'p2')).toBe(10)
   })
-  it('не уводит в минус', () => {
+  it('разрешает отрицательный остаток (продажа сверх остатка)', () => {
     const res = applyOrderStock(baseState(), { items: [{ productId: 'p2', qty: 999 }] }, -1)
-    expect(stock(res, 'p2')).toBe(0)
+    expect(stock(res, 'p2')).toBe(10 - 999)
   })
   it('коды маркировки выбывают и запоминаются в позиции', () => {
     const res = applyOrderStock(baseState(), { items: [{ productId: 'p3', qty: 2 }] }, -1)

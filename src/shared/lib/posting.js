@@ -152,7 +152,7 @@ export function applyDocToState(state, doc, dir, by) {
             cost: weightedCostFromBatches(batches) || p.cost || 0,
           }
         }
-        return { ...p, stock: Math.max(0, target) }
+        return { ...p, stock: target }
       })
       if (delta !== 0)
         moves.push({ id: uid('mv'), type: 'inventory', productId: it.productId, name: it.name, qty: Math.abs(delta), delta, reason: dir < 0 ? reason : delta > 0 ? 'Излишек' : 'Недостача', by, at })
@@ -208,7 +208,7 @@ export function applyDocToState(state, doc, dir, by) {
         }
         // ── Legacy без batches: старая логика ─────────────────────────
         const d = sign * it.qty
-        const np = { ...p, stock: Math.max(0, p.stock + d) }
+        const np = { ...p, stock: p.stock + d }
         if (isPurchase && it.cost != null) {
           if (dir > 0) {
             it.prevCost = p.cost

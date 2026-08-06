@@ -578,7 +578,7 @@ describe('openShift — accountId + gate по cashierIds (T1-B)', () => {
 })
 
 describe('addPayment — оплата гасит долг (B2)', () => {
-  it('баланс уменьшается на сумму оплаты (не уходит в отрицательное)', () => {
+  it('баланс уменьшается на сумму оплаты (переплата уводит в минус = аванс)', () => {
     const cust = state().customers[0]
     useStore.setState((s) => ({
       customers: s.customers.map((c) => (c.id === cust.id ? { ...c, balance: 1000 } : c)),
@@ -586,7 +586,7 @@ describe('addPayment — оплата гасит долг (B2)', () => {
     state().addPayment(cust.id, 300)
     expect(state().customers.find((c) => c.id === cust.id).balance).toBe(700)
     state().addPayment(cust.id, 9999)
-    expect(state().customers.find((c) => c.id === cust.id).balance).toBe(0)
+    expect(state().customers.find((c) => c.id === cust.id).balance).toBe(700 - 9999)
   })
 
   it('нулевая / отрицательная сумма — игнорируется', () => {
@@ -1227,6 +1227,46 @@ describe('D3: API-ключи и webhook-endpoints', () => {
     expect(state().settings.webhooks.find((w) => w.id === id).active).toBe(true)
     state().toggleWebhook(id)
     expect(state().settings.webhooks.find((w) => w.id === id).active).toBe(false)
+  })
+})
+
+describe('Round-trip: операция + обратная не создают деньги/товар из ничего', () => {
+  it('предоплата → покупка в долг: баланс возвращается в 0', () => {
+    const cust = state().customers[0]
+    useStore.setState((s) => ({
+      customers: s.customers.map((c) =>
+        c.id === cust.id ? { ...c, balance: 0, creditLimit: 0 } : c,
+      ),
+    }))
+    state().addPayment(cust.id, 5000)
+    expect(state().customers.find((c) => c.id === cust.id).balance).toBe(-5000)
+    state().addOrder({
+      customerId: cust.id,
+      items: [{ productId: state().products[0].id, name: 'X', qty: 1, price: 5000 }],
+      total: 5000,
+      onCredit: true,
+      payment: { method: 'credit', cashPaid: 0, cardPaid: 0 },
+    })
+    expect(state().customers.find((c) => c.id === cust.id).balance).toBe(0)
+  })
+
+  it('отгрузка сверх остатка → отмена: остаток возвращается к исходному', () => {
+    const p = state().products[0]
+    useStore.setState((s) => ({
+      products: s.products.map((x) =>
+        x.id === p.id ? { ...x, stock: 10, batches: null, marked: false } : x,
+      ),
+    }))
+    state().addOrder({
+      customerId: state().customers[0].id,
+      items: [{ productId: p.id, name: p.name, unit: p.unit, qty: 100, price: 1 }],
+      total: 100,
+    })
+    const orderId = state().orders[0].id
+    state().setOrderStatus(orderId, 'shipped')
+    expect(productById(p.id).stock).toBe(10 - 100)
+    state().cancelOrder(orderId)
+    expect(productById(p.id).stock).toBe(10)
   })
 })
 

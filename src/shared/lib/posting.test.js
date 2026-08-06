@@ -49,10 +49,10 @@ describe('applyDocToState — проводка документов', () => {
     expect(stockOf(next, 'p2')).toBe(6)
   })
 
-  it('остаток не уходит в минус (clamp на 0)', () => {
+  it('разрешает отрицательный остаток (продажа сверх остатка)', () => {
     const doc = { type: 'sale', no: 'ПРД-2', items: [{ productId: 'p2', name: 'Молоток', qty: 999 }] }
     const next = applyDocToState(makeState(), doc, 1, 'u1')
-    expect(stockOf(next, 'p2')).toBe(0)
+    expect(stockOf(next, 'p2')).toBe(10 - 999)
   })
 
   it('перемещение (transfer) меняет склад, не трогая общий остаток', () => {

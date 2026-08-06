@@ -200,7 +200,7 @@ export const createMoneySlice = (set, get) => ({
           c.id === tx.customerId
             ? {
                 ...c,
-                balance: Math.max(0, (c.balance || 0) - amount),
+                balance: (c.balance || 0) - amount,
               }
             : c,
         )
@@ -210,7 +210,7 @@ export const createMoneySlice = (set, get) => ({
           sp.id === tx.supplierId
             ? {
                 ...sp,
-                balance: Math.max(0, (sp.balance || 0) - amount),
+                balance: (sp.balance || 0) - amount,
               }
             : sp,
         )

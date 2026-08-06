@@ -89,7 +89,7 @@ export function applyOrderStock(state, order, dir) {
       }
     } else {
       // ── Legacy: stock напрямую ─────────────────────────────────────
-      np = { ...p, stock: Math.max(0, (p.stock || 0) + dir * it.qty) }
+      np = { ...p, stock: (p.stock || 0) + dir * it.qty }
     }
     if (p.marked) {
       if (dir < 0) {
