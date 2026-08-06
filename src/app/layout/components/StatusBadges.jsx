@@ -1,10 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Cloud, CloudOff, CloudUpload, ShoppingCart } from 'lucide-react'
 import { cx } from '@/shared/ui'
 import { useStore } from '@/shared/store/useStore'
 import { canAccess } from '@/shared/lib/constants'
-import { syncNow } from '@/shared/lib/cloud'
 import { openPosWindow, useCurrentUser } from '../utils'
+import { DiagPanel } from './DiagPanel'
 
 // D2: индикатор офлайн-режима. Появляется, когда navigator.onLine=false.
 // Все изменения продолжают писаться в localStorage и уходят в очередь
@@ -43,33 +43,44 @@ export function SyncBadge() {
   const ready = useStore((s) => s.cloudReady)
   const pending = useStore((s) => s.syncPending || 0)
   const state = useStore((s) => s.syncState || 'ok')
+  const [open, setOpen] = useState(false)
+  const ref = useRef(null)
+  useEffect(() => {
+    if (!open) return
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [open])
   if (!cloud || !ready) return null
   const cfg =
     state === 'error'
       ? {
           Icon: CloudOff,
           cls: 'text-bad',
-          title: `Ошибка синхронизации, изменений в очереди: ${pending}. Нажмите, чтобы повторить`,
+          title: `Ошибка синхронизации, изменений в очереди: ${pending}. Нажмите для подробностей`,
         }
       : pending > 0
-        ? { Icon: CloudUpload, cls: 'text-warn', title: `Ожидает отправки: ${pending}` }
+        ? { Icon: CloudUpload, cls: 'text-warn', title: `Ожидает отправки: ${pending}. Нажмите для подробностей` }
         : { Icon: Cloud, cls: 'text-ok', title: 'Синхронизировано с облаком' }
   return (
-    <button
-      onClick={() => syncNow()}
-      title={cfg.title}
-      className={cx(
-        'relative h-10 w-10 grid place-items-center rounded-xl hover:bg-surface-2 shrink-0',
-        cfg.cls,
-      )}
-    >
-      <cfg.Icon size={19} />
-      {pending > 0 && (
-        <span className="absolute -top-0.5 -right-0.5 text-[10px] font-semibold min-w-4 h-4 px-1 grid place-items-center rounded-full bg-warn text-white">
-          {pending > 99 ? '99+' : pending}
-        </span>
-      )}
-    </button>
+    <div ref={ref} className="relative shrink-0">
+      <button
+        onClick={() => setOpen(!open)}
+        title={cfg.title}
+        className={cx(
+          'relative h-10 w-10 grid place-items-center rounded-xl hover:bg-surface-2',
+          cfg.cls,
+        )}
+      >
+        <cfg.Icon size={19} />
+        {pending > 0 && (
+          <span className="absolute -top-0.5 -right-0.5 text-[10px] font-semibold min-w-4 h-4 px-1 grid place-items-center rounded-full bg-warn text-white">
+            {pending > 99 ? '99+' : pending}
+          </span>
+        )}
+      </button>
+      {open && <DiagPanel onClose={() => setOpen(false)} />}
+    </div>
   )
 }
 

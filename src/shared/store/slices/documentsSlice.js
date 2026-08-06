@@ -3,6 +3,7 @@ import { docTypeInfo } from '../../lib/constants'
 import { applyDocToState } from '../../lib/posting'
 import { postDocumentCloud } from '../../lib/cloud'
 import { normalizeItems } from '../../lib/units'
+import { pushEvent } from '../../lib/diagRing'
 
 const DOC_TYPE_TO_CLOUD = {
   purchase: 'receive',
@@ -69,7 +70,14 @@ export const createDocumentsSlice = (set, get) => ({
     const cloudType = DOC_TYPE_TO_CLOUD[type]
     if (d && post && cloudType) {
       const cloudDoc = { ...d, type: cloudType }
-      postDocumentCloud(cloudDoc).catch(() => {})
+      postDocumentCloud(cloudDoc).then(r => {
+        if (r && !r.ok) {
+          pushEvent('doc_sync_error', { docId: id, code: r.code, error: r.error, traceId: r.traceId })
+          set((s) => ({ syncError: r.error || r.code || 'Ошибка синхронизации документа' }))
+        }
+      }).catch(err => {
+        pushEvent('doc_sync_error', { docId: id, error: err?.message || 'network' })
+      })
     }
     return id
   },
@@ -87,7 +95,14 @@ export const createDocumentsSlice = (set, get) => ({
     const cloudType = DOC_TYPE_TO_CLOUD[d.type]
     if (cloudType) {
       const cloudDoc = { ...get().documents.find((x) => x.id === id), type: cloudType }
-      postDocumentCloud(cloudDoc).catch(() => {})
+      postDocumentCloud(cloudDoc).then(r => {
+        if (r && !r.ok) {
+          pushEvent('doc_sync_error', { docId: id, code: r.code, error: r.error, traceId: r.traceId })
+          set((s) => ({ syncError: r.error || r.code || 'Ошибка синхронизации документа' }))
+        }
+      }).catch(err => {
+        pushEvent('doc_sync_error', { docId: id, error: err?.message || 'network' })
+      })
     }
   },
   // Отменить проводку (откатить влияние на остатки)

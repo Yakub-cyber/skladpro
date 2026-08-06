@@ -13,6 +13,12 @@
 export const API_URL = (import.meta.env?.VITE_API_URL || '').replace(/\/+$/, '')
 export const hasApi = !!API_URL
 
+const _crypto = typeof crypto !== 'undefined' && crypto.randomUUID
+  ? crypto : null
+export function traceId() {
+  return _crypto ? _crypto.randomUUID() : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+}
+
 const REFRESH_KEY = 'skladpro-refresh'
 const COMPANY_KEY = 'skladpro-company'
 const USER_KEY = 'skladpro-user'
@@ -160,6 +166,7 @@ export async function apiFetch(method, path, body, opts = {}) {
 	const headers = { ...(opts.headers || {}) }
 	if (currentCompanyId && !opts.skipCompany) headers['x-company-id'] = currentCompanyId
 	if (accessToken) headers.authorization = `Bearer ${accessToken}`
+	if (!headers['x-trace-id']) headers['x-trace-id'] = traceId()
 
 	const res = await rawFetch(method, path, body, headers)
 	if (res.status === 401 && refreshToken && !opts._retried) {
@@ -167,8 +174,9 @@ export async function apiFetch(method, path, body, opts = {}) {
 		if (refreshed) return apiFetch(method, path, body, { ...opts, _retried: true })
 		await apiSignOut()
 	}
-	if (!res.ok) return { ok: false, status: res.status, error: res.body?.error || { code: 'HTTP_' + res.status, message: 'HTTP ' + res.status } }
-	return { ok: true, status: res.status, body: res.body }
+	const tid = res.headers?.get?.('x-trace-id') || headers['x-trace-id']
+	if (!res.ok) return { ok: false, status: res.status, error: res.body?.error || { code: 'HTTP_' + res.status, message: 'HTTP ' + res.status }, traceId: tid }
+	return { ok: true, status: res.status, body: res.body, traceId: tid }
 }
 
 // ── Высокоуровневые обёртки ──────────────────────────────────────────────────

@@ -30,6 +30,7 @@ import {
 	subscribeEvents,
 } from '@/shared/api'
 import { createOutbox } from './outbox'
+import { pushEvent } from './diagRing'
 
 const toSnake = (s) => s.replace(/[A-Z]/g, (c) => '_' + c.toLowerCase())
 const toCamel = (s) => s.replace(/_([a-z])/g, (_, c) => c.toUpperCase())
@@ -268,19 +269,26 @@ async function sendBatch(items) {
 		})
 		try {
 			const res = await apiSyncPush(ops)
-			if (!res.ok) { error = new Error(res.error?.message || 'push failed'); break }
+			if (!res.ok) {
+				pushEvent('sync_push_error', { status: res.status, code: res.error?.code, error: res.error?.message, traceId: res.traceId })
+				error = new Error(res.error?.message || 'push failed'); break
+			}
 			const results = res.body?.results || []
 			results.forEach((r, idx) => {
 				const it = batch[idx]
 				if (r.ok) sent.push(it)
 				else if (r.code && TERMINAL_CODES.has(r.code)) {
+					pushEvent('sync_op_drop', { table: it.key, id: it.id, code: r.code, error: r.error })
 					console.warn('sync push dropped', it.key, it.id, r.code, r.error)
 					dropped.push(it)
 				} else {
-					// per-op не терминальный — оставляем в очереди на следующую попытку
+					pushEvent('sync_op_fail', { table: it.key, id: it.id, code: r.code, error: r.error })
 				}
 			})
-		} catch (e) { error = e; break }
+		} catch (e) {
+			pushEvent('sync_push_error', { error: e?.message || 'network' })
+			error = e; break
+		}
 	}
 
 	return { sent, dropped, error }
@@ -493,19 +501,28 @@ export async function verifyPinCloud(employeeId, pin) {
 // Idempotency-Key детерминированный (по id операции + хеш параметров).
 export async function sellCloud(order) {
 	const r = await apiSale(order, `sale-${order.id}`)
-	if (!r.ok) return { ok: false, error: r.error?.message, code: r.error?.code, details: r.error?.details }
-	return { ok: true, order: r.body?.order }
+	if (!r.ok) {
+		pushEvent('sale_error', { orderId: order.id, code: r.error?.code, error: r.error?.message, traceId: r.traceId })
+		return { ok: false, error: r.error?.message, code: r.error?.code, details: r.error?.details, traceId: r.traceId }
+	}
+	return { ok: true, order: r.body?.order, traceId: r.traceId }
 }
 export async function postDocumentCloud(document) {
 	const r = await apiDocument(document, `doc-${document.id}`)
-	if (!r.ok) return { ok: false, error: r.error?.message, code: r.error?.code }
-	return { ok: true, document: r.body?.document }
+	if (!r.ok) {
+		pushEvent('doc_post_error', { docId: document.id, code: r.error?.code, error: r.error?.message, traceId: r.traceId })
+		return { ok: false, error: r.error?.message, code: r.error?.code, traceId: r.traceId }
+	}
+	return { ok: true, document: r.body?.document, traceId: r.traceId }
 }
 export async function returnCloud({ orderId, items, reason }) {
 	const items_key = items ? items.map((i) => `${i.productId}:${i.qty}`).join(',') : 'full'
 	const r = await apiReturn({ orderId, items, reason }, `ret-${orderId}-${simpleHash(items_key)}`)
-	if (!r.ok) return { ok: false, error: r.error?.message, code: r.error?.code }
-	return { ok: true, orderId: r.body?.orderId, fullyReturned: r.body?.fullyReturned }
+	if (!r.ok) {
+		pushEvent('return_error', { orderId, code: r.error?.code, error: r.error?.message, traceId: r.traceId })
+		return { ok: false, error: r.error?.message, code: r.error?.code, traceId: r.traceId }
+	}
+	return { ok: true, orderId: r.body?.orderId, fullyReturned: r.body?.fullyReturned, traceId: r.traceId }
 }
 export async function orderStatusCloud(orderId, status) {
 	const r = await apiFetch('POST', `/v1/orders/${encodeURIComponent(orderId)}/status`, { status },
