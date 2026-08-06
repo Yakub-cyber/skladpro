@@ -67,6 +67,10 @@ const SERVER_MANAGED = new Set([
 	'stock', 'batches', 'cost', 'balance', 'total_spent', 'bonus',
 	'pin_hash', 'row_version', 'updated_at', 'company_id', 'deleted_at',
 	'stock_consumed', 'returned', 'returns',
+	// Маркер серверного пути: ставят /v1/sales и /v1/orders/:id/status.
+	// Клиент его только читает (pull) — эхо через push запрещено, иначе
+	// LWW-гонка двух вкладок могла бы стереть маркер.
+	'shipment_doc_id',
 ])
 const ORDER_SERVER_ONLY = new Set(['status', 'items'])
 
