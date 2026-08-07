@@ -36,7 +36,7 @@ export function buildTimeline(state) {
   const accName = (id) => (state.accounts || []).find((a) => a.id === id)?.name || '—'
 
   for (const d of state.documents || []) {
-    if (d.status === 'cancelled') continue
+    if (d.status === 'cancelled' || d.status === 'void') continue
     let from = null
     let to = null
     switch (d.type) {
@@ -179,6 +179,7 @@ export function statusDot(row) {
   const c = classify(row)
   if (row.status === 'draft') return { color: 'bg-warn', title: 'Черновик' }
   if (row.status === 'cancelled') return { color: 'bg-bad', title: 'Отменён' }
+  if (row.status === 'void') return { color: 'bg-bad', title: 'Аннулирован' }
   if (c.startsWith('goods-in') || c === 'money-in')
     return { color: 'bg-ok', title: 'Приход' }
   if (c.startsWith('goods-out') || c === 'money-out')

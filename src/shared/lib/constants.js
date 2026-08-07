@@ -40,6 +40,7 @@ export const DOC_STATUS = {
   draft: { label: 'Черновик', color: 'warn' },
   posted: { label: 'Проведён', color: 'ok' },
   cancelled: { label: 'Отменён', color: 'bad' },
+  void: { label: 'Аннулирован', color: 'bad' },
 }
 
 // Категории товаров — пустые по умолчанию, заполняются из данных пользователя.

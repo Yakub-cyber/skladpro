@@ -42,18 +42,15 @@ export const createHrSlice = (set, get) => ({
       else delete next.pin
     }
 
-    // Если меняется РОЛЬ сотрудника, привязанного к аккаунту Supabase
-    // (authUid есть), синхронно правим и `memberships.role`. Иначе RLS
-    // (`auth_role()` читает из memberships) не увидит новую роль, и
-    // пользователь получит расширенный UI, но запись в БД будет падать
-    // с permission denied. Ошибку сервера не блокируем — локальный стор
-    // всё равно обновляем, а рассинхрон решится при повторной попытке.
+    // Если меняется роль сотрудника, привязанного к аккаунту (userId),
+    // синхронно правим memberships.role на сервере.
     if ('role' in next) {
       const emp = get().employees.find((e) => e.id === id)
       const companyId = get().companyId
-      if (emp?.authUid && companyId) {
+      const linkedUserId = emp?.userId || emp?.authUid
+      if (linkedUserId && companyId) {
         try {
-          await updateMemberRole(emp.authUid, companyId, next.role)
+          await updateMemberRole(linkedUserId, companyId, next.role)
         } catch (e) {
           console.warn('Не удалось обновить роль в memberships:', e?.message || e)
         }

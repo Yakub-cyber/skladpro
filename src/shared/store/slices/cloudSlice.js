@@ -6,11 +6,10 @@
 // create() вызовом bindStore(useStore).
 import { uid } from '../../lib/id'
 const hasSupabase = true
-import { apiBootstrap } from '@/shared/api'
+import { apiBootstrap, apiEnsureMe } from '@/shared/api'
 import { stockConsumedFromStatus } from '../../lib/orders'
 import {
   cloudLoadMerged,
-  cloudUpsert,
   attachSync,
   pauseSync,
   resumeSync,
@@ -225,27 +224,40 @@ export const createCloudSlice = (set, get) => ({
         pin: localPin.get(e.id) ?? '',
       }))
       data.employees = employees
-      let me = employees.find((e) => e.authUid === session.user.id)
+      // Привязка: ищем сотрудника по серверному user_id (переживает pull).
+      // TODO(2026-09): убрать fallback по authUid после полной дедупликации.
+      let me = employees.find((e) => !e.deletedAt && e.userId === session.user.id)
+        || employees.find((e) => !e.deletedAt && e.authUid === session.user.id)
       if (!me) {
         me = {
           id: uid('e'),
           name: membership.name || session.user.email?.split('@')[0] || 'Сотрудник',
           role: membership.role || 'admin',
-          authUid: session.user.id,
+          userId: session.user.id,
           active: true,
           pin: '',
         }
         employees = [...employees, me]
         data.employees = employees
-        // заливаем сразу: autosync стартует позже и пропустил бы нового сотрудника,
-        // из-за чего при каждом входе создавался бы дубликат с новым id.
-        // Не валим bootstrap, если RLS отклонит (тогда просто синхронизируется позже).
-        try {
-          await cloudUpsert('employees', me, companyId)
-        } catch (e) {
-          console.warn('Не удалось сохранить карточку сотрудника:', e?.message || e)
-        }
       }
+      // Серверный upsert: ставит user_id на стороне сервера (whitelist его
+      // не пропускает через sync/push). Если на сервере уже есть employee
+      // для этого user — используем серверный id (не создаём дубликат).
+      try {
+        const ensureRes = await apiEnsureMe({ id: me.id, name: me.name, role: me.role })
+        if (ensureRes?.ok && ensureRes.body?.employee?.id && ensureRes.body.employee.id !== me.id) {
+          const serverId = ensureRes.body.employee.id
+          const existing = employees.find((e) => e.id === serverId)
+          if (existing) {
+            me = existing
+          } else {
+            me.id = serverId
+          }
+        }
+      } catch (e) {
+        console.error('employees/me не удался:', e?.message || e)
+      }
+      me.userId = session.user.id
       // Настройки: серверные значения поверх локальных, но локальные
       // ключи, которых нет в облаке (aiKey и пр.), сохраняем.
       if (data.settings) data.settings = { ...get().settings, ...data.settings }

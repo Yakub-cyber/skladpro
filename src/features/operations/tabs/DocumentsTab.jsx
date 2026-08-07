@@ -15,7 +15,7 @@ const REG_FILTERS = [
   { key: 'all', label: 'Все' },
   { key: 'posted', label: 'Проведённые' },
   { key: 'draft', label: 'Черновики' },
-  { key: 'cancelled', label: 'Отменённые' },
+  { key: 'void', label: 'Аннулированные' },
 ]
 
 // Категорию для превью-модалки выбираем по типу документа: покупки и
@@ -100,7 +100,7 @@ export default function DocumentsTab() {
                   <div
                     className={cx(
                       'h-9 w-9 rounded-lg grid place-items-center shrink-0',
-                      d.status === 'cancelled' ? 'bg-surface-2 text-muted' : 'bg-brand-soft text-brand',
+                      d.status === 'cancelled' || d.status === 'void' ? 'bg-surface-2 text-muted' : 'bg-brand-soft text-brand',
                     )}
                   >
                     <Icon size={17} />
@@ -138,7 +138,7 @@ export default function DocumentsTab() {
                     <Button size="sm" variant="soft" icon={Printer} onClick={() => setPrintDoc(d)}>
                       Печать
                     </Button>
-                    {d.status !== 'posted' && (
+                    {d.status !== 'posted' && d.status !== 'void' && (
                       <Button size="sm" variant="ghost" icon={Trash2} onClick={() => askRemove(d)} />
                     )}
                   </div>

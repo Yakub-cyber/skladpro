@@ -212,6 +212,7 @@ export function apiReturn({ orderId, items, reason }, idemKey) {
 	return apiFetch('POST', '/v1/returns', body, withIdem(idemKey))
 }
 
+export function apiEnsureMe(employee) { return apiFetch('POST', '/v1/employees/me', employee) }
 export function apiPinSet(employeeId, pin) { return apiFetch('POST', '/v1/employees/pin/set', { employeeId, pin }) }
 export function apiPinVerify(employeeId, pin) { return apiFetch('POST', '/v1/employees/pin/verify', { employeeId, pin }) }
 
