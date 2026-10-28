@@ -8,8 +8,22 @@ import {
 } from './ai'
 
 const CATALOG = [
-  { id: 'p1', name: 'Гвозди строительные', sku: 'GVZ-100', unit: 'кг', price: 90, tags: ['крепёж'] },
-  { id: 'p2', name: 'Молоток слесарный', sku: 'MOL-05', unit: 'шт', price: 450, tags: ['инструмент'] },
+  {
+    id: 'p1',
+    name: 'Гвозди строительные',
+    sku: 'GVZ-100',
+    unit: 'кг',
+    price: 90,
+    tags: ['крепёж'],
+  },
+  {
+    id: 'p2',
+    name: 'Молоток слесарный',
+    sku: 'MOL-05',
+    unit: 'шт',
+    price: 450,
+    tags: ['инструмент'],
+  },
   { id: 'p3', name: 'Саморез по дереву', sku: 'SAM-35', unit: 'шт', price: 2, tags: ['крепёж'] },
 ]
 
@@ -82,14 +96,20 @@ describe('buildPickRoute — маршрут сборщика', () => {
 
 describe('soldByProduct / analyticsInsights', () => {
   const orders = [
-    { status: 'delivered', items: [{ productId: 'p1', qty: 20 }, { productId: 'p2', qty: 2 }] },
+    {
+      status: 'delivered',
+      items: [
+        { productId: 'p1', qty: 20 },
+        { productId: 'p2', qty: 2 },
+      ],
+    },
     { status: 'new', items: [{ productId: 'p1', qty: 10 }] },
     { status: 'cancelled', items: [{ productId: 'p1', qty: 999 }] }, // не учитывается
   ]
 
-  it('суммирует продажи, игнорируя отменённые заказы', () => {
+  it('суммирует отгрузки, игнорируя заявки и отменённые заказы', () => {
     const sold = soldByProduct(orders)
-    expect(sold.p1).toBe(30)
+    expect(sold.p1).toBe(20)
     expect(sold.p2).toBe(2)
   })
 
@@ -104,8 +124,17 @@ describe('soldByProduct / analyticsInsights', () => {
 
   it('parseLine: unitFactor из карточки товара умножает qty', () => {
     const catalog = [
-      { id: 'cola', name: 'Кола', unit: 'шт', price: 50,
-        units: [{ unit: 'шт', factor: 1 }, { unit: 'уп', factor: 12 }], tags: [] },
+      {
+        id: 'cola',
+        name: 'Кола',
+        unit: 'шт',
+        price: 50,
+        units: [
+          { unit: 'шт', factor: 1 },
+          { unit: 'уп', factor: 12 },
+        ],
+        tags: [],
+      },
     ]
     const [item] = parseInvoiceText('Кола 20 уп', catalog)
     expect(item.qty).toBe(240)
@@ -117,8 +146,17 @@ describe('soldByProduct / analyticsInsights', () => {
 
   it('parseLine: неизвестная единица при наличии units → needsReview', () => {
     const catalog = [
-      { id: 'cola', name: 'Кола', unit: 'шт', price: 50,
-        units: [{ unit: 'шт', factor: 1 }, { unit: 'уп', factor: 12 }], tags: [] },
+      {
+        id: 'cola',
+        name: 'Кола',
+        unit: 'шт',
+        price: 50,
+        units: [
+          { unit: 'шт', factor: 1 },
+          { unit: 'уп', factor: 12 },
+        ],
+        tags: [],
+      },
     ]
     const [item] = parseInvoiceText('Кола 5 пал', catalog)
     expect(item.needsReview).toBe(true)

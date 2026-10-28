@@ -70,9 +70,9 @@ export default function StockInTab() {
     [items],
   )
 
-  const submit = (post) => {
+  const submit = async (post) => {
     setErr('')
-    const r = addDocument(
+    const r = await addDocument(
       {
         type: 'stockin',
         reason,

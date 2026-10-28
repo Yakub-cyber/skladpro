@@ -1,14 +1,16 @@
+import { sanitizeTelemetryEvent, sanitizeSensitiveText } from './sensitiveTelemetry'
 const MAX = 200
 
 const ring = []
 
 export function pushEvent(type, data) {
-  const event = {
+  const event = sanitizeTelemetryEvent({
     ts: new Date().toISOString(),
-    type,
+    type: sanitizeSensitiveText(type),
     traceId: data?.traceId || null,
     ...data,
-  }
+  })
+  if (!event) return null
   if (ring.length >= MAX) ring.shift()
   ring.push(event)
   return event
@@ -26,6 +28,7 @@ export function getLastError() {
 }
 
 export function buildDiagText(extra = {}) {
+  extra = sanitizeTelemetryEvent(extra) || {}
   const lines = [
     `SkladPro Web Diagnostics`,
     `time: ${new Date().toISOString()}`,

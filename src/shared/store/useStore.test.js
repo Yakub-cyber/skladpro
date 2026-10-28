@@ -1416,7 +1416,7 @@ describe('Round-trip: операция + обратная не создают д
 // Касса и SaleTab зовут одну функцию; этот блок фиксирует её контракт,
 // чтобы будущая правка не разъехалась по экранам.
 describe('createSaleDocument — движок продажи', () => {
-  it('один вызов: заказ ЧК delivered + списание + маркер + документ в очереди', async () => {
+  it('демо: заказ ЧК delivered + списание + маркер, без облачной очереди', async () => {
     const { syncOutbox } = await import('../lib/cloud')
     syncOutbox.reset()
     const p = state().products.find((x) => x.stock >= 10)
@@ -1435,10 +1435,10 @@ describe('createSaleDocument — движок продажи', () => {
     expect(o.stockConsumed).toBe(true)
     expect(o.shipmentDocId).toBe(r.docId)
     expect(productById(p.id).stock).toBe(before - 2)
-    // Документ лёг в персистентную очередь — доедет даже после закрытия вкладки.
+    // Без пользователя и компании облачная очередь не создаётся.
     const saleItem = syncOutbox.items().find((it) => it.key === 'sale' && it.id === r.id)
-    expect(saleItem).toBeTruthy()
-    expect(saleItem.obj.items[0].qty).toBe(2)
+    // Demo has no authenticated ownership; it must not create a cloud operation.
+    expect(saleItem).toBeUndefined()
     syncOutbox.reset()
   })
 
@@ -1557,8 +1557,7 @@ describe('addDocument — сохранение полей шапки', () => {
     })
     expect(state().documents.find((d) => d.id === docId).supplierId).toBe(sup.id)
     const queued = syncOutbox.items().find((it) => it.key === 'doc_post' && it.id === docId)
-    expect(queued).toBeTruthy()
-    expect(queued.obj.supplierId).toBe(sup.id)
+    expect(queued).toBeUndefined() // demo documents stay in the demo store
     syncOutbox.reset()
   })
 })

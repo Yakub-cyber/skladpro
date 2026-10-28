@@ -43,15 +43,21 @@ export default function PaymentModal({ open, onClose, total, onConfirm }) {
   useEffect(() => {
     if (open) submittedRef.current = false
   }, [open])
-  const confirm = () => {
+  const confirm = async () => {
     if (!canConfirm || submittedRef.current) return
     submittedRef.current = true
-    onConfirm({
-      method,
-      cashPaid: method === 'cash' ? cashN : method === 'mixed' ? cashN : 0,
-      cardPaid: method === 'card' ? total : method === 'mixed' ? cardN : 0,
-      change,
-    })
+    try {
+      const result = await onConfirm({
+        method,
+        cashPaid: method === 'cash' ? cashN : method === 'mixed' ? cashN : 0,
+        cardPaid: method === 'card' ? total : method === 'mixed' ? cardN : 0,
+        change,
+      })
+      if (result?.ok === false) submittedRef.current = false
+    } catch (e) {
+      submittedRef.current = false
+      alert(e.message)
+    }
   }
 
   // Enter — подтвердить, Esc — закрыть. Только пока модалка открыта.

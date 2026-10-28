@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { Sparkles, Send, Loader2, Bot, User, Settings as SettingsIcon, Lightbulb } from 'lucide-react'
 import { Card, Button, Badge, cx } from '@/shared/ui'
 import { useStore } from '@/shared/store/useStore'
-import { askLLM, aiConfig, aiEnabled, analyticsInsights } from '@/shared/lib/ai'
+import { askLLM, aiConfig, aiEnabled, analyticsInsights, AI_UNAVAILABLE_MESSAGE } from '@/shared/lib/ai'
 import { buildAssistantContext, buildAssistantPrompt } from '@/shared/lib/assistant'
 
 const SUGGESTIONS = [
@@ -159,31 +159,8 @@ function LocalMode() {
           <div className="flex-1">
             <div className="font-medium text-sm">Облачный ИИ-чат выключен</div>
             <p className="text-[13px] text-muted mt-0.5">
-              Чтобы задавать вопросы текстом, нужен ключ ProxyAPI (OpenAI из РФ).
-              Хранится только в этом браузере — в код и в облако не уходит.
+              {AI_UNAVAILABLE_MESSAGE}
             </p>
-            <ol className="text-[12px] text-muted mt-2 space-y-1 list-decimal pl-4 leading-relaxed">
-              <li>
-                Заведи ключ в личном кабинете{' '}
-                <a
-                  href="https://proxyapi.ru"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-brand hover:underline"
-                >
-                  proxyapi.ru
-                </a>{' '}
-                (регистрация 2 минуты, стартовый баланс).
-              </li>
-              <li>
-                Открой <b>Настройки → Искусственный интеллект</b>, вставь ключ
-                в поле «API-ключ ProxyAPI».
-              </li>
-              <li>
-                Нажми «Проверить подключение» — вернётся «работает». Всё, чат
-                снизу оживёт.
-              </li>
-            </ol>
           </div>
           <Link to="/settings">
             <Button size="sm" variant="soft">
@@ -192,7 +169,7 @@ function LocalMode() {
           </Link>
         </div>
         <div className="mt-3 pt-3 border-t border-line text-[12px] text-muted">
-          Пока нет ключа — работают локальные подсказки без интернета:
+          Локальные подсказки работают без интернета:
         </div>
       </Card>
 

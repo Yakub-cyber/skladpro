@@ -1,3 +1,4 @@
+import { sanitizeTelemetryEvent, sanitizeSensitiveText } from '../lib/sensitiveTelemetry'
 import { Component } from 'react'
 import { RotateCcw, TriangleAlert } from 'lucide-react'
 import { reportError } from '../lib/monitoring'
@@ -24,7 +25,7 @@ export default class ErrorBoundary extends Component {
   }
 
   componentDidCatch(error, info) {
-    console.error('Необработанная ошибка приложения:', error, info?.componentStack)
+    console.error('Необработанная ошибка приложения:', sanitizeTelemetryEvent(error), sanitizeSensitiveText(info?.componentStack || ''))
     reportError(error, info) // Sentry (no-op без VITE_SENTRY_DSN)
   }
 
@@ -50,7 +51,7 @@ export default class ErrorBoundary extends Component {
           </p>
           {import.meta.env.DEV && (
             <pre className="mt-4 text-left text-[12px] text-bad bg-surface-2 border border-line rounded-xl p-3 overflow-auto max-h-48 whitespace-pre-wrap">
-              {String(error?.stack || error?.message || error)}
+              {sanitizeSensitiveText(error?.stack || error?.message || error)}
             </pre>
           )}
           <button

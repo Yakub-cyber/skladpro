@@ -18,6 +18,12 @@ import {
   hasBatches,
 } from './batches'
 
+export function saleSign(order) {
+  if (order.status === 'cancelled' || order.status === 'void') return 0
+  if (!(order.stockConsumed || order.status === 'shipped' || order.status === 'delivered')) return 0
+  return order.kind === 'refund' ? -1 : 1
+}
+
 // Статусы, в которых заказ держит резерв (ещё не отгружен и не отменён).
 export const OPEN_STATUSES = ['new', 'confirmed', 'picking', 'packed']
 
@@ -70,7 +76,7 @@ export function applyOrderStock(state, order, dir) {
     if (!it) return p
     let np
     // ── Партионная ветка ─────────────────────────────────────────────
-    if (hasBatches(p)) {
+    if (p.confirmedStock == null && hasBatches(p) && (p.batches.length > 0 || !Number(p.stock))) {
       let batches = p.batches
       if (dir < 0) {
         // Отгрузка: FIFO-списание, запоминаем потреблённые партии.
@@ -98,7 +104,9 @@ export function applyOrderStock(state, order, dir) {
       }
     } else {
       // ── Legacy: stock напрямую ─────────────────────────────────────
-      np = { ...p, stock: (p.stock || 0) + dir * it.qty }
+      const delta = dir * it.qty
+      np = { ...p, stock: (Number(p.stock) || 0) + delta,
+        ...(p.confirmedStock == null ? {} : { pendingStockDelta: (p.pendingStockDelta || 0) + delta }) }
     }
     if (p.marked) {
       if (dir < 0) {

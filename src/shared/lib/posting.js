@@ -77,6 +77,9 @@ function expandItem(state, it) {
 // dir=1 — провести, -1 — откатить (отмена проводки).
 // Возвращает part state ({ products, movements }) для set().
 export function applyDocToState(state, doc, dir, by) {
+  // Cloud inventory has a durable command and a separate warehouse projection.
+  // Do not manufacture FIFO adjustments, money facts or local ledger rows.
+  if (state.cloud && doc.type === 'inventory') return { products: state.products, movements: state.movements }
   const at = new Date().toISOString()
   const moves = []
   let products = state.products

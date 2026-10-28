@@ -4,7 +4,7 @@
 //  чтобы уложиться в разумное число токенов и не раскрывать лишнего.
 // ──────────────────────────────────────────────────────────────────────────
 import { soldByProduct } from './ai'
-import { reservedByProduct, availableStock } from './orders'
+import { reservedByProduct, availableStock, saleSign } from './orders'
 
 const n0 = (v) => Math.round(Number(v) || 0)
 
@@ -17,8 +17,7 @@ export function buildAssistantContext(state, { currency = '₽', maxProducts = 8
   const sold = soldByProduct(orders)
   const reserved = reservedByProduct(orders)
   const availOf = (p) => availableStock(p, reserved)
-  const active = orders.filter((o) => o.status !== 'cancelled')
-  const revenue = active.reduce((a, o) => a + (o.total || 0), 0)
+  const revenue = orders.reduce((a, o) => a + saleSign(o) * Number(o.total || 0), 0)
   const stockValue = products.reduce((a, p) => a + (p.stock || 0) * (p.cost || 0), 0)
 
   const lines = []
@@ -43,7 +42,9 @@ export function buildAssistantContext(state, { currency = '₽', maxProducts = 8
   }
 
   // Топ продаж
-  const top = Object.entries(sold).sort((a, b) => b[1] - a[1]).slice(0, 8)
+  const top = Object.entries(sold)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 8)
   if (top.length) {
     lines.push('')
     lines.push('ТОП ПРОДАЖ:')
@@ -62,7 +63,9 @@ export function buildAssistantContext(state, { currency = '₽', maxProducts = 8
   }
 
   // Должники
-  const debtors = customers.filter((c) => (c.balance || 0) > 0).sort((a, b) => b.balance - a.balance)
+  const debtors = customers
+    .filter((c) => (c.balance || 0) > 0)
+    .sort((a, b) => b.balance - a.balance)
   if (debtors.length) {
     lines.push('')
     lines.push(`ДОЛЖНИКИ (${debtors.length}):`)
@@ -73,9 +76,11 @@ export function buildAssistantContext(state, { currency = '₽', maxProducts = 8
   if (orders.length) {
     lines.push('')
     lines.push('ПОСЛЕДНИЕ ЗАКАЗЫ:')
-    orders.slice(0, 10).forEach((o) =>
-      lines.push(`- ${o.no}: ${o.customerName || '—'}, ${n0(o.total)}, статус ${o.status}`),
-    )
+    orders
+      .slice(0, 10)
+      .forEach((o) =>
+        lines.push(`- ${o.no}: ${o.customerName || '—'}, ${n0(o.total)}, статус ${o.status}`),
+      )
   }
 
   // Каталог (с лимитом)

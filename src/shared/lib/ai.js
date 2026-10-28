@@ -1,11 +1,10 @@
 // ──────────────────────────────────────────────────────────────────────────
 //  ИИ-движок СкладПро
 //  Базовые функции (разбор накладной, аналитика) работают локально и оффлайн.
-//  Облачный режим — реальный LLM через ProxyAPI (OpenAI из РФ): askLLM().
-//  Ключ задаётся в Настройках (хранится в браузере) или в .env (VITE_AI_KEY,
-//  для локальной разработки). В публичный бандл ключ из Настроек не попадает.
+//  Облачный режим отключён до появления безопасного серверного endpoint.
+//  Клиентские ключи и секреты окружения не используются.
 // ──────────────────────────────────────────────────────────────────────────
-import { reservedByProduct, availableStock } from './orders'
+import { reservedByProduct, availableStock, saleSign } from './orders'
 import { unitFactor } from './units'
 
 // Единицы измерения и их синонимы → нормализованная форма
@@ -174,9 +173,7 @@ export function parseInvoiceText(text, products = []) {
   const chunks = text
     .split(/\r?\n/)
     .flatMap((l) =>
-      l
-        .split(/[;]+/)
-        .flatMap((p) => (/[,].*\d/.test(p) ? p.split(/,(?=[^,]*\d)/) : [p])),
+      l.split(/[;]+/).flatMap((p) => (/[,].*\d/.test(p) ? p.split(/,(?=[^,]*\d)/) : [p])),
     )
   const items = []
   for (const c of chunks) {
@@ -186,9 +183,7 @@ export function parseInvoiceText(text, products = []) {
   // объединяем дубликаты по названию
   const merged = []
   for (const it of items) {
-    const ex = merged.find(
-      (x) => norm(x.name) === norm(it.name) && x.unit === it.unit,
-    )
+    const ex = merged.find((x) => norm(x.name) === norm(it.name) && x.unit === it.unit)
     if (ex) ex.qty += it.qty
     else merged.push(it)
   }
@@ -243,13 +238,24 @@ export function analyticsInsights({ products = [], orders = [] }) {
       severity: 'bad',
       icon: 'PackageMinus',
       title: `${low.length} ${plural(low.length, 'позиция', 'позиции', 'позиций')} ниже минимума`,
-      text: `Пора пополнить: ${low.slice(0, 3).map((p) => p.name).join(', ')}${low.length > 3 ? ' и др.' : ''}. Рекомендую сформировать заявку поставщику.`,
+      text: `Пора пополнить: ${low
+        .slice(0, 3)
+        .map((p) => p.name)
+        .join(', ')}${low.length > 3 ? ' и др.' : ''}. Рекомендую сформировать заявку поставщику.`,
       action: { to: '/suppliers', label: 'Создать закупку' },
     })
   }
 
   // 2. Прогноз исчерпания по скорости продаж
-  const sold = soldByProduct(orders)
+  const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000
+  const sold = soldByProduct(
+    orders.filter((o) => {
+      const at = Date.parse(
+        o.track?.find((t) => t.status === 'shipped' || t.status === 'delivered')?.at || o.createdAt,
+      )
+      return at >= cutoff && at <= Date.now()
+    }),
+  )
   const risk = products
     .map((p) => {
       const perDay = (sold[p.id] || 0) / 30 // продажи за ~месяц истории
@@ -301,9 +307,10 @@ export function analyticsInsights({ products = [], orders = [] }) {
 export function soldByProduct(orders = []) {
   const map = {}
   for (const o of orders) {
-    if (o.status === 'cancelled') continue
+    const sign = saleSign(o)
+    if (!sign) continue
     for (const it of o.items || []) {
-      map[it.productId] = (map[it.productId] || 0) + it.qty
+      map[it.productId] = (map[it.productId] || 0) + sign * Number(it.qty || 0)
     }
   }
   return map
@@ -325,111 +332,14 @@ function sum(arr) {
   return arr.reduce((a, b) => a + (Number(b) || 0), 0)
 }
 
-// ── Облачный LLM через ProxyAPI (OpenAI) ───────────────────────────────────
-// ProxyAPI проксирует OpenAI из РФ. Путь — /openai/v1 (см. док. ProxyAPI).
-// Ключ ProxyAPI можно задать в Настройках или в .env (VITE_AI_KEY) для локалки.
-export const ENV_AI_KEY = import.meta.env.VITE_AI_KEY || ''
-export const AI_DEFAULT_MODEL = 'gpt-4o-mini'
-export const AI_DEFAULT_BASE = 'https://api.proxyapi.ru/openai/v1'
-
-// Доступные модели (ProxyAPI/OpenAI). value — id модели, label — для UI.
-export const AI_MODELS = [
-  { value: 'gpt-4o-mini', label: 'gpt-4o-mini · быстрая и дешёвая' },
-  { value: 'gpt-4o', label: 'gpt-4o · умнее, дороже' },
-  { value: 'gpt-4.1-mini', label: 'gpt-4.1-mini' },
-]
-
-// Эффективная конфигурация ИИ: настройки пользователя поверх дефолтов и .env.
-export function aiConfig(settings = {}) {
-  return {
-    apiKey: settings.aiKey || ENV_AI_KEY,
-    model: settings.aiModel || AI_DEFAULT_MODEL,
-    baseUrl: settings.aiBaseUrl || AI_DEFAULT_BASE,
-  }
+// No provider credentials or provider HTTP calls belong in the client bundle.
+export const AI_UNAVAILABLE_MESSAGE = 'Облачный ИИ временно недоступен: безопасный серверный сервис ещё не подключён. Локальный разбор накладных и аналитика работают.'
+export function aiConfig() { return {} }
+export function aiEnabled() { return false }
+export async function askLLM() {
+  throw Object.assign(new Error(AI_UNAVAILABLE_MESSAGE), { code: 'AI_BACKEND_UNAVAILABLE' })
 }
-// Включён ли облачный ИИ (есть ключ — в настройках или в .env).
-export function aiEnabled(settings = {}) {
-  return !!(settings.aiKey || ENV_AI_KEY)
-}
-
-export async function askLLM(
-  prompt,
-  { apiKey, model = AI_DEFAULT_MODEL, baseUrl } = {},
-) {
-  if (!apiKey) throw new Error('Нет API-ключа: работаем локально')
-  const base = (baseUrl || AI_DEFAULT_BASE).replace(/\/$/, '')
-  const res = await fetch(`${base}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model,
-      messages: [{ role: 'user', content: prompt }],
-      temperature: 0.2,
-    }),
-  })
-  if (!res.ok) {
-    const text = await res.text().catch(() => '')
-    // Дружелюбные сообщения по типовым HTTP-кодам ProxyAPI/OpenAI. Иначе
-    // сырой JSON от прокси попадал в чат («DeepSeek 401: {…}»), и опера-
-    // тор не понимал, что делать.
-    if (res.status === 401 || res.status === 403) {
-      throw new Error(
-        'ProxyAPI 401: ключ отклонён. Проверьте ключ в Настройках → ИИ (или в .env VITE_AI_KEY). Возможно, ключ устарел, скопирован с пробелом или для другого провайдера.',
-      )
-    }
-    if (res.status === 429) {
-      throw new Error(
-        'ProxyAPI 429: превышен лимит или баланс на нуле. Пополните личный кабинет proxyapi.ru.',
-      )
-    }
-    if (res.status === 404) {
-      throw new Error(
-        `ProxyAPI 404: модель «${model}» не найдена. Выберите другую в Настройках.`,
-      )
-    }
-    if (res.status >= 500) {
-      throw new Error(`ProxyAPI ${res.status}: сервис недоступен, попробуйте через минуту.`)
-    }
-    throw new Error(`ProxyAPI ${res.status}: ${text.slice(0, 100)}`)
-  }
-  const data = await res.json()
-  return data.choices?.[0]?.message?.content ?? ''
-}
-
-// Разбор накладной через облачный LLM (DeepSeek). Фолбэк — локальный парсер.
-export async function aiParseInvoice(text, products = [], { apiKey, model, baseUrl } = {}) {
-  if (!apiKey) return parseInvoiceText(text, products)
-  const prompt =
-    'Ты помощник склада. Разбери текст накладной в JSON-массив позиций. ' +
-    'Каждый элемент: {"name": строка, "qty": число, "unit": строка (шт/кг/уп/м/л и т.п.)}. ' +
-    'Размеры (3.5x40) — часть названия, НЕ количество. Верни ТОЛЬКО JSON-массив, без пояснений.\n\nТекст:\n' +
-    text
-  const raw = await askLLM(prompt, { apiKey, model, baseUrl })
-  const json = raw.slice(raw.indexOf('['), raw.lastIndexOf(']') + 1)
-  let arr
-  try {
-    arr = JSON.parse(json)
-  } catch {
-    return parseInvoiceText(text, products) // не распарсилось — локальный фолбэк
-  }
-  return arr
-    .filter((x) => x && x.name)
-    .map((x) => {
-      const match = matchProduct(x.name, products)
-      const product = match?.product
-      return {
-        name: product?.name || x.name,
-        qty: Number(x.qty) || 1,
-        unit: product?.unit || x.unit || 'шт',
-        sku: product?.sku || null,
-        price: product?.price ?? null,
-        productId: product?.id || null,
-        matched: !!product,
-        confidence: match ? Math.round(match.score * 100) : 0,
-        raw: x.name,
-      }
-    })
+// Local parsing never sends invoice text, catalogue data or saved credentials.
+export async function aiParseInvoice(text, products = []) {
+  return parseInvoiceText(text, products)
 }

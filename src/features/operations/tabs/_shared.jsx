@@ -304,7 +304,7 @@ export function ProductTile({ p, priceField, showStock, inCart, onAdd, onSetQty,
           </span>
           {showStock && (
             <span className="text-[10.5px] text-muted whitespace-nowrap">
-              {num(p.stock)} {p.unit}
+              {p.warehouseProjection?.available === false ? 'Прогноз недоступен' : `${num(p.stock)} ${p.unit}`}
             </span>
           )}
         </div>
@@ -478,7 +478,7 @@ function CatalogTable({ list, rowsById, onAdd, onSetQty, priceField, showStock }
                 </td>
                 {showStock && (
                   <td className="py-1.5 px-3 text-right tabular-nums text-muted">
-                    {num(p.stock)} {p.unit}
+                    {p.warehouseProjection?.available === false ? 'Прогноз недоступен' : `${num(p.stock)} ${p.unit}`}
                   </td>
                 )}
                 <td className="py-1.5 px-3 text-right tabular-nums font-medium">

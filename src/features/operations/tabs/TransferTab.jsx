@@ -23,9 +23,9 @@ export default function TransferTab() {
         : [...prev, { productId: p.id, name: p.name, unit: p.unit, qty: 1, fromWh: p.warehouseId }],
     )
   }
-  const submit = (post) => {
+  const submit = async (post) => {
     setErr('')
-    const r = addDocument({ type: 'transfer', toWarehouseId: toWh, items }, { post })
+    const r = await addDocument({ type: 'transfer', toWarehouseId: toWh, items }, { post })
     if (r && typeof r === 'object' && r.ok === false) {
       setErr(r.error || 'Не удалось провести перемещение')
       return

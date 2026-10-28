@@ -92,7 +92,7 @@ export default function ProductTile({ p, availOf, priceTypeId, row, onAdd, onSet
             {p.weighted && <span className="text-[10px] text-muted font-normal">/кг</span>}
           </span>
           <span className={cx('text-[11px]', availOf(p) <= 0 ? 'text-bad font-medium' : 'text-muted')}>
-            дост. {num(availOf(p))}
+            {availOf(p) == null || p.warehouseProjection?.available === false ? 'Прогноз недоступен' : `дост. ${num(availOf(p))}`}
           </span>
         </div>
       )}

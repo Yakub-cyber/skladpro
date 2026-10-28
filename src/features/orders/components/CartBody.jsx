@@ -76,7 +76,7 @@ export default function CartBody({
             <div className="text-[13px] font-medium">Оформить как заказ</div>
             <div className="text-[11.5px] text-muted leading-snug">
               {asOrder
-                ? 'Попадёт в «Заказы», пойдёт по воронке: сборка → в пути → доставлен'
+                ? 'Коммерческий состав заказа; проведение и оплата выполняются отдельно'
                 : 'Обычный чек — товар отдаём сразу, продажа закрывается'}
             </div>
           </div>
@@ -219,7 +219,7 @@ export default function CartBody({
           )}
         >
           <Check size={22} />
-          <span>ОПЛАТИТЬ · {money(total)}</span>
+          <span>{asOrder ? 'СОХРАНИТЬ ЗАКАЗ' : 'ОПЛАТИТЬ'} · {money(total)}</span>
           <kbd className="ml-2 hidden md:inline text-[11px] font-semibold bg-black/20 rounded px-1.5 py-0.5">
             F9
           </kbd>

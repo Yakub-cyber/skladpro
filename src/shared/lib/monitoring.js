@@ -1,3 +1,4 @@
+import { sanitizeTelemetryEvent, sanitizeSentryEvent, sanitizeSensitiveText } from './sensitiveTelemetry'
 // ──────────────────────────────────────────────────────────────────────────
 //  Мониторинг ошибок (Sentry). Включается ТОЛЬКО если задан VITE_SENTRY_DSN
 //  (пустой/отсутствующий DSN = полностью выключено, ничего не грузится).
@@ -14,13 +15,16 @@ export function initMonitoring() {
     .then((Sentry) => {
       Sentry.init({
         dsn,
+        beforeBreadcrumb: sanitizeTelemetryEvent,
+        beforeSend: sanitizeSentryEvent,
+        beforeSendTransaction: sanitizeSentryEvent,
         // Только ошибки, без трассировки производительности (не раздуваем квоту)
         tracesSampleRate: 0,
         environment: import.meta.env.MODE,
       })
       sentry = Sentry
     })
-    .catch((e) => console.warn('Sentry не загрузился:', e?.message || e))
+    .catch((e) => console.warn('Sentry не загрузился:', sanitizeSensitiveText(e?.message || e)))
 }
 
 // Ручная отправка (ErrorBoundary). До загрузки SDK — тихий no-op:

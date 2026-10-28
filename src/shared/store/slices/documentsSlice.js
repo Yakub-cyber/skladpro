@@ -3,6 +3,10 @@ import { docTypeInfo } from '../../lib/constants'
 import { applyDocToState } from '../../lib/posting'
 import { enqueueDocument } from '../../lib/cloud'
 import { normalizeItems } from '../../lib/units'
+import { completeBusinessAction } from '../../lib/businessIntent'
+import { companyCache } from '../../lib/scopedCache'
+import { getAuthContext } from '@/shared/api'
+import { saleWarehouseError } from '../../lib/saleV2'
 
 const DOC_TYPE_TO_CLOUD = {
   purchase: 'receive',
@@ -23,6 +27,17 @@ export const createDocumentsSlice = (set, get) => ({
   addDocument: (doc, opts = {}) => {
     const post = opts.post !== false
     const type = doc.type
+    if (type === 'sale' && get().cloud) {
+      const error = saleWarehouseError(get().warehouses, doc.warehouseId)
+      if (error) return { ok: false, error }
+      if (post) {
+        if (!doc.payment && !doc.payMethod) return { ok: false, error: 'Выберите способ оплаты продажи' }
+        const method = doc.payMethod
+        return get().createSaleDocument({ ...doc, payment: doc.payment || (method === 'credit' ? { method } : {
+          method, cashPaid: method === 'cash' ? doc.total : 0, cardPaid: method === 'card' ? doc.total : 0 }) })
+      }
+    }
+    if (type === 'inventory' && !doc.warehouseId) return { ok: false, error: 'Выберите склад инвентаризации' }
     const items = normalizeItems(doc.items || [], get().products)
     // Предпроверка остатков — только для типов, которые списывают со
     // склада, и только при проведении. Draft можно сохранить в минус.
@@ -41,13 +56,13 @@ export const createDocumentsSlice = (set, get) => ({
         }
       }
     }
-    const id = uid('doc')
-    set((s) => {
-      const prefix = docTypeInfo(type).prefix
+    const prepare = () => {
+      const s = get(), id = uid('doc'), prefix = docTypeInfo(type).prefix
       const header = {
         id,
         no: nextNo(s.documents.filter((d) => d.type === type), prefix),
         type,
+        ...(['inventory', 'sale'].includes(type) && doc.warehouseId ? { warehouseId: doc.warehouseId } : {}),
         status: post ? 'posted' : 'draft',
         items: items.map((it) => ({ ...it })),
         toWarehouseId: doc.toWarehouseId || null,
@@ -58,6 +73,7 @@ export const createDocumentsSlice = (set, get) => ({
         // receive без supplierId → stock_income вместо purchase_receipt,
         // долг поставщику не рос. Черновик терял поставщика молча.
         supplierId: doc.supplierId ?? null,
+        ...(doc.sourcePurchaseOrderId ? { sourcePurchaseOrderId: doc.sourcePurchaseOrderId } : {}),
         by: s.authUserId,
         createdAt: new Date().toISOString(),
         postedAt: post ? new Date().toISOString() : null,
@@ -79,29 +95,42 @@ export const createDocumentsSlice = (set, get) => ({
             }
           : {}),
       }
-      const base = { documents: [header, ...s.documents] }
-      return post ? { ...base, ...applyDocToState(s, header, 1, s.authUserId) } : base
-    })
-    const d = get().documents.find((x) => x.id === id)
-    get().logAction(
-      `Документ ${d?.no} · ${docTypeInfo(type).label} ${post ? 'проведён' : '— черновик'}`,
-      { section: 'Документы', type: post ? 'create' : 'draft' },
-    )
-    const cloudType = DOC_TYPE_TO_CLOUD[type]
-    if (d && post && cloudType) {
-      const cloudDoc = { ...d, type: cloudType }
-      if (type === 'transfer') {
-        cloudDoc.warehouseToId = d.toWarehouseId
-        cloudDoc.warehouseId = d.items?.[0]?.fromWh || undefined
-      }
-      enqueueDocument(cloudDoc)
+      const command = { ...header, type: DOC_TYPE_TO_CLOUD[type] }
+      if (type === 'inventory') delete command.supplierId
+      delete command.sourcePurchaseOrderId
+      if (type === 'transfer') { command.warehouseToId = header.toWarehouseId; command.warehouseId = header.items[0]?.fromWh || undefined }
+      return { id, header, command }
     }
-    return id
+    const apply = ({ id, header }, accepted = {}) => {
+      if (get().documents.some((d) => d.id === id)) return id
+      if (accepted.acknowledged) return { ok: false, error: 'Команда уже подтверждена сервером. Обновите данные перед локальным завершением.' }
+      const fields = ['documents', 'products', 'movements', 'customers', 'suppliers', 'shifts', 'audit', 'purchaseOrders']
+      const before = Object.fromEntries(fields.map((k) => [k, get()[k]]))
+      try {
+        set((state) => {
+          const base = { documents: [header, ...state.documents] }
+          if (post && state.cloud && type === 'inventory') {
+            return { ...base, products: companyCache.overlayLocal(getAuthContext(), { ...state, ...base }).products }
+          }
+          return post && !accepted.acknowledged ? { ...base, ...applyDocToState(state, header, 1, state.authUserId) } : base
+        })
+        if (header.sourcePurchaseOrderId) set((state) => ({ purchaseOrders: (state.purchaseOrders || []).map((po) =>
+          po.id === header.sourcePurchaseOrderId ? { ...po, status: 'received', receivedAt: header.postedAt,
+            receiveDocId: id, items: header.items } : po) }))
+        get().logAction(`Документ ${header.no} · ${docTypeInfo(type).label} ${post ? 'проведён' : '— черновик'}`,
+          { section: 'Документы', type: post ? 'create' : 'draft' })
+        return id
+      } catch (e) { try { set(before) } catch { /* state restored before persist */ } throw e }
+    }
+    if (!post || !DOC_TYPE_TO_CLOUD[type]) return apply(prepare())
+    return completeBusinessAction(get(), 'doc_create', { doc, opts }, prepare,
+      (prepared) => enqueueDocument(prepared.command), apply, `doc_create:${type}`)
   },
   // Провести черновик
   postDocument: (id) => {
     const d = get().documents.find((x) => x.id === id)
     if (!d || d.status !== 'draft') return
+    if (d.type === 'inventory' && !d.warehouseId) return { ok: false, error: 'У старого черновика не указан склад. Создайте новую инвентаризацию с явным складом.' }
     // Продажа проводится ТОЛЬКО движком createSaleDocument. Старый путь
     // (applyDocToState) двигал остатки локально, но не знал ни сервера,
     // ни денег, ни долга — черновик выглядел проведённым, а учёта не было.
@@ -119,6 +148,8 @@ export const createDocumentsSlice = (set, get) => ({
         (a, x) => a + (Number(x.qty) || 0) * (Number(x.price) || 0), 0,
       )
       const r = get().createSaleDocument({
+        warehouseId: d.warehouseId,
+        sourceDocumentId: id,
         customerId: d.customerId || 'retail',
         customerName: d.customerName || 'Розничный',
         items: d.items,
@@ -136,32 +167,34 @@ export const createDocumentsSlice = (set, get) => ({
                 cardPaid: d.payMethod === 'card' ? total : 0,
               },
       })
-      if (r && r.ok === false) return r
-      // Черновик стал продажей (ЧК-заказ) — заготовку убираем, чтобы
-      // одна продажа не отображалась двумя записями.
-      set((s) => ({ documents: s.documents.filter((x) => x.id !== id) }))
-      get().logAction(`Черновик ${d.no} проведён как продажа`, {
-        section: 'Документы',
-        type: 'update',
-      })
+      // Draft removal belongs to the same local completion as the sale.
       return r
     }
-    set((s) => ({
-      ...applyDocToState(s, d, 1, s.authUserId),
-      documents: s.documents.map((x) =>
-        x.id === id ? { ...x, status: 'posted', postedAt: new Date().toISOString() } : x,
-      ),
-    }))
-    get().logAction(`Документ ${d.no} проведён`, { section: 'Документы', type: 'update' })
-    const cloudType = DOC_TYPE_TO_CLOUD[d.type]
-    if (cloudType) {
-      const cloudDoc = { ...get().documents.find((x) => x.id === id), type: cloudType }
-      if (d.type === 'transfer') {
-        cloudDoc.warehouseToId = d.toWarehouseId
-        cloudDoc.warehouseId = d.items?.[0]?.fromWh || undefined
-      }
-      enqueueDocument(cloudDoc)
+    const prepare = () => {
+      const header = JSON.parse(JSON.stringify({ ...d, status: 'posted', postedAt: new Date().toISOString() }))
+      const command = { ...header, type: DOC_TYPE_TO_CLOUD[d.type] }
+      if (d.type === 'inventory') delete command.supplierId
+      if (d.type === 'transfer') { command.warehouseToId = d.toWarehouseId; command.warehouseId = d.items?.[0]?.fromWh || undefined }
+      return { id, header, command }
     }
+    const apply = ({ header }, accepted) => {
+      if (get().documents.find((x) => x.id === id)?.status === 'posted') return { ok: true, id }
+      if (accepted.acknowledged) return { ok: false, error: 'Команда уже подтверждена сервером. Обновите данные перед локальным завершением.' }
+      const fields = ['documents', 'products', 'movements', 'customers', 'suppliers', 'audit']
+      const before = Object.fromEntries(fields.map((k) => [k, get()[k]]))
+      try {
+        set((state) => ({
+          ...(accepted.acknowledged ? {} : applyDocToState(state, header, 1, state.authUserId)),
+          ...(state.cloud && d.type === 'inventory' ? { products: companyCache.overlayLocal(getAuthContext(), state).products } : {}),
+          documents: state.documents.map((x) => x.id === id ? header : x),
+        }))
+        get().logAction(`Документ ${d.no} проведён`, { section: 'Документы', type: 'update' })
+        return { ok: true, id }
+      } catch (e) { try { set(before) } catch { /* state restored before persist */ } throw e }
+    }
+    if (!DOC_TYPE_TO_CLOUD[d.type]) return apply(prepare(), {})
+    return completeBusinessAction(get(), 'doc_post', { id }, prepare,
+      (prepared) => enqueueDocument(prepared.command), apply, `doc_post:${id}`)
   },
   // Отменить проводку (откатить влияние на остатки)
   cancelDocument: (id) => {
@@ -178,7 +211,15 @@ export const createDocumentsSlice = (set, get) => ({
   // Удалить документ (только черновик или отменённый — проведённый сначала отменить)
   removeDocument: (id) => {
     const d = get().documents.find((x) => x.id === id)
-    if (!d || d.status === 'posted') return
+    if (!d) return { ok: true, duplicate: true }
+    if (d.status === 'posted') return
+    if (d.status === 'draft' && get().cloud) {
+      const state = get()
+      if (!state.authAccountId || !state.companyId) return { ok: false, code: 'CONTEXT_CHANGED', error: 'Сессия компании не готова' }
+      const result = companyCache.deleteDraft(id, { userId: state.authAccountId, companyId: state.companyId })
+      if (!result.ok) return result
+    }
     set((s) => ({ documents: s.documents.filter((x) => x.id !== id) }))
+    return { ok: true }
   },
 })

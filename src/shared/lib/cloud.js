@@ -1,3 +1,8 @@
+import { sanitizeSensitiveText } from './sensitiveTelemetry'
+import { getInvitationProof, isInvitationProofCurrent, clearInvitationSecret, requireInvitationTransport } from './invitationSecret'
+import { verifyCancellationResponse } from './cancellationV2'
+import { verifyDeliveryResponse } from './deliveryV2'
+import { isShipmentV2, verifyShipmentResponse } from './shipmentV2'
 // ──────────────────────────────────────────────────────────────────────────
 //  Облачный слой веб-приложения — реализация поверх собственного бэкенда
 //  skladpro-backend. Заменяет прежнюю supabase-версию.
@@ -9,6 +14,7 @@
 // ──────────────────────────────────────────────────────────────────────────
 import {
 	apiApplyPasswordReset,
+	apiCommercialOrder,
 	apiCreateCompany,
 	apiDocument,
 	apiFetch,
@@ -23,17 +29,40 @@ import {
 	apiSignOut,
 	apiSignUp,
 	apiSyncPull,
+	apiStockReconcile,
 	apiSyncPush,
 	getCompanyId,
+	getAuthContext,
+	isAuthContextCurrent,
 	getSession,
 	hasApi,
 	onAuthChange as apiOnAuthChange,
 	subscribeEvents,
 } from '@/shared/api'
 import { createOutbox } from './outbox'
+import { companyCache } from './scopedCache'
+import { mergeProduct, warehouseCommandRequest } from './stockProjection'
+import { commandResources } from './outboxDependencies'
+import { createWarehouseReconciler } from './warehouseSnapshot'
+import { isSaleV2, saleOrder, saleKey, verifySaleResponse } from './saleV2'
+import { COMMERCIAL_KEYS, isCommercialOrder, verifyCommercialResponse } from './commercialOrders'
 import { pushEvent } from './diagRing'
 
 const toSnake = (s) => s.replace(/[A-Z]/g, (c) => '_' + c.toLowerCase())
+// Explicit scoped reads only: no automatic flush, projection, or acknowledgement of outbox.
+export const cloudReconcileStock = createWarehouseReconciler({
+	fetchSnapshot: (request, context) => apiStockReconcile(request, context),
+	cache: companyCache, getContext: getAuthContext, isCurrent: isAuthContextCurrent,
+})
+export async function refreshWarehouseStock(productIds, context = getAuthContext()) {
+	const products = new Set(productIds)
+	const commands = companyCache.warehouseCommands(context).filter((op) => {
+		const resource = commandResources(op)
+		return resource.stock && (!resource.products.length || resource.products.some((p) => products.has(p)))
+	})
+	for (const op of commands) for (const p of commandResources(op).products) products.add(p)
+	return cloudReconcileStock({ productIds: [...products], commands: commands.map(warehouseCommandRequest) }, context)
+}
 const toCamel = (s) => s.replace(/_([a-z])/g, (_, c) => c.toUpperCase())
 
 // storeKey ↔ таблица БД
@@ -71,6 +100,9 @@ const SERVER_MANAGED = new Set([
 	// Клиент его только читает (pull) — эхо через push запрещено, иначе
 	// LWW-гонка двух вкладок могла бы стереть маркер.
 	'shipment_doc_id',
+	'confirmed_stock', 'pending_stock_delta',
+	'warehouse_projection',
+	'commercial_snapshot', 'commercial_contract_version', 'commercial_row_version', 'commercial_pending', 'server_units', 'delivery_pending', 'cancellation_pending', 'shipment_pending', 'shipment_queued', 'shipment_warehouse_id',
 ])
 const ORDER_SERVER_ONLY = new Set(['status', 'items'])
 
@@ -82,7 +114,7 @@ const PUSH_FORBIDDEN_TABLES = new Set(['movements', 'audit', 'documents'])
 // Каждый item несёт полный payload и обрабатывается транзакционно
 // на сервере (post_doc/unpost_doc). Ретрай через outbox переживает
 // перезагрузку вкладки, оффлайн и падение сети.
-const BUSINESS_KEYS = new Set(['sale', 'order_status', 'doc_post'])
+const BUSINESS_KEYS = new Set(['sale', 'order_status', 'doc_post', 'return_v2', 'order_delivery', 'order_cancel', ...COMMERCIAL_KEYS])
 
 function toRow(obj, cfg) {
 	const drop = LOCAL_ONLY_FIELDS[cfg.key]
@@ -119,49 +151,65 @@ const settingsForCloud = (s = {}) => {
 }
 
 // ── Bootstrap-загрузка через инкрементальный pull ────────────────────────────
-export async function cloudLoadAll() {
+export async function cloudLoadAll(context = getAuthContext()) {
 	if (!hasApi) return null
 	const result = Object.fromEntries(TABLES.map((t) => [t.key, []]))
-	let since = 0
-	let total = 0
-	const maxPages = 200
-	for (let page = 0; page < maxPages; page++) {
-		const res = await apiSyncPull({ since, limit: 1000 })
-		if (!res.ok) throw new Error(res.error?.message || 'sync/pull failed')
-		const tables = res.body?.tables || {}
-		let anyMore = false
-		let maxCursor = since
-		for (const [tableName, chunk] of Object.entries(tables)) {
-			const cfg = byTable[tableName]
-			if (!cfg) continue
-			for (const r of chunk.rows || []) {
-				if (r.deleted_at) continue
-				result[cfg.key].push(fromRow(r, cfg))
-				total += 1
-			}
-			if (chunk.hasMore) anyMore = true
-			if (chunk.cursor) {
-				const c = Number(chunk.cursor)
-				if (c > maxCursor) maxCursor = c
+	const saleLines = new Map()
+	const units = new Map()
+	const ingest = (tableName, chunk) => {
+		if (tableName === 'product_units') for (const unit of chunk.rows || []) {
+			if (!unit.deleted_at) {
+				if (!units.has(unit.product_id)) units.set(unit.product_id, [])
+				units.get(unit.product_id).push({ id: unit.id, name: unit.name, factor: String(unit.factor), isBase: !!unit.is_base })
 			}
 		}
-		if (!anyMore) break
-		since = maxCursor
+		if (tableName === 'doc_lines') for (const line of chunk.rows || []) {
+			if (!line.deleted_at) saleLines.set(`${line.doc_id}:${line.line_no}`, line)
+		}
+		const cfg = byTable[tableName]
+		if (cfg) for (const r of chunk.rows || []) if (!r.deleted_at) result[cfg.key].push(fromRow(r, cfg))
+	}
+	const pull = async (params) => {
+		if (!isAuthContextCurrent(context)) throw new Error('CONTEXT_CHANGED')
+		const res = await apiSyncPull({ ...params, limit: 1000, context })
+		if (!isAuthContextCurrent(context)) throw new Error('CONTEXT_CHANGED')
+		if (!res.ok) throw Object.assign(new Error(res.error?.message || 'sync/pull failed'), { status: res.status })
+		return res.body?.tables || {}
+	}
+	const tables = await pull({ since: '0' })
+	for (const [table, first] of Object.entries(tables)) {
+		let chunk = first, since = '0'
+		for (let page = 0; ; page++) {
+			ingest(table, chunk)
+			if (!chunk.hasMore) break
+			if (page >= 199 || !chunk.cursor || BigInt(chunk.cursor) <= BigInt(since)) throw new Error(`Неполная загрузка ${table}`)
+			since = String(chunk.cursor)
+			chunk = (await pull({ table, since }))[table]
+			if (!chunk || !Array.isArray(chunk.rows)) throw new Error(`Неполная загрузка ${table}`)
+		}
 	}
 	// Настройки компании — jsonb целиком
+	result.products = result.products.map((p) => ({ ...p, serverUnits: units.get(p.id) || [] }))
+	for (const row of result.orders) if (row.commercialSnapshot) companyCache.saveCommercialOrder(context, row)
+	result.orders = result.orders.map((order) => ({ ...order, items: (order.items || []).map((item, index) => {
+		const line = saleLines.get(`${order.shipmentDocId}:${index}`)
+		return line?.product_id === item.productId ? { ...item, saleLineId: line.id, qtyBase: String(line.qty) } : item
+	}) }))
 	try {
-		const s = await apiFetch('GET', '/v1/settings')
+		const s = await apiFetch('GET', '/v1/settings', undefined, { context })
 		if (s.ok && s.body?.data && typeof s.body.data === 'object') result.settings = s.body.data
 	} catch { /* нет настроек — ничего страшного */ }
-	return total > 0 ? result : null
+	if (!isAuthContextCurrent(context)) throw new Error('CONTEXT_CHANGED')
+	return result
 }
 
 // Одиночный upsert (companyId не нужен — сервер знает по токену).
-export async function cloudUpsert(storeKey, obj) {
+export async function cloudUpsert(storeKey, obj, context = getAuthContext()) {
+	if (storeKey === 'orders' && (isCommercialOrder(obj) || companyCache.commercialOrder?.(context, obj.id) || syncOutbox.items().some((op) => COMMERCIAL_KEYS.includes(op.key) && op.obj.orderId === obj.id))) throw new Error('Защищённый заказ нельзя отправлять через legacy sync')
 	const cfg = byKey[storeKey]
 	if (!cfg || PUSH_FORBIDDEN_TABLES.has(cfg.table)) return
 	const row = { ...toRow(obj, cfg), id: obj.id }
-	const res = await apiSyncPush([{ table: cfg.table, op: 'upsert', row }])
+	const res = await apiSyncPush([{ table: cfg.table, op: 'upsert', row }], context)
 	if (!res.ok) throw new Error(res.error?.message || 'push failed')
 	const r = res.body?.results?.[0]
 	if (r && !r.ok) throw new Error(r.error || 'push rejected')
@@ -169,18 +217,22 @@ export async function cloudUpsert(storeKey, obj) {
 
 // Seed компании (первый вход). movements/audit/documents не проходят —
 // это нормально, они создаются приходами через /v1/documents/post.
-export async function cloudSeed(state, _companyId) {
+export async function cloudSeed(state, companyId) {
+	const context = getAuthContext()
+	if (!companyId || context.companyId !== companyId || state.authAccountId !== context.userId) throw new Error('CONTEXT_CHANGED')
 	const ops = []
 	for (const cfg of TABLES) {
 		if (PUSH_FORBIDDEN_TABLES.has(cfg.table)) continue
 		for (const obj of state[cfg.key] || []) {
+			if (cfg.key === 'orders' && isCommercialOrder(obj)) continue
 			ops.push({ table: cfg.table, op: 'upsert', row: { ...toRow(obj, cfg), id: obj.id } })
 		}
 	}
 	// Батчи по 250 (лимит push — 500, берём с запасом)
 	for (let i = 0; i < ops.length; i += 250) {
 		const chunk = ops.slice(i, i + 250)
-		const res = await apiSyncPush(chunk)
+		if (!isAuthContextCurrent(context)) throw new Error('CONTEXT_CHANGED')
+		const res = await apiSyncPush(chunk, context)
 		if (!res.ok) throw new Error(res.error?.message || 'seed failed')
 	}
 }
@@ -247,23 +299,74 @@ const TERMINAL_CODES = new Set(['STALE', 'TABLE_FORBIDDEN', 'BAD_ID', 'TOMBSTONE
 // _quarantined в очереди — остаётся видимым в панели диагностики с полным
 // payload+traceId, пока человек не решит вручную (пересоздать/отменить).
 // quarantine=false → транзиент (сеть/5xx), ретрай через exponential backoff.
-async function sendBusinessOp(it) {
+async function sendBusinessOp(it, context) {
 	try {
 		const payload = it.obj || {}
 		let res
 		if (it.key === 'sale') {
-			res = await apiSale(payload, `sale-${it.id}`)
+			res = await apiSale(payload, saleKey(it), context)
+		} else if (COMMERCIAL_KEYS.includes(it.key)) {
+			res = await apiCommercialOrder(it.key === 'commercial_create' ? 'create' : 'replace', payload, it.idempotencyKey, context)
+			if (res.ok) {
+				if (!isAuthContextCurrent(context)) throw new Error('CONTEXT_CHANGED')
+				if (!await verifyCommercialResponse(it.key, payload, res.body, context.companyId)) return { ok: false, quarantine: true, code: 'COMMERCIAL_RESPONSE_UNVERIFIED', error: 'Ответ заказа требует сверки' }
+				// Replay can return an older receipt. Pull the current row, never restore its old composition.
+				let cursor = (BigInt(res.body.order.rowVersion) - 1n).toString(), found = null
+				for (let page = 0; page < 200; page++) {
+					const read = await apiSyncPull({ table: 'orders', since: cursor, limit: 1000, context })
+					if (!isAuthContextCurrent(context)) throw new Error('CONTEXT_CHANGED')
+					if (!read.ok) throw new Error('Команда проведена; текущая версия заказа ещё не получена')
+					const chunk = read.body?.tables?.orders
+					found = chunk?.rows?.find((row) => row.id === payload.orderId)
+					if (found || !chunk?.hasMore) break
+					if (!chunk.cursor || BigInt(chunk.cursor) <= BigInt(cursor)) throw new Error('Некорректный курсор заказов')
+					cursor = String(chunk.cursor)
+				}
+				if (!found || found.deleted_at || BigInt(found.row_version) < BigInt(res.body.order.rowVersion)) throw new Error('Текущая версия заказа не подтверждена')
+				companyCache.saveCommercialOrder(context, fromRow(found, byKey.orders))
+			}
 		} else if (it.key === 'doc_post') {
-			res = await apiDocument(payload, `doc-${it.id}`)
+			res = await apiDocument(payload, `doc-${it.id}`, context)
 		} else if (it.key === 'order_status') {
-			res = await apiOrderStatus(payload.orderId, payload.status, `ost-${payload.orderId}-${payload.status}`)
+			if (isShipmentV2(payload)) {
+                res = await apiOrderStatus(it.id, payload, it.idempotencyKey, context)
+                if (res.ok) {
+                    if (!isAuthContextCurrent(context)) throw new Error('CONTEXT_CHANGED')
+                    if (!await verifyShipmentResponse(it.id, payload, res.body, context.companyId)) return { ok: false, quarantine: true, code: 'SHIPMENT_RESPONSE_UNVERIFIED', error: 'Ответ отгрузки требует сверки' }
+                    await refreshProtectedOrder(it.id, context)
+                }
+            } else res = await apiOrderStatus(payload.orderId, payload.status, `ost-${payload.orderId}-${payload.status}`, context)
+		} else if (it.key === 'order_delivery' || it.key === 'order_cancel') {
+            res = await apiOrderStatus(payload.orderId, payload.request, it.idempotencyKey, context)
+            if (res.ok) {
+                if (!isAuthContextCurrent(context)) throw new Error('CONTEXT_CHANGED')
+                if (!await (it.key === 'order_cancel' ? verifyCancellationResponse : verifyDeliveryResponse)(payload, res.body, context.companyId, it.idempotencyKey)) return { ok: false, quarantine: true, code: it.key === 'order_cancel' ? 'CANCELLATION_RESPONSE_UNVERIFIED' : 'DELIVERY_RESPONSE_UNVERIFIED', error: 'Ответ изменения заказа требует сверки; команда сохранена' }
+                await refreshProtectedOrder(payload.orderId, context, res.body.order.rowVersion)
+            } else if (res.status === 409 || res.status === 422) {
+                try { await refreshProtectedOrder(payload.orderId, context) }
+                catch (e) { if (!isAuthContextCurrent(context)) throw e }
+            }
+        } else if (it.key === 'return_v2') {
+			res = await apiReturn(payload.request, `return:${it.id}`, context)
 		} else {
 			return { ok: false, quarantine: true, code: 'UNKNOWN_KEY', error: `unknown business key ${it.key}` }
+		}
+		if (it.key === 'sale' && isSaleV2(payload) && res.ok && !await verifySaleResponse(payload, res.body, context.companyId)) {
+			return { ok: false, quarantine: true, code: 'SALE_RESPONSE_UNVERIFIED', error: 'Ответ продажи не подтверждён; требуется сверка' }
+		}
+		if (it.key === 'return_v2' && res.ok) {
+			const body = res.body
+			if (body?.contractVersion !== 2 || body.returnId !== it.id || body.orderId !== payload.request.orderId ||
+				body.documentId !== `ret-${it.id}` || !body.fingerprint || !Array.isArray(body.items) ||
+				body.items.length !== payload.request.items.length || payload.request.items.some((line) =>
+					!body.items.some((result) => result.saleLineId === line.saleLineId && Number(result.qtyBase) === Number(line.qtyBase)))) {
+				return { ok: false, quarantine: true, code: 'RETURN_RESPONSE_UNVERIFIED', error: 'Ответ возврата не подтверждён; требуется сверка' }
+			}
 		}
 		if (res.ok) return { ok: true }
 		// idempotency-replayed → уже применено на сервере, считаем успехом
 		const replayed = res.headers?.['idempotency-replayed'] === 'true'
-		if (replayed) return { ok: true }
+		if (replayed && it.key !== 'order_delivery' && it.key !== 'order_cancel' && !isShipmentV2(payload) && !COMMERCIAL_KEYS.includes(it.key) && it.key !== 'return_v2' && !(it.key === 'sale' && isSaleV2(payload))) return { ok: true }
 		const status = res.status ?? 0
 		const code = res.error?.code
 		// 4xx (кроме 408/429) — не починится повтором: карантин.
@@ -274,16 +377,24 @@ async function sendBusinessOp(it) {
 			code,
 			status,
 			traceId: res.traceId,
-			error: res.error?.message || `${it.key} failed (${status})`,
+			error: (res.error?.message || `${it.key} failed (${status})`) + ((COMMERCIAL_KEYS.includes(it.key) || it.key === 'order_delivery' || it.key === 'order_cancel' || isShipmentV2(payload)) && res.error?.details ? `: ${JSON.stringify(res.error.details)}` : ''),
 		}
 	} catch (e) {
 		return { ok: false, quarantine: false, code: 'NETWORK', error: e?.message || 'network' }
 	}
 }
 
-async function sendBatch(items) {
+async function sendBatch(items, queueContext) {
+	const context = getAuthContext()
+	const current = () => isAuthContextCurrent(context) && queueContext.isCurrent()
+	if (!current() || items.some((it) => it.userId !== context.userId || it.companyId !== context.companyId)) {
+		return { error: new Error('CONTEXT_CHANGED') }
+	}
 	const sent = []
 	const dropped = []
+	const protectedIds = new Set(items.filter((op) => COMMERCIAL_KEYS.includes(op.key)).map((op) => op.obj.orderId))
+	for (const op of syncOutbox.items()) if (COMMERCIAL_KEYS.includes(op.key)) protectedIds.add(op.obj.orderId)
+	const protectedLegacy = items.filter((it) => it.key === 'orders' && (isCommercialOrder(it.obj) || protectedIds.has(it.id) || companyCache.commercialOrder?.(context, it.id)))
 	let error = null
 
 	// Отдельно settings — они идут через /v1/settings.
@@ -292,6 +403,7 @@ async function sendBatch(items) {
 	const businessItems = items.filter((it) => BUSINESS_KEYS.has(it.key))
 	const syncItems = items.filter(
 		(it) => it.key !== 'settings'
+			&& !protectedLegacy.includes(it)
 			&& !BUSINESS_KEYS.has(it.key)
 			&& !PUSH_FORBIDDEN_TABLES.has(byKey[it.key]?.table),
 	)
@@ -309,10 +421,12 @@ async function sendBatch(items) {
 	// Карантин: 4xx НЕ удаляет item. Помечаем _quarantined через syncOutbox
 	// после цикла (mutate внутри — простая ссылка, persist сделает сам).
 	// Ретрай карантинного — только вручную (retryQuarantined).
-	const toQuarantine = []
+	const toQuarantine = protectedLegacy.map((it) => ({ it, reason: { code: 'ORDER_COMMERCIAL_PROTECTED', error: 'Legacy-команда сохранена для разбора: коммерческий заказ защищён' } }))
+	let businessError = null
 	for (const it of businessItems) {
-		if (error) break
-		const r = await sendBusinessOp(it)
+		if (!current()) { error ||= new Error('CONTEXT_CHANGED'); break }
+		if (!queueContext.canSendBusiness?.(it)) continue
+		const r = await sendBusinessOp(it, context)
 		if (r.ok) sent.push(it)
 		else if (r.quarantine) {
 			// Не в dropped — иначе outbox сотрёт элемент, чек испарится.
@@ -324,18 +438,16 @@ async function sendBatch(items) {
 			})
 			toQuarantine.push({ it, reason: { code: r.code, status: r.status, error: r.error, traceId: r.traceId } })
 		} else {
-			error = new Error(r.error || `${it.key} failed`)
-			break
+			businessError ||= new Error(r.error || `${it.key} failed`)
 		}
 	}
-	// Пометка после цикла (не вклиниваемся в filter'ы outbox во время flush).
-	for (const q of toQuarantine) syncOutbox.quarantine(q.it.id, q.it.key, q.reason)
+	// Outbox writes quarantine metadata cooperatively after this bounded request.
 
 	// settings: последний upsert по компании.
-	if (settingsItems.length) {
+	if (settingsItems.length && !error && current()) {
 		const latest = settingsItems[settingsItems.length - 1]
 		try {
-			const res = await apiPutSettings(latest.obj)
+			const res = await apiPutSettings(latest.obj, context)
 			if (res.ok) sent.push(...settingsItems)
 			else if (res.status && res.status >= 400 && res.status < 500) dropped.push(...settingsItems)
 			else error = new Error(res.error?.message || 'settings failed')
@@ -344,7 +456,7 @@ async function sendBatch(items) {
 
 	// sync push — батчами до 250 ops.
 	const CHUNK = 250
-	for (let i = 0; i < syncItems.length && !error; i += CHUNK) {
+	for (let i = 0; i < syncItems.length && !error && current(); i += CHUNK) {
 		const batch = syncItems.slice(i, i + CHUNK)
 		const ops = batch.map((it) => {
 			const cfg = byKey[it.key]
@@ -360,7 +472,7 @@ async function sendBatch(items) {
 			}
 		})
 		try {
-			const res = await apiSyncPush(ops)
+			const res = await apiSyncPush(ops, context)
 			if (!res.ok) {
 				pushEvent('sync_push_error', { status: res.status, code: res.error?.code, error: res.error?.message, traceId: res.traceId })
 				error = new Error(res.error?.message || 'push failed'); break
@@ -370,9 +482,9 @@ async function sendBatch(items) {
 				const it = batch[idx]
 				if (r.ok) sent.push(it)
 				else if (r.code && TERMINAL_CODES.has(r.code)) {
-					pushEvent('sync_op_drop', { table: it.key, id: it.id, code: r.code, error: r.error })
-					console.warn('sync push dropped', it.key, it.id, r.code, r.error)
-					dropped.push(it)
+					pushEvent('sync_op_quarantine', { table: it.key, id: it.id, code: r.code, error: r.error })
+					toQuarantine.push({ it, reason: { code: r.code, error: r.error } })
+					// Keep payload for review; a rejection is not a confirmation.
 				} else {
 					pushEvent('sync_op_fail', { table: it.key, id: it.id, code: r.code, error: r.error })
 				}
@@ -383,12 +495,29 @@ async function sendBatch(items) {
 		}
 	}
 
-	return { sent, dropped, error }
+	if (!current()) error ||= new Error('CONTEXT_CHANGED')
+	return { sent, dropped, quarantined: toQuarantine, error: error || businessError }
 }
 
 // Единственный экземпляр очереди (экспорт — для тестов и служебных нужд)
 export const syncOutbox = createOutbox({ send: sendBatch })
 export const syncNow = () => syncOutbox.flushNow()
+export function activateCloudContext(context, suspended = false) {
+	paused = true
+	prev = null; prevSettings = null
+	syncOutbox.setContext(context, { suspended })
+}
+export function stopCloudSync() {
+	paused = true
+	syncOutbox.setContext(null)
+	prev = null; prevSettings = null
+}
+async function enqueueBusiness(item) {
+	if (!hasApi) return { ok: true } // demo operations stay in the demo store
+	const context = getAuthContext()
+	if (!context.userId || !context.companyId || !isAuthContextCurrent(context)) return { ok: false, code: 'CONTEXT_CHANGED', error: 'Пользователь и компания не подтверждены' }
+	return syncOutbox.enqueueCommand({ ...item, userId: context.userId, companyId: context.companyId })
+}
 
 // вернулась сеть → досылаем сразу, не дожидаясь бэкоффа
 if (typeof window !== 'undefined') {
@@ -396,25 +525,66 @@ if (typeof window !== 'undefined') {
 }
 
 // ── Бизнес-операции в outbox: переживают перезагрузку, оффлайн и сбой сети ─
-// Компакция по (key, id): повторный enqueue заменяет предыдущий (полезно, если
-// заказ отредактирован до отправки). После успешной отправки item уходит из
-// очереди; при 4xx помечается dropped, при сети/5xx ретраится с бэкоффом.
-export function enqueueSale(order) {
-	syncOutbox.enqueue([{ op: 'create', key: 'sale', id: order.id, obj: order }])
+// После подтверждённой записи payload неизменяем. Повтор с тем же (key,id)
+// и другим payload — конфликт. Подтверждения сохраняются для защиты повторов;
+// при 4xx команда остаётся в карантине, при сети/5xx повторяется.
+export function enqueueSale(order, sourceDocumentId) {
+	const id = saleOrder(order).id
+	return enqueueBusiness({ op: 'create', key: 'sale', id, ...(isSaleV2(order) ? { idempotencyKey: `sale-${id}`,
+		...(sourceDocumentId ? { sourceDocumentId } : {}) } : {}), obj: order })
+}
+export function enqueueReturn(command) {
+	return enqueueBusiness({ op: 'create', key: 'return_v2', id: command.request.returnId, obj: command })
+}
+export function enqueueCommercialOrder(key, payload) {
+	return enqueueBusiness({ op: key === 'commercial_create' ? 'create' : 'update', key, id: payload.commandId,
+		idempotencyKey: `commercial:${payload.commandId}`, obj: payload })
 }
 export function enqueueDocument(document) {
-	syncOutbox.enqueue([{ op: 'create', key: 'doc_post', id: document.id, obj: document }])
+	return enqueueBusiness({ op: 'create', key: 'doc_post', id: document.id, obj: document })
 }
 // Один item на (orderId,status): если пользователь дважды жмёт «Отменить» —
 // идемпотентность по key на клиенте и Idempotency-Key на сервере отсекают.
+export function enqueueCancellation(envelope) {
+    const id = `cancelled:${envelope.request.shipmentId}`
+    return enqueueBusiness({ op: 'update', key: 'order_cancel', id, idempotencyKey: id, obj: envelope })
+}
+export function enqueueDelivery(envelope) {
+    const id = `delivered:${envelope.request.shipmentId}`
+    return enqueueBusiness({ op: 'update', key: 'order_delivery', id, idempotencyKey: id, obj: envelope })
+}
+export function enqueueShipment(orderId, body) {
+    return enqueueBusiness({ op: 'update', key: 'order_status', id: orderId, idempotencyKey: `shipment:${body.shipmentId}`, obj: body })
+}
+export async function refreshProtectedOrder(orderId, context = getAuthContext(), minimumVersion) {
+    let since = '0'
+    for (let page = 0; page < 200; page++) {
+        const res = await apiSyncPull({ table: 'orders', since, limit: 1000, context })
+        if (!isAuthContextCurrent(context)) throw new Error('CONTEXT_CHANGED')
+        if (!res.ok) throw new Error('Текущий заказ не получен; команда сохранена')
+        const chunk = res.body?.tables?.orders, row = chunk?.rows?.find(r => r.id === orderId)
+        if (row && !row.deleted_at) { if (minimumVersion && BigInt(row.row_version) < BigInt(minimumVersion)) throw new Error('Текущая версия заказа ещё не получена; команда сохранена'); companyCache.saveCommercialOrder(context, fromRow(row, byKey.orders)); return }
+        if (!chunk?.hasMore || !chunk.cursor || BigInt(chunk.cursor) <= BigInt(since)) break
+        since = String(chunk.cursor)
+    }
+    throw new Error('Текущая версия заказа не подтверждена')
+}
+export async function prepareProtectedShipment(orderId) {
+    const context = getAuthContext()
+    const res = await apiOrderStatus(orderId, 'picking', `prepare-shipment:${orderId}`, context)
+    if (!res.ok) throw new Error(res.error?.message || 'Подготовка не подтверждена; обновите заказ')
+    await refreshProtectedOrder(orderId, context)
+}
 export function enqueueOrderStatus(orderId, status) {
-	syncOutbox.enqueue([{ op: 'update', key: 'order_status', id: `${orderId}:${status}`, obj: { orderId, status } }])
+	return enqueueBusiness({ op: 'update', key: 'order_status', id: `${orderId}:${status}`, obj: { orderId, status } })
 }
 
 let attached = false
 let paused = false
 let prev = null
 let prevSettings = null
+let enqueueing = false
+let commercialStorageListener = null
 
 const snap = (state) =>
 	Object.fromEntries(TABLES.map((t) => [t.key, new Map((state[t.key] || []).map((o) => [o.id, o]))]))
@@ -427,7 +597,7 @@ const snap = (state) =>
 // Функция чистая: одинаково применяется к prev и next в attachSync — иначе
 // асимметрия сотрёт данные с сервера через detect-delete.
 function pushableForKey(key) {
-	if (key === 'orders') return (o) => !o?.shipmentDocId && o?.kind !== 'retail'
+	if (key === 'orders') return (o) => !isCommercialOrder(o) && !o?.shipmentDocId && o?.kind !== 'retail' && o?.refundContractVersion !== 2
 	return () => true
 }
 function filterMap(m, pred) {
@@ -440,6 +610,8 @@ function filterMap(m, pred) {
 // первую подписку и игнорирует повторный attachSync. В продакшене вызывается
 // один раз за жизнь вкладки.
 export function __resetSyncForTests() {
+	if (commercialStorageListener && typeof window !== 'undefined') window.removeEventListener('storage', commercialStorageListener)
+	commercialStorageListener = null
 	attached = false
 	paused = false
 	prev = null
@@ -460,18 +632,54 @@ export function attachSync(useStore) {
 	const st = useStore.getState()
 	prev = snap(st)
 	prevSettings = st.settings
-	syncOutbox.onChange(({ pending, quarantined, state, error }) =>
+	commercialStorageListener = (event) => {
+		const context = getAuthContext(), current = useStore.getState()
+		if (!(event.key?.startsWith(`sklad.db.v3.${encodeURIComponent(context.userId)}:${encodeURIComponent(context.companyId)}.commercial.`) || event.key?.startsWith(`sklad.outbox.v2.${encodeURIComponent(context.userId)}:${encodeURIComponent(context.companyId)}.`)) ||
+			!current.cloudReady || current.companyId !== context.companyId || current.authAccountId !== context.userId) return
+		try {
+			const projected = companyCache.overlayLocal(context, current)
+			pauseSync(); useStore.setState({ orders: projected.orders }); resumeSync(useStore)
+		} catch (e) { useStore.setState({ cloudError: e.message }) }
+	}
+	if (typeof window !== 'undefined') window.addEventListener('storage', commercialStorageListener)
+	let returnEntries = new Set(), returnScope = null, returnRefresh = null
+	syncOutbox.onChange(({ pending, quarantined, blockedLegacy, state, error }) => {
 		useStore.setState({
 			syncPending: pending,
 			syncQuarantined: quarantined || 0,
+			syncLegacy: blockedLegacy || 0,
 			syncState: state,
 			syncError: error,
-		}),
-	)
+		})
+		const context = getAuthContext(), currentState = useStore.getState()
+		const scope = `${context.userId}:${context.companyId}`
+		const entries = new Set(syncOutbox.items().filter(op => op.key === 'return_v2' || op.key === 'order_cancel').map((op) => op._entryId))
+		const confirmed = returnScope === scope && [...returnEntries].some((id) => !entries.has(id))
+		const changed = entries.size || (returnScope === scope && returnEntries.size) || currentState.orders.some(isCommercialOrder) || syncOutbox.items().some((op) => COMMERCIAL_KEYS.includes(op.key))
+		returnEntries = entries; returnScope = scope
+		if (!currentState.cloudReady || currentState.companyId !== context.companyId || currentState.authAccountId !== context.userId) return
+		if (changed) {
+			try {
+				const projected = companyCache.overlayLocal(context, currentState)
+				pauseSync(); useStore.setState({ products: projected.products, orders: projected.orders }); resumeSync(useStore)
+			} catch (e) { useStore.setState({ cloudError: e.message }) }
+		}
+		if (confirmed && !returnRefresh) {
+			returnRefresh = Promise.resolve().then(async () => {
+				try {
+					const fresh = await cloudLoadMerged(context)
+					if (!isAuthContextCurrent(context) || !fresh) return
+					pauseSync(); useStore.setState(fresh); resumeSync(useStore)
+				} catch (e) { if (isAuthContextCurrent(context)) useStore.setState({ cloudError: e.message }) }
+			}).finally(() => { returnRefresh = null })
+		}
+	})
 	useStore.subscribe((state) => {
-		if (paused) return
+		if (paused || enqueueing) return
 		const companyId = state.companyId
-		if (!companyId) return
+		const context = getAuthContext()
+		if (!state.cloudReady || !companyId || companyId !== context.companyId || state.authAccountId !== context.userId) return
+		if (!prev) { prev = snap(state); prevSettings = state.settings; return }
 		const batch = []
 		for (const cfg of TABLES) {
 			if (PUSH_FORBIDDEN_TABLES.has(cfg.table)) continue
@@ -497,23 +705,34 @@ export function attachSync(useStore) {
 		}
 		const nowIso = new Date().toISOString()
 		for (const it of batch) {
+			it.userId = context.userId
 			if (it.op === 'upsert' && it.key !== 'settings') it.obj = { ...it.obj, updatedAt: nowIso }
 		}
 		if (!batch.length) return
-		if (syncOutbox.enqueue(batch)) {
-			prev = snap(state)
-			prevSettings = state.settings
-		}
+		enqueueing = true
+		try {
+			if (syncOutbox.enqueue(batch)) { prev = snap(state); prevSettings = state.settings }
+		} finally { enqueueing = false }
 	})
 }
 
 // ── Загрузка с учётом неотправленного ──────────────────────────────────────
-export async function cloudLoadMerged() {
+export async function cloudLoadMerged(context = getAuthContext()) {
+	if (!isAuthContextCurrent(context)) throw new Error('CONTEXT_CHANGED')
 	await syncOutbox.flushNow().catch(() => {})
-	const data = await cloudLoadAll()
-	const pending = syncOutbox.items()
+	if (!isAuthContextCurrent(context)) throw new Error('CONTEXT_CHANGED')
+	// Only acknowledgements preceding the pull are covered by this baseline.
+	const covered = companyCache.confirmedStockCommands(context)
+	const data = await cloudLoadAll(context)
+	if (data) companyCache.captureStock(context, data, covered)
+	const warehouse = companyCache.readWarehouseSnapshot(context)
+	if (warehouse) {
+		try { await refreshWarehouseStock(warehouse.coverage.productIds, context) }
+		catch (e) { if (!isAuthContextCurrent(context)) throw e; pushEvent('warehouse_reconcile_error', { error: e.message }) }
+	}
+	const pending = syncOutbox.items().filter((it) => it.userId === context.userId && it.companyId === context.companyId)
 	if (data && pending.length) applyPendingToData(data, pending)
-	return data
+	return data ? companyCache.overlayLocal(context, data) : data
 }
 
 const parseTs = (v) => {
@@ -539,7 +758,7 @@ export function applyPendingToData(data, pending) {
 		if (it.op === 'delete') {
 			if (i >= 0) arr.splice(i, 1)
 		} else if (i >= 0) {
-			if (localWins(it.obj, arr[i])) arr[i] = it.obj
+			if (localWins(it.obj, arr[i])) arr[i] = it.key === 'products' ? mergeProduct(it.obj, arr[i]) : it.obj
 		} else arr.push(it.obj)
 	}
 	return data
@@ -547,10 +766,12 @@ export function applyPendingToData(data, pending) {
 
 // ── Компании (тенанты) ───────────────────────────────────────────────────────
 // Возвращает объект в старом формате { company_id, role, name, companies:{name} } | null.
-export async function getMembership() {
+export async function getMembership(context = getAuthContext()) {
 	const r = await apiListMemberships()
-	if (!r.ok) return null
-	const m = (r.body?.memberships || [])[0]
+	if (!isAuthContextCurrent(context)) throw new Error('CONTEXT_CHANGED')
+	if (!r.ok) throw Object.assign(new Error(r.error?.message || 'Membership lookup failed'), { status: r.status, code: r.error?.code })
+	const memberships = r.body?.memberships || []
+	const m = context.companyId ? memberships.find((m) => m.companyId === context.companyId) : memberships[0]
 	if (!m) return null
 	return { company_id: m.companyId, role: m.role, name: m.name, companies: { name: m.companyName, plan: null } }
 }
@@ -561,10 +782,28 @@ export async function createCompanyCloud(companyName, userName) {
 	return { ok: true, companyId: r.body?.company?.id }
 }
 
-export async function acceptInvitation() {
-	const r = await apiFetch('POST', '/v1/invitations/accept', {}, { skipCompany: true })
-	if (!r.ok) return null
-	return r.body?.companyId ?? null
+let invitationTail = Promise.resolve(), invitationJob = null
+export function acceptInvitation() {
+ const proof = getInvitationProof(), context = getAuthContext()
+ if (!proof) return Promise.resolve(null)
+ if (invitationJob?.revision === proof.revision && invitationJob.generation === context.generation && invitationJob.userId === context.userId && invitationJob.companyId === context.companyId) return invitationJob.promise
+ const previous = invitationTail
+ const promise = (async () => {
+  await previous
+  const current = () => isInvitationProofCurrent(proof) && isAuthContextCurrent(context)
+  if (!current()) return null
+  requireInvitationTransport()
+  const r = await apiFetch('POST', '/v1/invitations/accept', { token:proof.token }, { skipCompany:true, context })
+  if (!current()) return null
+  if (!r.ok) throw new Error(sanitizeSensitiveText(r.error?.message || 'Не удалось принять приглашение'))
+  clearInvitationSecret(proof)
+  return r.body?.companyId ?? null
+ })()
+ invitationTail = promise.catch(() => {})
+ invitationJob = { revision:proof.revision, generation:context.generation, userId:context.userId, companyId:context.companyId, promise }
+ // Avoid retaining completed credentials or a rejected retry job.
+ void promise.finally(() => { if (invitationJob?.promise === promise) invitationJob = null }).catch(() => {})
+ return promise
 }
 
 // ── Команда: участники и приглашения ─────────────────────────────────────────
@@ -582,12 +821,14 @@ export async function loadInvites() {
 	if (!r.ok) return []
 	return (r.body?.invitations || []).map((i) => ({
 		id: i.id, email: i.email, role: i.role, name: i.name, created_at: i.createdAt,
+        expiresAt:i.expiresAt, acceptedAt:i.acceptedAt, revokedAt:i.revokedAt, requiresReissue:i.requiresReissue,
 	}))
 }
 export async function inviteMember(_companyId, email, role, name) {
+	try { requireInvitationTransport() } catch (e) { return {ok:false,error:e.message} }
 	const r = await apiFetch('POST', '/v1/invitations', { email, role, name })
 	if (!r.ok) return { ok: false, error: r.error?.message }
-	return { ok: true }
+	return { ok: true, token:r.body?.token }
 }
 export async function revokeInvite(id) {
 	const r = await apiFetch('DELETE', `/v1/invitations/${encodeURIComponent(id)}`)
@@ -685,7 +926,7 @@ function simpleHash(s) {
 // ── Авторизация ──────────────────────────────────────────────────────────────
 export async function getCloudSession() { return getSession() }
 export function onAuthChange(cb) {
-	return apiOnAuthChange((event, session) => cb(event, session))
+	return apiOnAuthChange((event, session, metadata) => cb(event, session, metadata))
 }
 export async function cloudSignIn(email, password) { return apiSignIn(email, password) }
 export async function cloudSignUp(email, password, name, inviteToken) {
@@ -694,7 +935,7 @@ export async function cloudSignUp(email, password, name, inviteToken) {
 	// Совместимость: старая версия могла вернуть needConfirm — теперь сессия сразу.
 	return { ok: true, user: r.user, name }
 }
-export async function cloudSignOut() { await apiSignOut() }
+export async function cloudSignOut() { return apiSignOut() }
 
 // Realtime подписка на события компании — используется в UI, чтобы после
 // продажи/платежа на другом устройстве немедленно обновить локальный кэш.

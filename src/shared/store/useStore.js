@@ -13,6 +13,8 @@ import { createDocumentsSlice } from './slices/documentsSlice'
 import { createOrdersSlice } from './slices/ordersSlice'
 import { createMoneySlice } from './slices/moneySlice'
 import { createSettingsSlice } from './slices/settingsSlice'
+import { hasApi } from '@/shared/api'
+import { companyCache, emptyCloudData } from '../lib/scopedCache'
 
 // F4-4: обёртка над localStorage, которая обфусцирует aiKey и
 // webhook.secret на диске. State в памяти — plain (UI работает без
@@ -20,7 +22,7 @@ import { createSettingsSlice } from './slices/settingsSlice'
 const secureStorage = {
   getItem: (name) => {
     if (typeof window === 'undefined') return null
-    const raw = window.localStorage.getItem(name)
+    const raw = companyCache.getItem(name)
     if (!raw) return null
     try {
       const parsed = JSON.parse(raw)
@@ -51,13 +53,13 @@ const secureStorage = {
           )
         }
       }
-      window.localStorage.setItem(name, JSON.stringify(parsed))
+      companyCache.setItem(name, JSON.stringify(parsed))
     } catch {
-      window.localStorage.setItem(name, value)
+      companyCache.setItem(name, value)
     }
   },
   removeItem: (name) => {
-    if (typeof window !== 'undefined') window.localStorage.removeItem(name)
+    if (typeof window !== 'undefined') companyCache.removeItem(name)
   },
 }
 
@@ -68,7 +70,7 @@ const secureStorage = {
 export const useStore = create(
   persist(
     (set, get) => ({
-      ...makeSeed(), // audit/shifts/activeShiftId приходят отсюда
+      ...(hasApi ? emptyCloudData() : makeSeed()),
       ...cloudInitialState, // authUserId, cloud, companyId, runtime-флаги…
 
       // ── Облако (Supabase, мультитенант) — см. slices/cloudSlice.js ──

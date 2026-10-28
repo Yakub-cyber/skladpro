@@ -3,12 +3,15 @@ import { Copy, Check, X, RotateCw, Trash2 } from 'lucide-react'
 import { useStore } from '@/shared/store/useStore'
 import { getLastError, buildDiagText } from '@/shared/lib/diagRing'
 import { syncNow, syncOutbox } from '@/shared/lib/cloud'
+import { companyCache } from '@/shared/lib/scopedCache'
+import { unfinishedBusinessIntents, resumeBusinessIntent } from '@/shared/lib/businessIntent'
 
 // Метки для карантинных ключей — из «sale» получается «Продажа»,
 // из «order_status» — «Отмена/статус заказа», и т.д. Пользователь не должен
 // гадать, что за операция «висит».
 const KEY_LABEL = {
   sale: 'Продажа',
+  return_v2: 'Возврат покупателя',
   doc_post: 'Документ (приход/списание/перемещение)',
   order_status: 'Статус заказа',
 }
@@ -20,13 +23,25 @@ export function DiagPanel({ onClose }) {
   const companyId = useStore((s) => s.companyId)
   const [copied, setCopied] = useState(false)
   const [quarantined, setQuarantined] = useState(() => syncOutbox.quarantined())
+  const [legacy, setLegacy] = useState(() => syncOutbox.legacy())
+  const [blocked, setBlocked] = useState(() => syncOutbox.blocked())
+  const [blockedCount, setBlockedCount] = useState(() => syncOutbox.status().blocked || 0)
+  const [unfinished, setUnfinished] = useState(() => unfinishedBusinessIntents())
+  const [retryError, setRetryError] = useState('')
 
   // Подписываемся на изменения outbox — карантин может пополниться в фоне.
   useEffect(() => {
-    return syncOutbox.onChange(() => setQuarantined(syncOutbox.quarantined()))
+    return syncOutbox.onChange((status) => {
+      setQuarantined(syncOutbox.quarantined())
+      setLegacy(syncOutbox.legacy())
+      setBlocked(syncOutbox.blocked())
+      setBlockedCount(status.blocked || 0)
+      setUnfinished(unfinishedBusinessIntents())
+    })
   }, [])
 
   const lastErr = getLastError()
+  const cacheError = companyCache.error()
 
   const handleCopy = () => {
     const text = buildDiagText({
@@ -71,6 +86,45 @@ export function DiagPanel({ onClose }) {
         </div>
       )}
 
+      {legacy.length > 0 && (
+        <div className="mt-3 p-2.5 rounded-lg bg-warn/10 text-xs space-y-2">
+          <div className="font-semibold">Старая очередь заблокирована</div>
+          <p>Сохранено снимков: {legacy.length}. Пользователь и компания не подтверждены.
+            Эти операции автоматически не отправляются и не удаляются.</p>
+          <button className="h-7 px-2 rounded-md border border-edge" onClick={() => {
+            const blob = new Blob([JSON.stringify({ snapshots: legacy }, null, 2)], { type: 'application/json' })
+            const url = URL.createObjectURL(blob)
+            const link = document.createElement('a')
+            link.href = url; link.download = 'skladpro-legacy-outbox.json'; link.click()
+            setTimeout(() => URL.revokeObjectURL(url), 1000)
+          }}>Сохранить для разбора</button>
+        </div>
+      )}
+      {unfinished.length > 0 && <div className="mt-3 text-xs space-y-2">
+        <div className="font-semibold text-warn">Незавершённые попытки ({unfinished.length})</div>
+        <p>Окончательный успех не подтверждён. Повтор использует исходные данные и ID.</p>
+        {unfinished.map((intent) => <button key={intent.storageKey} className="block border border-edge rounded px-2 py-1" onClick={async () => {
+          setRetryError('')
+          try {
+            const result = await resumeBusinessIntent(useStore.getState(), intent.storageKey)
+            if (result?.ok === false) setRetryError(result.error)
+          } catch (e) { setRetryError(e.message) }
+          setUnfinished(unfinishedBusinessIntents())
+        }}>Продолжить {intent.prepared.id}</button>)}
+        {retryError && <p className="text-bad">{retryError}</p>}
+      </div>}
+      {cacheError && <p className="mt-3 text-xs text-bad">Кеш не сохранён: {cacheError}. Не закрывайте вкладку до восстановления локального хранилища.</p>}
+
+      {blocked.length > 0 && <div className="mt-3 text-xs space-y-2">
+        <div className="font-semibold text-warn">Ожидают предшественника ({blockedCount})</div>
+        <div className="max-h-48 overflow-y-auto space-y-2">{blocked.slice(0, 100).map((item) => <div key={item.entryId} className="p-2 rounded border border-edge">
+          <div>{KEY_LABEL[item.key] || item.key} · {item.id}</div>
+          <div>Предшественник: {item.predecessorId}</div>
+          <div>Причина: {item.reason}</div>
+          <div>Охват: {({ company_stock: 'складские операции компании', product_any_warehouse: 'товар на любом складе', warehouse_product: 'склад и товар', order: 'исходный заказ' })[item.scope]}</div>
+        </div>)}</div>
+        {blockedCount > 100 && <div>Показаны первые 100 из {blockedCount}.</div>}
+      </div>}
       {quarantined.length > 0 && (
         <div className="mt-3">
           <div className="text-xs font-semibold text-bad mb-2">
@@ -95,6 +149,7 @@ export function DiagPanel({ onClose }) {
                       <RotateCw size={11} /> Повторить
                     </button>
                     <button
+                      disabled={!!KEY_LABEL[it.key]}
                       onClick={() => {
                         if (confirm(`Удалить «${label} · ${it.id}» из очереди? Операция НЕ будет отправлена. Убедитесь, что чек не потеряется.`)) {
                           syncOutbox.removeQuarantined(it.id, it.key)

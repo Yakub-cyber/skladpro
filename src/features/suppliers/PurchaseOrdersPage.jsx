@@ -71,9 +71,9 @@ export default function PurchaseOrders() {
 
   const editPO = list.find((p) => p.id === modal?.id) || null
 
-  const onReceive = (po) => {
+  const onReceive = async (po) => {
     setReceiveErr('')
-    const r = receivePurchaseOrder(po.id)
+    const r = await receivePurchaseOrder(po.id)
     if (r && typeof r === 'object' && r.ok === false) {
       setReceiveErr(`${po.no}: ${r.error}`)
     }

@@ -2,6 +2,56 @@
 <html lang="ru">
   <head>
     <meta charset="UTF-8" />
+    <meta name="referrer" content="no-referrer" />
+    <!-- Must execute before analytics, external resources and application imports. -->
+    <script>
+      (function () {
+        // Installed before the router/SDK. Credentials never enter event details or history state.
+        var pending = null, listeners = [], sequence = 0;
+        var replace = history.replaceState, push = history.pushState;
+        function inspect(value) {
+          var url = new URL(value, location.href), hash = url.hash, q = hash.indexOf('?');
+          if (url.origin !== location.origin || q < 0) return null;
+          var params = new URLSearchParams(hash.slice(q + 1));
+          if (!params.has('invite')) return null;
+          var token = params.get('invite');
+          params.delete('invite');
+          url.hash = hash.slice(0, q) + (params.size ? '?' + params.toString() : '');
+          return { token: token, url: url.pathname + url.search + url.hash };
+        }
+        function publish(token) {
+          window.__invitationFlow = true;
+          pending = { token: token, sequence: ++sequence };
+          listeners.slice().forEach(function (fn) { try { fn(); } catch (_) {} });
+        }
+        function capture() {
+          var found = inspect(location.href);
+          if (!found) return;
+          window.__invitationFlow = true;
+          try { replace.call(history, history.state, '', found.url); publish(found.token); }
+          catch (_) { publish(null); }
+        }
+        Object.defineProperty(window, '__invitationBridge', { value: {
+          take: function () { var value = pending; pending = null; return value; },
+          clear: function () { pending = null; },
+          subscribe: function (fn) { listeners.push(fn); return function () { listeners = listeners.filter(function (f) { return f !== fn; }); }; }
+        } });
+        function wrap(original) {
+          return function (state, title, value) {
+            var found = value == null ? null : inspect(value);
+            if (!found) return original.apply(this, arguments);
+            window.__invitationFlow = true;
+            try { var result = original.call(this, state, title, found.url); publish(found.token); return result; }
+            catch (error) { publish(null); throw error; }
+          };
+        }
+        history.pushState = wrap(push);
+        history.replaceState = wrap(replace);
+        window.addEventListener('popstate', capture, true);
+        window.addEventListener('hashchange', capture, true);
+        capture();
+      })();
+    </script>
     <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>СкладПро — умная система для оптового склада</title>
@@ -22,7 +72,7 @@
     <script>
       (function () {
         var ymId = "%VITE_YM_ID%";
-        if (!ymId || ymId.charAt(0) === "%") return;
+        if (window.__invitationFlow || !ymId || ymId.charAt(0) === "%") return;
         (function (m, e, t, r, i, k, a) {
           m[i] = m[i] || function () { (m[i].a = m[i].a || []).push(arguments); };
           m[i].l = 1 * new Date();
@@ -35,10 +85,10 @@
           a.parentNode.insertBefore(k, a);
         })(window, document, "script", "https://mc.yandex.ru/metrika/tag.js?id=" + ymId, "ym");
         ym(Number(ymId), "init", {
-          clickmap: true,
-          trackLinks: true,
+          clickmap: false,
+          trackLinks: false,
           accurateTrackBounce: true,
-          webvisor: true
+          webvisor: false
         });
       })();
     </script>

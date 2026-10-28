@@ -19,9 +19,9 @@ export default function MoveForm({ docType, reasons, tone, verb, hint }) {
   const [err, setErr] = useState('')
 
   const cur = sel && products.find((p) => p.id === sel.id)
-  const submit = (post) => {
+  const submit = async (post) => {
     setErr('')
-    const r = addDocument(
+    const r = await addDocument(
       { type: docType, reason, items: [{ productId: sel.id, name: sel.name, unit: sel.unit, qty }] },
       { post },
     )

@@ -76,6 +76,7 @@ export default function Storefront({ isPublic = false }) {
     })
 
   const checkout = (form) => {
+    if (useStore.getState().cloud) { alert('Облачное оформление через витрину пока недоступно. Используйте форму нового заказа с подтверждёнными товарами и клиентом.'); return }
     const name = form.shop?.trim() || form.fio.trim()
     addCustomer({
       name,

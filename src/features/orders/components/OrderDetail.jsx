@@ -1,3 +1,6 @@
+import CancellationPanel from './CancellationPanel'
+import ShipmentPanel from './ShipmentPanel'
+import DeliveryPanel from './DeliveryPanel'
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
@@ -23,6 +26,7 @@ import OrderItemsTable from './OrderItemsTable'
 import OrderRoutePanel from './OrderRoutePanel'
 import RefundModal from './RefundModal'
 import { isReceipt } from '@/shared/lib/orders'
+import { isCommercialOrder } from '@/shared/lib/commercialOrders'
 
 export default function OrderDetail({ order }) {
   const nav = useNavigate()
@@ -31,6 +35,10 @@ export default function OrderDetail({ order }) {
   const cancel = useStore((s) => s.cancelOrder)
   const assignCourier = useStore((s) => s.assignCourier)
   const employees = useStore((s) => s.employees)
+  const allOrders = useStore((s) => s.orders)
+  const cloud = useStore((s) => s.cloud)
+  const commercial = cloud && isCommercialOrder(order)
+  const pendingReturns = allOrders.filter((row) => row.origOrderId === order.id && row.refundContractVersion === 2 && row.refundState !== 'confirmed')
   const authUserId = useStore((s) => s.authUserId)
   const [showRoute, setShowRoute] = useState(false)
   const [copied, setCopied] = useState(false)
@@ -39,14 +47,14 @@ export default function OrderDetail({ order }) {
 
   // Редактировать можно только пока заказ не отгружен и не отменён —
   // движок стора вернёт ok:false в других статусах, но UI не показываем.
-  const canEdit = !order.stockConsumed && order.status !== 'cancelled'
+  const canEdit = !order.refundContractVersion && !order.stockConsumed && order.status !== 'cancelled'
 
   const me = employees.find((e) => e.id === authUserId)
-  const canAssign = me?.role !== 'courier'
+  const canAssign = !commercial && me?.role !== 'courier'
   const couriers = employees.filter((e) => e.role === 'courier' && e.active)
 
   const cur = statusInfo(order.status)
-  const nx = nextStatus(order.status)
+  const nx = commercial || order.refundContractVersion ? null : nextStatus(order.status)
   const nxInfo = nx && statusInfo(nx)
 
   const route = useMemo(() => {
@@ -78,13 +86,25 @@ export default function OrderDetail({ order }) {
     if (ok) {
       // Legacy-чек не может быть отменён серверно — отказ показываем,
       // а не глотаем: молча «Отменён» без учёта хуже честного «нельзя».
-      const r = cancel(order.id)
+      const r = await cancel(order.id)
       if (r && r.ok === false) alert(r.error)
     }
   }
 
   return (
     <div className="space-y-4">
+      {pendingReturns.map((row) => (
+        <div key={row.returnId} role="status" className="p-3 rounded-xl border border-line text-sm">
+          {row.refundState === 'review' ? `Возврат требует сверки. ${row.syncError || ''}`
+            : 'Возврат сохранён на устройстве, ожидает подтверждения сервера. Выплата не подтверждена.'}
+        </div>
+      ))}
+      {order.refundContractVersion === 2 && (
+        <div role="status" className="p-3 rounded-xl border border-line text-sm">
+          {order.refundState === 'confirmed' ? 'Возврат подтверждён сервером' : order.refundState === 'review'
+            ? `Возврат требует сверки. ${order.syncError || ''}` : 'Возврат сохранён на устройстве, ожидает подтверждения сервера. Выплата не подтверждена.'}
+        </div>
+      )}
       <Card className="p-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
@@ -102,6 +122,9 @@ export default function OrderDetail({ order }) {
           </div>
           <StatusBadge status={order.status} />
         </div>
+        {commercial && <p className="mt-3 text-sm" role="status">{order.commercialPending
+          ? `Команда сохранена локально. ${order.commercialPending.error || 'Ожидает подтверждения сервера.'} ${order.commercialPending.code || ''}`
+          : 'Коммерческий состав подтверждён сервером. Доставка отмечается отдельной командой без складских и денежных движений.'}</p>}
 
         {/* Воронка статусов — только для заказов. Розничный чек закрыт в
             момент пробития: товар отдан, деньги получены, статусы
@@ -185,7 +208,7 @@ export default function OrderDetail({ order }) {
               </Button>
             </>
           )}
-          <Button variant="soft" icon={Printer} onClick={() => setPrintOrder(order)}>
+          <Button variant="soft" icon={Printer} disabled={!!order.refundContractVersion && order.refundState !== 'confirmed'} onClick={() => setPrintOrder(order)}>
             {isReceipt(order) ? 'Печать чека' : 'Печать'}
           </Button>
           {!isReceipt(order) && canEdit && (
@@ -200,7 +223,7 @@ export default function OrderDetail({ order }) {
               Оформить возврат
             </Button>
           )}
-          {order.status !== 'cancelled' &&
+          {!commercial && !order.refundContractVersion && order.status !== 'cancelled' &&
             (!isReceipt(order) ? order.status !== 'delivered' : true) && (
               <Button variant="ghost" icon={X} className="text-bad" onClick={handleCancel}>
                 {isReceipt(order) ? 'Аннулировать чек' : 'Отменить'}
@@ -212,6 +235,10 @@ export default function OrderDetail({ order }) {
       {showRoute && (
         <OrderRoutePanel order={order} route={route} highlightCells={highlightCells} />
       )}
+
+      {commercial && <ShipmentPanel key={order.id} order={order} />}
+      {commercial && <CancellationPanel key={`cancel:${order.id}`} order={order} />}
+      {commercial && <DeliveryPanel key={`delivery:${order.id}`} order={order} />}
 
       <OrderItemsTable
         order={order}

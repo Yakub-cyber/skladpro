@@ -28,16 +28,21 @@ import PosSettingsModal from '@/features/orders/components/PosSettingsModal'
 import ReceiptToast from '@/features/orders/components/ReceiptToast'
 import MobileCartBar from '@/features/orders/components/MobileCartBar'
 import Chip from '@/features/orders/components/Chip'
+import SaleWarehouse from '@/shared/components/SaleWarehouse'
 
 export default function NewOrder({ fullscreen = false }) {
   const nav = useNavigate()
-  const { customers, products, priceTypes, addOrder, createSaleDocument, addCustomer, orders } = useStore()
+  const { customers, products, priceTypes, addOrder, createSaleDocument, addCustomer, orders, cloud } = useStore()
   const defType = priceTypes.find((t) => t.default)?.id || priceTypes[0]?.id
   const reserved = useMemo(() => reservedByProduct(orders), [orders])
   const productCategories = useMemo(() => [...new Set(products.map(p => p.category).filter(Boolean))].sort(), [products])
   // Для kit доступный остаток вычисляется по компонентам (свой stock у
   // комплекта не хранится), для остальных — обычный p.stock − резерв.
   const availOf = (p) => {
+    if (cloud && !asOrder) {
+      const view = warehouseProjection.get(p.id)
+      return view?.available ? view.warehouses[warehouseId]?.projected ?? null : null
+    }
     if (p.type === 'kit') return computeKitStock(p, products)
     return (p.stock || 0) - (reserved[p.id] || 0)
   }
@@ -45,6 +50,8 @@ export default function NewOrder({ fullscreen = false }) {
   const [customerId, setCustomerId] = useState('')
   const [priceTypeId, setPriceTypeId] = useState(defType)
   const [rows, setRows] = useState([])
+  const [warehouseId, setWarehouseId] = useState('')
+  const [warehouseProjection, setWarehouseProjection] = useState(new Map())
   const [q, setQ] = useState('')
   const [cat, setCat] = useState('all')
   const [onCredit, setOnCredit] = useState(false)
@@ -88,6 +95,7 @@ export default function NewOrder({ fullscreen = false }) {
   const DRAFT_KEY = 'sklad.newOrder.draft.' + (authUserId || 'guest')
   const DRAFT_TTL_MS = 6 * 60 * 60 * 1000 // 6 часов — типичная смена
   const restoredRef = useRef(false)
+  const submitting = useRef(false)
   // Восстановление один раз на mount. Если черновик просрочен — игнорируем.
   useEffect(() => {
     try {
@@ -152,7 +160,8 @@ export default function NewOrder({ fullscreen = false }) {
   const add = (p, qty = 1) => {
     setMsg('')
     const inCart = rows.find((x) => x.productId === p.id)?.qty || 0
-    if (inCart + qty > availOf(p)) {
+    if (availOf(p) == null) setMsg('Прогноз остатка выбранного склада недоступен')
+    else if (inCart + qty > availOf(p)) {
       setMsg(
         `«${p.name}»: доступно ${num(Math.max(0, availOf(p)))} ${p.unit} (остальное в резерве) — заказ всё равно можно оформить`,
       )
@@ -266,14 +275,19 @@ export default function NewOrder({ fullscreen = false }) {
   // Клавиша F9 (см. useEffect ниже) делает то же самое.
   const openPay = () => {
     if (!rows.length) return
+    if (cloud && asOrder) return finalSubmit({ method: onCredit ? 'credit' : 'unpaid', cashPaid: 0, cardPaid: 0, change: 0 })
     setPayOpen(true)
   }
 
   // Финальное оформление после выбора способа оплаты в PaymentModal.
   // payment: { method: 'cash'|'card'|'credit'|'mixed', cashPaid, cardPaid, change }
-  const finalSubmit = (payment) => {
+  const finalSubmit = async (payment) => {
+    if (submitting.current) return
+    submitting.current = true
+    try {
     const cust = customers.find((c) => c.id === customerId)
     const data = {
+      ...(!asOrder ? { warehouseId } : {}),
       customerId: cust?.id || 'retail',
       customerName: cust?.name || 'Розничный покупатель',
       items: rows,
@@ -287,7 +301,7 @@ export default function NewOrder({ fullscreen = false }) {
       payment,
       // C3: сохраняем разбивку НДС на момент продажи, чтобы отчёты и
       // печать чека не зависели от последующего изменения product.vatRate.
-      vatSummary,
+      vatSummary: cloud && asOrder ? null : vatSummary,
       address: address || cust?.city || 'Самовывоз',
       // Гео из Nominatim, чтобы Delivery.jsx нарисовал пин на реальном
       // месте, а не в хешированной точке рядом с центром города.
@@ -298,16 +312,16 @@ export default function NewOrder({ fullscreen = false }) {
     // совпадают, движок createSaleDocument делает всё одним вызовом.
     // С галочкой — заявка (заказ с доставкой), идёт по воронке;
     // учётный факт появится при отгрузке.
-    const r = asOrder
+    const r = await (asOrder
       ? addOrder({ kind: 'order', ...data })
-      : createSaleDocument(data)
+      : createSaleDocument(data))
     if (r && r.ok === false) {
       // B5 сработал: сумма оплаты меньше total (или другая валидация).
       // PaymentModal остаётся открытым — покажем алерт.
       alert(r.error || 'Не удалось провести чек')
-      return
+      return r
     }
-    const fresh = useStore.getState().orders[0]
+    const fresh = useStore.getState().orders.find((o) => o.id === r.id)
     // Заказ создан — черновик больше не нужен, чтобы возврат на /orders/new
     // не восстанавливал уже проведённый чек.
     try { localStorage.removeItem(DRAFT_KEY) } catch {}
@@ -316,7 +330,7 @@ export default function NewOrder({ fullscreen = false }) {
     // В fullscreen (окно кассира) остаёмся на месте — кассир пробивает
     // чеки один за другим и не должен «улетать» в админку. Показываем
     // короткий тост с номером чека и чистим корзину.
-    if (fullscreen) {
+    if (fullscreen && !(cloud && asOrder)) {
       setRows([])
       setDiscount(0)
       setCustomerId('')
@@ -326,9 +340,14 @@ export default function NewOrder({ fullscreen = false }) {
       setLastReceipt(fresh)
       if (posSettings.autoPrint) setPrintOrder(fresh)
       setTimeout(() => setLastReceipt(null), 6000)
-      return
+      return r
     }
     nav(`/orders?id=${fresh.id}`)
+    return r
+    } catch (e) {
+      alert(`Не удалось завершить действие: ${e.message}`)
+      return { ok: false, error: e.message }
+    } finally { submitting.current = false }
   }
 
   // Клавиатурные хоткеи кассы:
@@ -373,7 +392,7 @@ export default function NewOrder({ fullscreen = false }) {
     setAddress,
     asOrder,
     setAsOrder,
-    vatSummary,
+    vatSummary: cloud && asOrder ? null : vatSummary,
     geoStatus: geo
       ? 'found'
       : address.trim().length >= 4
@@ -447,6 +466,11 @@ export default function NewOrder({ fullscreen = false }) {
         )}
       </div>
 
+      {!asOrder && <SaleWarehouse value={warehouseId} onChange={setWarehouseId} onProjection={setWarehouseProjection} items={rows} />}
+      {cloud && asOrder && <div className="card p-3 mb-3 text-sm" role="status">
+        Облачный заказ сохраняет только коммерческие условия: без приёма денег, начисления долга и НДС-разбивки. Отгрузка доступна отдельно для подтверждённого неоплаченного кредитного заказа без скидок.
+        <label className="flex gap-2 mt-2"><input type="checkbox" checked={onCredit} onChange={(e) => setOnCredit(e.target.checked)} />Кредитное условие (долг при создании не начисляется)</label>
+      </div>}
       {lastReceipt && (
         <ReceiptToast
           receipt={lastReceipt}
@@ -504,6 +528,7 @@ export default function NewOrder({ fullscreen = false }) {
       </div>
 
       <MobileCartBar
+        asOrder={asOrder}
         rows={rows}
         count={count}
         total={total}

@@ -28,6 +28,9 @@ export default function EditOrder() {
   const [dirty, setDirty] = useState(false)
   const [savedFlash, setSavedFlash] = useState(false)
   const searchRef = useRef(null)
+  const baseRef = useRef(null)
+  const saving = useRef(false)
+  const cloud = useStore((s) => s.cloud)
   const qtyRefs = useRef({})
 
   // Инициализация формы из заказа. Если заказ пришёл позже (лениво из
@@ -36,6 +39,7 @@ export default function EditOrder() {
   useEffect(() => {
     if (!order) return
     if (dirty) return
+    baseRef.current = order.commercialSnapshot ? { expectedRowVersion: order.commercialRowVersion, baseSnapshot: structuredClone(order.commercialSnapshot) } : null
     setRows((order.items || []).map((it) => ({ ...it })))
     setDiscount(Number(order.discount) || 0)
     setOnCredit(!!order.onCredit)
@@ -82,7 +86,8 @@ export default function EditOrder() {
   }
 
   const subtotal = rows.reduce((a, r) => a + (Number(r.qty) || 0) * (Number(r.price) || 0), 0)
-  const total = Math.round(subtotal * (1 - (Number(discount) || 0) / 100))
+  const precision = cloud && order?.commercialSnapshot?.rounding === 'kopeck' ? 100 : 1
+  const total = Math.round(subtotal * (1 - (Number(discount) || 0) / 100) * precision) / precision
 
   const suggest = useMemo(() => {
     if (!q) return []
@@ -92,19 +97,22 @@ export default function EditOrder() {
       .slice(0, 8)
   }, [q, products])
 
-  const save = () => {
+  const save = async () => {
+    if (saving.current) return
     setErr('')
     if (!rows.length) {
       setErr('В заказе не может быть 0 позиций — отмените заказ вместо редактирования')
       return
     }
-    const r = updateOrder(order.id, {
+    saving.current = true
+    let r
+    try { r = await updateOrder(order.id, {
       items: rows,
       subtotal,
       total,
       discount: Number(discount) || 0,
       onCredit,
-    })
+    }, baseRef.current) } catch (e) { setErr(e.message); return } finally { saving.current = false }
     if (r && r.ok === false) return setErr(r.error)
     setDirty(false)
     setSavedFlash(true)
@@ -138,7 +146,13 @@ export default function EditOrder() {
     )
   }
 
-  const canEdit = !order.stockConsumed && order.status !== 'cancelled'
+  const commercialIssue = !cloud ? null : !order.commercialSnapshot ? 'Исторический заказ нельзя автоматически перевести на новый контракт.'
+    : order.shipmentQueued || order.shipmentPending ? 'Отгрузка уже сохранена; коммерческий состав изменять нельзя.'
+    : order.commercialPending ? 'Есть неподтверждённая команда. Дождитесь подтверждения или разберите конфликт в синхронизации.'
+    : !order.commercialRowVersion ? 'Серверная версия не подтверждена; обновите данные.'
+    : order.commercialSnapshot.discount.kind !== 'percent' || new Set(order.items.map((l) => l.productId)).size !== order.items.length
+      ? 'Эта форма пока не поддерживает абсолютные скидки и повторные строки одного товара.' : null
+  const canEdit = !order.stockConsumed && order.status !== 'cancelled' && !commercialIssue
 
   return (
     <div className="animate-fadeUp pb-24">
@@ -157,7 +171,7 @@ export default function EditOrder() {
             {order.customerName} · {rows.length} поз. · итого {money(total)}
           </p>
         </div>
-        {savedFlash && <Badge tone="ok">Сохранено</Badge>}
+        {savedFlash && <Badge tone="ok">{cloud ? 'Команда сохранена; ожидает подтверждения' : 'Сохранено'}</Badge>}
         <Button
           variant="ghost"
           onClick={() => nav(`/orders?id=${order.id}`)}
@@ -172,7 +186,7 @@ export default function EditOrder() {
 
       {!canEdit && (
         <div className="mb-4 p-3 rounded-xl bg-warn-soft text-warn text-[13px]">
-          Заказ отгружён или отменён — правка недоступна.
+          {commercialIssue || 'Заказ отгружён или отменён — правка недоступна.'}
         </div>
       )}
 

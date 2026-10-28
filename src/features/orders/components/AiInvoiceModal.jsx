@@ -2,11 +2,10 @@ import { useEffect, useState } from 'react'
 import { Plus, Sparkles, Loader2, AlertTriangle } from 'lucide-react'
 import { Modal, Button, Badge, Field, Textarea, cx } from '@/shared/ui'
 import { num } from '@/shared/lib/format'
-import { aiParseInvoice, aiConfig, aiEnabled } from '@/shared/lib/ai'
+import { aiParseInvoice, aiConfig, aiEnabled, AI_UNAVAILABLE_MESSAGE } from '@/shared/lib/ai'
 import { useStore } from '@/shared/store/useStore'
 
-// Диалог распознавания накладной. Автоматически использует LLM (если в
-// настройках задан ключ) или локальный парсер. Пользователь видит список
+// Диалог локального распознавания накладной. Пользователь видит список
 // распознанных позиций, снимает флажки с ненужных, жмёт «Добавить в чек».
 export default function AiInvoiceModal({ open, onClose, products, onAdd }) {
   const settings = useStore((s) => s.settings) || {}
@@ -67,6 +66,7 @@ export default function AiInvoiceModal({ open, onClose, products, onAdd }) {
       }
     >
       <div className="space-y-3">
+        {!usingLLM && <p role="status" className="text-sm text-muted">{AI_UNAVAILABLE_MESSAGE}</p>}
         <Field
           label="Текст накладной"
           hint="Список позиций из мессенджера, письма, наклейки. Одна позиция — одна строка. Пример: «Гвозди 3×70 — 5 кг; Саморез 3.5×40 — 2 упаковки»."

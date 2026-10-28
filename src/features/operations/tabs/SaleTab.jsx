@@ -7,13 +7,14 @@
 //
 // UX похож на CloudShop: слева каталог с ценами, справа лента чека +
 // клиент/скидка/кнопка «Провести».
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { Check, FileEdit, ShoppingCart, Trash2 } from 'lucide-react'
 import { Card, Button, Badge, Empty, Field, Select } from '@/shared/ui'
 import { useStore } from '@/shared/store/useStore'
 import { money, num } from '@/shared/lib/format'
 import { priceFor } from '@/shared/lib/constants'
 import { ProductPickerGrid, Toast, useScanResolver } from './_shared'
+import SaleWarehouse from '@/shared/components/SaleWarehouse'
 
 export default function SaleTab() {
   const products = useStore((s) => s.products)
@@ -24,6 +25,9 @@ export default function SaleTab() {
 
   const defType = priceTypes.find((t) => t.default)?.id || priceTypes[0]?.id || ''
   const [items, setItems] = useState([])
+  const [warehouseId, setWarehouseId] = useState('')
+  const submitting = useRef(false)
+  const [busy, setBusy] = useState(false)
   const [q, setQ] = useState('')
   const [cat, setCat] = useState('all')
   const [customerId, setCustomerId] = useState('')
@@ -109,7 +113,10 @@ export default function SaleTab() {
     setTimeout(() => setDone(''), 3000)
   }
 
-  const submit = (post) => {
+  const submit = async (post) => {
+    if (submitting.current) return
+    submitting.current = true; setBusy(true)
+    try {
     setErr('')
     const cust = customers.find((c) => c.id === customerId)
     const docItems = items.map((it) => ({
@@ -123,9 +130,10 @@ export default function SaleTab() {
     // документов, остатки/деньги/сервер не трогает. payMethod сохраняем,
     // чтобы проведение из реестра (postDocument → движок) не угадывало.
     if (!post) {
-      const r = addDocument(
+      const r = await addDocument(
         {
           type: 'sale',
+          warehouseId,
           reason: 'Продажа',
           customerId: cust?.id,
           customerName: cust?.name || 'Розничный',
@@ -151,7 +159,8 @@ export default function SaleTab() {
     // B5/C1, списание, долг «в долг», moneyTx, документ на сервер — всё
     // внутри движка, экран только передаёт данные. Способ оплаты оператор
     // выбрал явно — движок не угадывает, пришли деньги или нет.
-    const r = createSaleDocument({
+    const r = await createSaleDocument({
+      warehouseId,
       customerId: cust?.id || 'retail',
       customerName: cust?.name || 'Розничный',
       items: docItems,
@@ -175,6 +184,7 @@ export default function SaleTab() {
     }
     setDone(`Продано ${count} ед. в ${items.length} поз. на ${money(total)}`)
     resetForm()
+    } finally { submitting.current = false; setBusy(false) }
   }
 
   return (
@@ -190,7 +200,7 @@ export default function SaleTab() {
         onAdd={add}
         onSetQty={setQty}
         priceField="price"
-        showStock
+        showStock={false}
       />
 
       <Card className="p-4 lg:sticky lg:top-20 flex flex-col max-h-[calc(100dvh-6rem)]">
@@ -210,6 +220,7 @@ export default function SaleTab() {
           </div>
         )}
 
+        <SaleWarehouse value={warehouseId} onChange={setWarehouseId} items={items} />
         <div className="grid grid-cols-2 gap-2 mb-3">
           <Field label="Клиент">
             <Select
@@ -332,7 +343,7 @@ export default function SaleTab() {
               icon={Check}
               className="flex-1"
               onClick={() => submit(true)}
-              disabled={!items.length}
+              disabled={!items.length || busy}
             >
               Провести
             </Button>
@@ -340,7 +351,7 @@ export default function SaleTab() {
               variant="soft"
               icon={FileEdit}
               onClick={() => submit(false)}
-              disabled={!items.length}
+              disabled={!items.length || busy}
             >
               Черновик
             </Button>

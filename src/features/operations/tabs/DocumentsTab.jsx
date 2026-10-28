@@ -55,7 +55,10 @@ export default function DocumentsTab() {
       tone: 'danger',
       okLabel: 'Удалить',
     })
-    if (ok) removeDocument(d.id)
+    if (ok) {
+      const result = removeDocument(d.id)
+      if (result?.ok === false) alert(result.error)
+    }
   }
 
   const list = filter === 'all' ? documents : documents.filter((d) => d.status === filter)
@@ -120,10 +123,10 @@ export default function DocumentsTab() {
                         size="sm"
                         variant="primary"
                         icon={Check}
-                        onClick={() => {
+                        onClick={async () => {
                           // Движок может отказать (B5/C1/старый формат) —
                           // молча проглотить отказ нельзя.
-                          const r = postDocument(d.id)
+                          const r = await postDocument(d.id)
                           if (r && r.ok === false) alert(r.error)
                         }}
                       >

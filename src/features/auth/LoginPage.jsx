@@ -1,3 +1,4 @@
+import { hasInvitationSecret } from '@/shared/lib/invitationSecret'
 import { useState } from 'react'
 import { useStore } from '@/shared/store/useStore'
 import Landing from '@/features/landing/LandingPage'
@@ -13,24 +14,31 @@ import CloudLogin from './components/CloudLogin'
 // Кнопки Landing и Connect бросают события сюда — единая точка ветвления.
 export default function Login() {
   const cloud = useStore((s) => s.cloud)
-  const [authMode, setAuthMode] = useState(null)
+  const invitationRevision = useStore((s) => s.invitationRevision)
+  const [authMode, setAuthMode] = useState(hasInvitationSecret() ? 'signin' : null)
   const [showConnect, setShowConnect] = useState(false)
 
-  if (authMode) {
+  const displayMode = authMode || (hasInvitationSecret() ? 'signin' : null)
+  if (displayMode) {
     return cloud
-      ? <CloudLogin initialMode={authMode} onBack={() => setAuthMode(null)} />
+      ? <SessionNotice><CloudLogin key={invitationRevision} initialMode={displayMode} onBack={() => setAuthMode(null)} /></SessionNotice>
       : <PinLogin onBack={() => setAuthMode(null)} />
   }
   if (showConnect) {
-    return <Connect onStart={() => setAuthMode('signin')} onBack={() => setShowConnect(false)} />
+    return <SessionNotice><Connect onStart={() => setAuthMode('signin')} onBack={() => setShowConnect(false)} /></SessionNotice>
   }
   return (
-    <Landing
+    <SessionNotice><Landing
       onStart={() => setAuthMode('signin')}
       onRegister={() => setAuthMode('signup')}
       onConnect={() => setShowConnect(true)}
-    />
+    /></SessionNotice>
   )
+}
+
+function SessionNotice({ children }) {
+  const error = useStore((s) => s.cloudError)
+  return <>{error && <div role="alert" className="bg-bad/10 text-bad p-3 text-sm">{error}</div>}{children}</>
 }
 
 // Реэкспорт для App.jsx — он делает `import Login, { Onboarding, ResetPassword }`.

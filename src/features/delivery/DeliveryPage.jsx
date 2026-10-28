@@ -14,6 +14,7 @@ import {
 import { Card, Button, Badge, StatusBadge, Empty, cx } from '@/shared/ui'
 import DeliveryMapLeaflet from '@/shared/components/DeliveryMapLeaflet'
 import { useStore } from '@/shared/store/useStore'
+import { isCommercialOrder } from '@/shared/lib/commercialOrders'
 import { money, num } from '@/shared/lib/format'
 import { buildDeliveryRoute, geoLatLng, DEPOT, fetchOsrmRoute, fmtDuration } from '@/shared/lib/geo'
 
@@ -21,7 +22,7 @@ const TRUCKS = ['Газель А231 РТ', 'Газель В784 КX', 'Борто
 const DELIVERABLE = ['new', 'confirmed', 'picking', 'packed', 'shipped']
 
 export default function Delivery() {
-  const { orders, customers, setOrderStatus, employees, authUserId } = useStore()
+  const { orders, customers, setOrderStatus, deliverOrder, employees, authUserId } = useStore()
   const [selectedIds, setSelectedIds] = useState(() => new Set())
   const [inited, setInited] = useState(false)
   const [truck, setTruck] = useState(TRUCKS[0])
@@ -284,10 +285,12 @@ export default function Delivery() {
                       <Button
                         size="sm"
                         icon={Check}
-                        onClick={() => setOrderStatus(o.id, 'delivered')}
+                        disabled={!!o.cancellationPending || !!o.deliveryPending || !!o.shipmentPending}
+                        onClick={async () => { const r = await (isCommercialOrder(o) ? deliverOrder(o.id) : setOrderStatus(o.id, 'delivered')); if (r?.ok === false) alert(r.error) }}
                       >
-                        Доставлен
+                        {o.deliveryPending ? 'Ожидает подтверждения' : 'Доставлен'}
                       </Button>
+                      {o.deliveryPending?.error && <span role="status" className="text-xs text-bad">Доставка требует сверки: {o.deliveryPending.code} {o.deliveryPending.error}</span>}
                     </div>
                   )
                 })}

@@ -1,8 +1,20 @@
+import { deliveryFingerprint } from '../../lib/deliveryV2'
+import { enqueueDelivery, enqueueCancellation } from '../../lib/cloud'
+import { shipmentConditions } from '../../lib/shipmentV2'
+import { enqueueShipment, prepareProtectedShipment } from '../../lib/cloud'
 import { uid, nextNo } from '../../lib/id'
 import { nextStatus, statusInfo } from '../../lib/constants'
 import { applyOrderStock } from '../../lib/orders'
 import { normalizeItems } from '../../lib/units'
-import { enqueueSale, enqueueOrderStatus } from '../../lib/cloud'
+import { enqueueSale, enqueueOrderStatus, enqueueReturn, enqueueCommercialOrder } from '../../lib/cloud'
+import { prepareOfflineRefund } from '../../lib/offlineRefunds'
+import { companyCache } from '../../lib/scopedCache'
+import { getAuthContext, isAuthContextCurrent } from '@/shared/api'
+import { planRefund, priorRefunds } from '../../lib/refunds'
+import { completeBusinessAction } from '../../lib/businessIntent'
+import { saleWarehouseError } from '../../lib/saleV2'
+import { canonicalPayload } from '../../lib/outbox'
+import { isCommercialOrder, prepareCommercial } from '../../lib/commercialOrders'
 
 // ── Общие проверки заявки и продажи ─────────────────────────
 // Живут на уровне модуля, а не в двух экшенах: правка шлюза
@@ -43,11 +55,8 @@ function recordPaymentTx(get, orderId, orderNo, payment) {
   const p = payment || {}
   if (!p.method || p.method === 'credit') return
   const st = get()
-  const shift = st.activeShiftId
-    ? st.shifts.find((sh) => sh.id === st.activeShiftId)
-    : null
-  const cashAccountId =
-    shift?.cashAccountId || st.accounts.find((a) => a.kind === 'cash')?.id
+  const shift = st.activeShiftId ? st.shifts.find((sh) => sh.id === st.activeShiftId) : null
+  const cashAccountId = shift?.cashAccountId || st.accounts.find((a) => a.kind === 'cash')?.id
   const bankAccountId = st.accounts.find((a) => a.kind === 'bank')?.id
   const cashPaid = Number(p.cashPaid) || 0
   const cardPaid = Number(p.cardPaid) || 0
@@ -74,6 +83,60 @@ function recordPaymentTx(get, orderId, orderNo, payment) {
 }
 
 export const createOrdersSlice = (set, get) => ({
+  cancelProtectedOrder: async (id) => {
+    const context = getAuthContext()
+    try {
+      if (!get().cloud || companyCache.pendingOrderCommands(context, id).length) return { ok: false, error: 'Сначала разрешите предыдущие команды заказа; отмена не принята' }
+      const source = companyCache.deliverySource(context, id)
+      const order = get().orders.find(o => o.id === id)
+      if (order?.deliveryPending || order?.returns?.length || order?.cancellationPending) return { ok: false, error: 'Есть доставка, возврат или отмена; требуется сверка' }
+      const shipmentFingerprint = await deliveryFingerprint({ companyId: context.companyId, orderId: id, ...source.payload })
+      if (!isAuthContextCurrent(context)) return { ok: false, error: 'Контекст сессии изменился' }
+      if (companyCache.pendingOrderCommands(context, id).length) return { ok: false, error: 'Другая вкладка сохранила команду заказа' }
+      const envelope = { orderId: id, request: { contractVersion: 2, status: 'cancelled', shipmentId: source.shipmentId, shipmentFingerprint },
+        projection: { warehouseId: source.payload.warehouseId, items: structuredClone(source.payload.orderSnapshot.items) } }
+      return completeBusinessAction(get(), 'cancellation_v2', { id, ...envelope.request }, () => ({ id, envelope }),
+        prepared => enqueueCancellation(prepared.envelope), () => { set({ orders: companyCache.overlayLocal(getAuthContext(), get()).orders }); return { ok: true, id, pending: true } }, `cancellation:${id}`)
+    } catch(e) { return { ok: false, error: e.message } }
+  },
+  deliverOrder: async (id) => {
+    const context = getAuthContext()
+    try {
+      if (!get().cloud) return { ok: false, error: 'Delivered v2 доступен только защищённому облачному заказу' }
+      if (companyCache.pendingOrderCommands(context, id).length) return { ok: false, error: 'Сначала подтвердите предыдущие команды заказа; доставка не принята' }
+      const source = companyCache.deliverySource(context, id)
+      const shipmentFingerprint = await deliveryFingerprint({ companyId: context.companyId, orderId: id, ...source.payload })
+      if (!isAuthContextCurrent(context)) return { ok: false, error: 'Контекст сессии изменился; доставка не принята' }
+      if (companyCache.pendingOrderCommands(context, id).length) return { ok: false, error: 'Другая вкладка сохранила команду заказа; обновите состояние' }
+      const envelope = { orderId: id, request: { contractVersion: 2, status: 'delivered', shipmentId: source.shipmentId, shipmentFingerprint } }
+      return completeBusinessAction(get(), 'delivery_v2', { id, ...envelope.request }, () => ({ id, envelope }),
+        prepared => enqueueDelivery(prepared.envelope), () => { set({ orders: companyCache.overlayLocal(getAuthContext(), get()).orders }); return { ok: true, id, pending: true } }, `delivery:${id}`)
+    } catch(e) { return { ok: false, error: e.message } }
+  },
+  prepareShipment: async (id) => {
+    try {
+      if (!get().cloud || companyCache.pendingOrderCommands(getAuthContext(), id).length) return { ok: false, error: 'Сначала подтвердите предыдущие команды заказа' }
+      const a = companyCache.commercialOrder(getAuthContext(), id)
+      if (!a || !['new', 'confirmed'].includes(a.status)) return { ok: false, error: 'Подготовка недоступна; обновите заказ' }
+      const problem = shipmentConditions(a.snapshot); if (problem) return { ok: false, error: problem }
+      await prepareProtectedShipment(id)
+      set({ orders: companyCache.overlayLocal(getAuthContext(), get()).orders })
+      return { ok: true }
+    } catch(e) { return { ok: false, error: e.message } }
+  },
+  shipOrder: (id, warehouseId) => {
+    try {
+      if (!get().cloud || companyCache.pendingOrderCommands(getAuthContext(), id).length) return { ok: false, error: 'Сначала подтвердите предыдущие команды заказа' }
+      const authority = companyCache.commercialOrder(getAuthContext(), id)
+      if (!authority || !['picking', 'packed'].includes(authority.status) || authority.stockConsumed || authority.shipmentDocId) return { ok: false, error: 'Нужен подтверждённый подготовленный коммерческий заказ' }
+      const issue = shipmentConditions(authority.snapshot) || saleWarehouseError(get().warehouses, warehouseId)
+      if (issue) return { ok: false, error: issue }
+      if (authority.snapshot.items.some(l => get().products.find(p => p.id === l.productId)?.marked)) return { ok: false, error: 'Маркированные товары не поддерживаются' }
+      return completeBusinessAction(get(), 'shipment_v2', { id, warehouseId, snapshot: authority.snapshot }, () => ({ id,
+        body: { contractVersion: 2, status: 'shipped', shipmentId: crypto.randomUUID(), warehouseId, orderSnapshot: structuredClone(authority.snapshot) } }),
+        prepared => enqueueShipment(id, prepared.body), () => { set(companyCache.overlayLocal(getAuthContext(), get())); return { ok: true, id, pending: true } }, `shipment:${id}`)
+    } catch(e) { return { ok: false, error: e.message } }
+  },
   // ── Движок продажи ────────────────────────────────────────
   // createSaleDocument — единственное место, где продажа становится
   // учётным фактом. Заявка (addOrder) — «клиент попросил»; продажа —
@@ -89,75 +152,51 @@ export const createOrdersSlice = (set, get) => ({
   // сервер использует для docs (см. sales.ts), маркер shipmentDocId
   // на заказе однозначно связывает его с документом.
   createSaleDocument: (input) => {
+    if (get().cloud) {
+      const error = saleWarehouseError(get().warehouses, input.warehouseId)
+      if (error) return { ok: false, error }
+      if (input.sourceDocumentId && `draft-sale-${input.sourceDocumentId}`.length > 64) return { ok: false, error: 'Идентификатор старого черновика слишком длинный; требуется разбор' }
+    }
     const shortfall = paymentShortfall(input)
     if (shortfall) return { ok: false, error: shortfall }
     const overLimit = creditLimitError(get(), input)
     if (overLimit) return { ok: false, error: overLimit }
-    let order = input
-    if (order.items) {
-      order = { ...order, items: normalizeItems(order.items, get().products) }
-    }
-    const id = uid('o')
-    const docId = `sale-${id}`
-    set((s) => {
-      const o = {
-        id,
-        no: nextNo(s.orders, 'ЧК'),
-        status: 'new',
-        createdAt: new Date().toISOString(),
-        track: [{ status: 'new', at: new Date().toISOString() }],
-        priority: false,
-        shiftId: s.activeShiftId || null,
-        stockConsumed: false, // спишет setOrderStatus('delivered') ниже
-        ...order,
-        kind: 'retail',
-        // Маркер «ушёл серверным путём» — id связанного документа отгрузки.
-        // Ставится В ТОМ ЖЕ set(), что создаёт заказ: attachSync срабатывает
-        // на каждый set, и заказ без маркера в первом же окне улетел бы в
-        // sync/push (гонка с /v1/sales).
-        // stockConsumed — про другое: «товар списан ЛОКАЛЬНО». Не смешивать.
-        shipmentDocId: docId,
-      }
-      // Долг «в долг» начисляем сразу.
-      let customers = s.customers
-      if (o.onCredit && o.customerId) {
-        customers = s.customers.map((c) =>
-          c.id === o.customerId ? { ...c, balance: (c.balance || 0) + (o.total || 0) } : c,
-        )
-      }
-      return { orders: [o, ...s.orders], customers }
+    return completeBusinessAction(get(), 'sale', input, () => {
+      const s = get(), id = s.cloud && input.sourceDocumentId ? `draft-sale-${input.sourceDocumentId}` : uid('o'), docId = `sale-${id}`
+      const items = normalizeItems(input.items || [], s.products)
+      const at = new Date().toISOString()
+      const header = { status: 'new', createdAt: at, track: [{ status: 'new', at }],
+        priority: false, shiftId: s.activeShiftId || null, stockConsumed: false,
+        ...input, items, id, no: nextNo(s.orders, 'ЧК'), kind: 'retail', shipmentDocId: docId }
+      const saleItems = items.map((it) => ({ productId: it.productId, name: it.name,
+        qty: Number(it.inputQty ?? it.qty) || 0, price: Number(it.price) || 0,
+        ...(it.unitId ? { unitId: it.unitId } : {}), ...(it.unitFactor != null ? { unitFactor: it.unitFactor } : {}),
+        ...(it.markCodes ? { markCodes: [...it.markCodes] } : {}) }))
+      const subtotal = saleItems.reduce((n, it) => n + it.qty * it.price, 0)
+      const order = { id, no: header.no,
+        customerId: header.customerId || undefined, customerName: header.customerName || undefined,
+        items: saleItems, discount: Math.max(0, Math.round((subtotal - (header.total || 0)) * 100) / 100),
+        onCredit: !!header.onCredit, priceTypeId: header.priceTypeId || undefined,
+        shiftId: header.shiftId || undefined, track: [...header.track, { status: 'delivered', at }] }
+      return { id, docId, header, command: s.cloud ? { contractVersion: 2, order: { ...order, warehouseId: input.warehouseId } } : order }
+    }, (prepared) => enqueueSale(prepared.command, prepared.header.sourceDocumentId), (prepared, accepted) => {
+      const { id, docId, header } = prepared
+      if (get().orders.some((o) => o.id === id)) return { ok: true, id, docId }
+      if (accepted.acknowledged) return { ok: false, error: 'Команда уже подтверждена сервером. Обновите данные перед локальным завершением.' }
+      const fields = ['orders', 'products', 'customers', 'moneyTx', 'shifts', 'audit', 'documents']
+      const before = Object.fromEntries(fields.map((k) => [k, get()[k]]))
+      try {
+        set((s) => ({ orders: [{ ...header, ...(s.cloud ? { stockConsumed: true } : {}) }, ...s.orders], customers: header.onCredit && header.customerId
+          ? s.customers.map((c) => c.id === header.customerId ? { ...c, balance: (c.balance || 0) + (header.total || 0) } : c)
+          : s.customers }))
+        get().setOrderStatus(id, 'delivered')
+        if (get().cloud) set(companyCache.overlayLocal(getAuthContext(), get()))
+        recordPaymentTx(get, id, header.no, header.payment)
+        if (header.sourceDocumentId) set({ documents: get().documents.filter((d) => d.id !== header.sourceDocumentId) })
+        get().logAction(`Продажа ${header.no} на ${header.total || 0} ₽`, { section: 'Заказы', type: 'create' })
+        return { ok: true, id, docId }
+      } catch (e) { try { set(before) } catch { /* state is restored before persist */ } throw e }
     })
-    // Товар физически ушёл с покупателем — закрываем сразу.
-    // setOrderStatus сам применит applyOrderStock (FIFO + маркировка).
-    get().setOrderStatus(id, 'delivered')
-    const o = get().orders.find((x) => x.id === id)
-    recordPaymentTx(get, id, o?.no, input.payment)
-    // Документ для сервера — в персистентную очередь: переживает
-    // закрытие вкладки и оффлайн, в отличие от fire-and-forget промиса.
-    const saleItems = (o?.items || []).map((it) => ({
-      productId: it.productId,
-      name: it.name,
-      qty: Number(it.qty) || 0,
-      price: Number(it.price) || 0,
-    }))
-    const saleSubtotal = saleItems.reduce((a, it) => a + it.qty * it.price, 0)
-    enqueueSale({
-      id,
-      no: o?.no,
-      customerId: o?.customerId || undefined,
-      customerName: o?.customerName || undefined,
-      items: saleItems,
-      discount: Math.max(0, Math.round((saleSubtotal - (o?.total || 0)) * 100) / 100),
-      onCredit: !!o?.onCredit,
-      priceTypeId: o?.priceTypeId || undefined,
-      shiftId: o?.shiftId || undefined,
-      track: o?.track || undefined,
-    })
-    get().logAction(`Продажа ${o?.no} на ${o?.total || 0} ₽`, {
-      section: 'Заказы',
-      type: 'create',
-    })
-    return { ok: true, id, docId }
   },
 
   // ── Заказы (заявки) ──────────────────────────────────────
@@ -171,6 +210,22 @@ export const createOrdersSlice = (set, get) => ({
   // отгрузка — одно событие.
   addOrder: (order) => {
     if ((order.kind || 'order') === 'retail') return get().createSaleDocument(order)
+    if (get().cloud) {
+      let checked
+      try { checked = prepareCommercial({ ...order, shiftId: order.shiftId ?? get().activeShiftId ?? null }, get().products, null, () => uid('line')) }
+      catch (e) { return { ok: false, error: e.message } }
+      const apply = () => {
+        const view = companyCache.overlayLocal(getAuthContext(), get())
+        set({ orders: view.orders })
+        return { ok: true, id: preparedId, pending: true }
+      }
+      let preparedId
+      return completeBusinessAction(get(), 'commercial_create', order, () => {
+        const orderId = uid('o'), commandId = uid('cmd')
+        return { id: orderId, payload: { contractVersion: 2, commandId, orderId,
+          commercial: { ...checked, no: checked.no || nextNo(get().orders, 'ЗК') } } }
+      }, (prepared) => { preparedId = prepared.id; return enqueueCommercialOrder('commercial_create', prepared.payload) }, apply)
+    }
     const shortfall = paymentShortfall(order)
     if (shortfall) return { ok: false, error: shortfall }
     const overLimit = creditLimitError(get(), order)
@@ -212,6 +267,7 @@ export const createOrdersSlice = (set, get) => ({
     return { ok: true, id }
   },
   setOrderStatus: (id, status, note) => {
+    if (get().cloud && isCommercialOrder(get().orders.find((o) => o.id === id))) return { ok: false, error: 'Для защищённого заказа используйте отдельное действие shipment/delivered v2' }
     set((s) => {
       const o = s.orders.find((x) => x.id === id)
       if (!o) return {}
@@ -244,45 +300,85 @@ export const createOrdersSlice = (set, get) => ({
   advanceOrder: (id) => {
     const o = get().orders.find((x) => x.id === id)
     const nx = o && nextStatus(o.status)
-    if (nx) get().setOrderStatus(id, nx)
+    if (nx) return get().setOrderStatus(id, nx)
   },
   // Редактирование заказа до отгрузки. Разрешено только пока
   // stockConsumed=false и статус не cancelled — иначе правка сломает
   // проведённое списание/долг. Резерв на складе вычисляется на лету
   // (reservedByProduct → открытые заказы), поэтому меняется автоматом
   // при новых items. Долг «в долг» корректируем на дельту total.
-  updateOrder: (id, patch) => {
+  updateOrder: (id, patch, options) => {
     const o = get().orders.find((x) => x.id === id)
     if (!o) return { ok: false, error: 'Заказ не найден' }
+    if (get().cloud) {
+      if (!isCommercialOrder(o)) return { ok: false, error: 'Редактирование исторического облачного заказа этим контрактом недоступно' }
+      if (companyCache.pendingOrderCommands?.(getAuthContext(), id).length || o.shipmentPending || o.shipmentQueued) return { ok: false, error: 'Команды заказа или отгрузка ещё не разрешены' }
+      if (o.commercialPending) return { ok: false, error: 'Есть незавершённая команда заказа. Дождитесь подтверждения или разберите конфликт' }
+      if (o.stockConsumed || o.shipmentDocId || o.status === 'cancelled') return { ok: false, error: 'Коммерческий состав уже отгруженного или отменённого заказа защищён' }
+      let commercial
+      try {
+        const authority = companyCache.commercialOrder(getAuthContext(), id)
+        if (!authority || !options?.expectedRowVersion || authority.rowVersion !== options.expectedRowVersion || !options.baseSnapshot || canonicalPayload(authority.snapshot) !== canonicalPayload(options.baseSnapshot))
+          return { ok: false, error: 'Серверная версия изменилась или не подтверждена. Откройте заказ заново; сервер не будет перезаписан' }
+        if (options.baseSnapshot.discount.kind !== 'percent' || new Set(options.baseSnapshot.items.map((l) => l.productId)).size !== options.baseSnapshot.items.length)
+          return { ok: false, error: 'Эта форма пока не поддерживает редактирование абсолютной скидки или повторных строк товара' }
+        commercial = prepareCommercial(patch, get().products, options.baseSnapshot, () => uid('line'))
+      } catch (e) { return { ok: false, error: e.message } }
+      return completeBusinessAction(get(), 'commercial_edit', { id, patch, options }, () => {
+        const commandId = uid('cmd')
+        return { id, payload: { contractVersion: 2, commandId, orderId: id, expectedRowVersion: options.expectedRowVersion, commercial } }
+      }, (prepared) => enqueueCommercialOrder('commercial_edit', prepared.payload), () => {
+        set({ orders: companyCache.overlayLocal(getAuthContext(), get()).orders })
+        return { ok: true, id, pending: true }
+      }, `commercial_edit:${id}`)
+    }
     if (o.stockConsumed || o.status === 'cancelled') {
       return { ok: false, error: 'Заказ уже отгружен или отменён — редактирование недоступно' }
     }
     if (patch.items) {
       patch = { ...patch, items: normalizeItems(patch.items, get().products) }
     }
-    set((s) => {
-      const next = { ...o, ...patch }
-      const itemsChanged = 'items' in patch
-      const discChanged = 'discount' in patch
-      if (itemsChanged || discChanged) {
-        const items = next.items || []
-        const subtotal = items.reduce(
-          (acc, it) => acc + (Number(it.qty) || 0) * (Number(it.price) || 0),
-          0,
-        )
-        const disc = Number(next.discount) || 0
-        const total = Math.round(subtotal * (1 - disc / 100))
-        next.subtotal = subtotal
-        next.total = total
+    const next = { ...o, ...patch }
+    const itemsChanged = 'items' in patch
+    const discChanged = 'discount' in patch
+    if (itemsChanged || discChanged) {
+      const items = next.items || []
+      const subtotal = items.reduce(
+        (acc, it) => acc + (Number(it.qty) || 0) * (Number(it.price) || 0),
+        0,
+      )
+      const disc = Number(next.discount) || 0
+      const total = Math.round(subtotal * (1 - disc / 100) * 100) / 100
+      next.subtotal = subtotal
+      next.total = total
+    }
+    const oldDebt = o.onCredit ? o.total || 0 : 0
+    const newDebt = next.onCredit ? next.total || 0 : 0
+    const customer = get().customers.find((c) => c.id === next.customerId)
+    const existingDebt = Number(customer?.balance) || 0
+    const nextDebt = existingDebt - (o.customerId === next.customerId ? oldDebt : 0) + newDebt
+    if (
+      newDebt > 0 &&
+      Number(customer?.creditLimit) > 0 &&
+      nextDebt > Number(customer.creditLimit)
+    ) {
+      return {
+        ok: false,
+        error: `Кредитный лимит превышен: долг стал бы ${nextDebt}₽ при лимите ${customer.creditLimit}₽`,
       }
-      const oldDebt = o.onCredit ? o.total || 0 : 0
-      const newDebt = next.onCredit ? next.total || 0 : 0
-      const debtDelta = newDebt - oldDebt
+    }
+    set((s) => {
       let customers = s.customers
-      if (debtDelta !== 0 && next.customerId) {
+      if (oldDebt || newDebt) {
         customers = s.customers.map((c) =>
-          c.id === next.customerId
-            ? { ...c, balance: (c.balance || 0) + debtDelta }
+          c.id === o.customerId || c.id === next.customerId
+            ? {
+                ...c,
+                balance:
+                  (c.balance || 0) -
+                  (c.id === o.customerId ? oldDebt : 0) +
+                  (c.id === next.customerId ? newDebt : 0),
+              }
             : c,
         )
       }
@@ -296,7 +392,17 @@ export const createOrdersSlice = (set, get) => ({
   },
   cancelOrder: (id, note) => {
     const o = get().orders.find((x) => x.id === id)
+    if (get().cloud && isCommercialOrder(o)) return get().cancelProtectedOrder(id)
     if (!o || o.status === 'cancelled') return // идемпотентность: не откатываем дважды
+    if (get().cloud) {
+      let projected
+      try { projected = companyCache.overlayLocal(getAuthContext(), get()) }
+      catch { return { ok: false, error: 'Не удалось проверить сохранённые возвраты. Аннулирование остановлено.' } }
+      if (o.refundContractVersion === 2 || (o.returns || []).some((event) => event.contractVersion === 2) ||
+        projected.orders.some((row) => row.origOrderId === id && row.refundContractVersion === 2)) {
+        return { ok: false, error: 'Аннулирование чека с сохранённым возвратом недоступно: требуется сверка. Возврат сохранён.' }
+      }
+    }
     // Legacy-чек: создан старой сборкой — ни shipmentDocId, ни kind='retail'.
     // Его отмена ушла бы только в localStorage: sync/push срезает status,
     // сервер остаётся при своём. Пользователь увидел бы «Отменён», а учёт —
@@ -310,64 +416,77 @@ export const createOrdersSlice = (set, get) => ({
         error: `Чек ${o.no} создан старой версией приложения — отмена из кабинета для него не сработает на сервере. Скорректируйте остаток инвентаризацией.`,
       }
     }
-    set((s) => {
-      // Если заказ уже отгружен — возвращаем остаток и коды на склад.
-      // Если ещё не отгружен — просто снимаем резерв (через статус).
-      let products = s.products
-      if (o.stockConsumed) {
-        products = applyOrderStock(s, o, 1).products
-      }
-      // Реверс долга «в долг».
-      let customers = s.customers
-      if (o.onCredit && o.customerId) {
-        customers = s.customers.map((c) =>
-          c.id === o.customerId ? { ...c, balance: (c.balance || 0) - (o.total || 0) } : c,
+    const apply = (_prepared, accepted = {}) => {
+      if (get().orders.find((x) => x.id === id)?.status === 'cancelled') return { ok: true, id }
+      if (accepted.acknowledged) return { ok: false, error: 'Отмена уже подтверждена сервером. Обновите данные перед локальным завершением.' }
+      const fields = ['orders', 'products', 'customers', 'moneyTx', 'shifts', 'audit']
+      const before = Object.fromEntries(fields.map((k) => [k, get()[k]]))
+      try {
+        set((s) => {
+          // Если заказ уже отгружен — возвращаем остаток и коды на склад.
+          // Если ещё не отгружен — просто снимаем резерв (через статус).
+          let products = s.products
+          if (o.stockConsumed) {
+            products = applyOrderStock(s, o, 1).products
+          }
+          // Реверс долга «в долг».
+          let customers = s.customers
+          if (o.onCredit && o.customerId) {
+            customers = s.customers.map((c) =>
+              c.id === o.customerId ? { ...c, balance: (c.balance || 0) - (o.total || 0) } : c,
+            )
+          }
+          return {
+            products,
+            customers,
+            orders: s.orders.map((x) =>
+              x.id === id
+                ? {
+                    ...x,
+                    status: 'cancelled',
+                    // B4: сбрасываем stockConsumed после возврата остатков —
+                    // иначе повторный setOrderStatus('shipped') не спишет
+                    // ничего (guard `!o.stockConsumed`), товар «уйдёт
+                    // бесплатно». cancelOrder идемпотентен и всегда
+                    // финализирует в согласованное состояние.
+                    stockConsumed: false,
+                    track: [
+                      ...(x.track || []),
+                      { status: 'cancelled', at: new Date().toISOString(), ...(note ? { note } : {}) },
+                    ],
+                  }
+                : x,
+            ),
+          }
+        })
+        // Отменяем парные moneyTx (созданные автоматически при addOrder).
+        // Через public API — cancelMoneyTx корректно откатит балансы
+        // счетов (они на лету считаются из moneyTx с status!='cancelled').
+        const linkedTx = (get().moneyTx || []).filter(
+          (t) => t.orderId === id && t.status !== 'cancelled',
         )
-      }
-      return {
-        products,
-        customers,
-        orders: s.orders.map((x) =>
-          x.id === id
-            ? {
-                ...x,
-                status: 'cancelled',
-                // B4: сбрасываем stockConsumed после возврата остатков —
-                // иначе повторный setOrderStatus('shipped') не спишет
-                // ничего (guard `!o.stockConsumed`), товар «уйдёт
-                // бесплатно». cancelOrder идемпотентен и всегда
-                // финализирует в согласованное состояние.
-                stockConsumed: false,
-                track: [
-                  ...(x.track || []),
-                  { status: 'cancelled', at: new Date().toISOString(), ...(note ? { note } : {}) },
-                ],
-              }
-            : x,
-        ),
-      }
-    })
-    // Отменяем парные moneyTx (созданные автоматически при addOrder).
-    // Через public API — cancelMoneyTx корректно откатит балансы
-    // счетов (они на лету считаются из moneyTx с status!='cancelled').
-    const linkedTx = (get().moneyTx || []).filter(
-      (t) => t.orderId === id && t.status !== 'cancelled',
-    )
-    linkedTx.forEach((t) => get().cancelMoneyTx(t.id))
-    // F2-9: если отменили заказ уже закрытой смены — пересчитать
-    // её snapshot revenue.
-    if (o.shiftId) get().recalcClosedShift(o.shiftId)
-    // Отмена — через outbox: если сеть моргнула, заказ на сервере останется
-    // отгруженным, остатки не вернутся. Персистентная очередь ретраит.
-    // Кому нужна серверная отмена: заказам с документом отгрузки
-    // (shipmentDocId) — сервер сделает unpost_doc. kind='retail' без
-    // маркера — legacy-чеки, созданные до маркера: они тоже на сервере.
-    if (o.shipmentDocId || o.kind === 'retail') enqueueOrderStatus(id, 'cancelled')
-    get().logAction(
-      `Отменён заказ ${o.no} · ${o.stockConsumed ? 'остатки возвращены' : 'резерв снят'}`,
-      { section: 'Заказы', type: 'delete' },
-    )
-    return { ok: true }
+        linkedTx.forEach((t) => get().cancelMoneyTx(t.id))
+        // F2-9: если отменили заказ уже закрытой смены — пересчитать
+        // её snapshot revenue.
+        if (o.shiftId) get().recalcClosedShift(o.shiftId)
+        // Отмена — через outbox: если сеть моргнула, заказ на сервере останется
+        // отгруженным, остатки не вернутся. Персистентная очередь ретраит.
+        // Кому нужна серверная отмена: заказам с документом отгрузки
+        // (shipmentDocId) — сервер сделает unpost_doc. kind='retail' без
+        // маркера — legacy-чеки, созданные до маркера: они тоже на сервере.
+
+        get().logAction(
+          `Отменён заказ ${o.no} · ${o.stockConsumed ? 'остатки возвращены' : 'резерв снят'}`,
+          { section: 'Заказы', type: 'delete' },
+        )
+
+        return { ok: true, id }
+      } catch (e) { try { set(before) } catch { /* state restored before persist */ } throw e }
+    }
+    if (!(o.shipmentDocId || o.kind === 'retail')) return apply()
+    return completeBusinessAction(get(), 'order_status', { id, note },
+      () => ({ id: `${id}:cancelled`, orderId: id }),
+      (prepared) => enqueueOrderStatus(prepared.orderId, 'cancelled'), apply, `order_status:${id}:cancelled`)
   },
   // C2: Возврат по чеку. Клиент вернул товар — оформляем «возврат-
   // документ» со ссылкой на оригинал и параллельно откатываем
@@ -389,44 +508,26 @@ export const createOrdersSlice = (set, get) => ({
     if (!orig.stockConsumed) {
       return { ok: false, error: 'Заказ ещё не отгружен — используйте «Отмена»' }
     }
-    // items не задан — возврат полного чека (по всем позициям).
-    const items = (opts.items && opts.items.length)
-      ? opts.items
-      : orig.items.map((it) => ({ productId: it.productId, qty: it.qty }))
-    // Проверка: qty не больше, чем в оригинале.
-    for (const ri of items) {
-      const oi = orig.items.find((x) => x.productId === ri.productId)
-      if (!oi) return { ok: false, error: `Товар ${ri.productId} не из этого чека` }
-      if (Number(ri.qty) > Number(oi.qty)) {
-        return {
-          ok: false,
-          error: `Возвращают ${ri.qty} из ${oi.qty} по «${oi.name}» — больше нельзя`,
-        }
-      }
+    if (orig.kind === 'refund')
+      return { ok: false, error: 'Нельзя оформить возврат по документу возврата' }
+    if (s.cloud) {
+      return completeBusinessAction(s, 'return_v2', { origOrderId, opts },
+        () => prepareOfflineRefund(orig, get().orders, opts),
+        (prepared) => enqueueReturn(prepared.command),
+        (prepared) => {
+          set(companyCache.overlayLocal(getAuthContext(), get()))
+          return { ok: true, id: prepared.id, returnId: prepared.id, pending: true }
+        }, `return:${origOrderId}`)
     }
-    // F2-1: enriched-items несут `consumed` для FIFO reverse. Для
-    // частичного возврата пропорционально усекаем `consumed[i].qty`,
-    // чтобы вернуть только вернувшуюся долю в те же партии, а
-    // остальное осталось consumed (в продаже). Раньше stock тупо
-    // += qty без batches — партии протухали, следующая продажа
-    // считала COGS по «дырявым» партиям.
-    const enriched = items.map((ri) => {
-      const oi = orig.items.find((x) => x.productId === ri.productId)
-      const refQty = Number(ri.qty)
-      const origQty = Number(oi.qty) || 0
-      const ratio = origQty > 0 ? refQty / origQty : 0
-      const consumed = (oi.consumed || []).map((c) => ({
-        ...c,
-        qty: (Number(c.qty) || 0) * ratio,
-      }))
-      return {
-        ...oi,
-        qty: refQty,
-        consumed,
-      }
-    })
-    const refundTotal = enriched.reduce(
-      (acc, it) => acc + Number(it.qty) * Number(it.price || 0),
+    // items не задан — возврат полного чека (по всем позициям).
+    const planned = planRefund(orig, s.orders, opts.items)
+    if (!planned.ok) return planned
+    // Партии и коды возвращаются только для выбранного количества,
+    // с пропуском уже возвращённой части исходной продажи.
+    const enriched = planned.items
+    const refundTotal = planned.total
+    const alreadyRefunded = priorRefunds(orig, s.orders).reduce(
+      (n, r) => n + Number(r.total || 0),
       0,
     )
     // Создаём refund-order.
@@ -462,25 +563,26 @@ export const createOrdersSlice = (set, get) => ({
     })
     // Возврат денег.
     const method = orig.payment?.method
-    const shift = s.activeShiftId
-      ? s.shifts.find((sh) => sh.id === s.activeShiftId)
-      : null
-    if (method === 'credit') {
+    const shift = s.activeShiftId ? s.shifts.find((sh) => sh.id === s.activeShiftId) : null
+    if (orig.onCredit || method === 'credit') {
       // Долг клиента уменьшается: возврат гасит.
       set((st) => ({
         customers: st.customers.map((c) =>
-          c.id === orig.customerId
-            ? { ...c, balance: (c.balance || 0) - refundTotal }
-            : c,
+          c.id === orig.customerId ? { ...c, balance: (c.balance || 0) - refundTotal } : c,
         ),
       }))
     } else if (method === 'cash' || method === 'mixed') {
-      const cashAcc =
-        shift?.cashAccountId || s.accounts.find((a) => a.kind === 'cash')?.id
+      const cashAcc = shift?.cashAccountId || s.accounts.find((a) => a.kind === 'cash')?.id
       if (cashAcc && refundTotal > 0) {
-        const cashPart = method === 'mixed'
-          ? Math.min(refundTotal, Number(orig.payment?.cashPaid) || 0)
-          : refundTotal
+        // Сначала возвращаем наличную часть, затем карточную. Предыдущие
+        // частичные возвраты уже использовали часть этого лимита.
+        const cashPart =
+          method === 'mixed'
+            ? Math.min(
+                refundTotal,
+                Math.max(0, (Number(orig.payment?.cashPaid) || 0) - alreadyRefunded),
+              )
+            : refundTotal
         if (cashPart > 0) {
           get().addMoneyTx({
             type: 'out',
@@ -530,6 +632,7 @@ export const createOrdersSlice = (set, get) => ({
   },
   // Назначить заказ конкретному курьеру (сотруднику) — он видит только свои
   assignCourier: (id, employeeId) => {
+    if (get().cloud && isCommercialOrder(get().orders.find((o) => o.id === id))) return { ok: false, error: 'Назначение доставки защищённого заказа ещё не подключено' }
     const o = get().orders.find((x) => x.id === id)
     const emp = get().employees.find((e) => e.id === employeeId)
     // F2-7: раньше валидация роли была только в UI (Orders.jsx
@@ -540,9 +643,7 @@ export const createOrdersSlice = (set, get) => ({
       return { ok: false, error: 'На доставку можно назначить только сотрудника с ролью «Курьер»' }
     }
     set((s) => ({
-      orders: s.orders.map((x) =>
-        x.id === id ? { ...x, assignedTo: employeeId || null } : x,
-      ),
+      orders: s.orders.map((x) => (x.id === id ? { ...x, assignedTo: employeeId || null } : x)),
     }))
     get().logAction(
       employeeId ? `Курьер «${emp?.name}» назначен на ${o?.no}` : `Снято назначение с ${o?.no}`,
@@ -559,7 +660,10 @@ export const createOrdersSlice = (set, get) => ({
         invoices: [
           {
             id: uid('inv'),
-            no: nextNo(s.invoices.filter((x) => x.kind === inv.kind), prefix),
+            no: nextNo(
+              s.invoices.filter((x) => x.kind === inv.kind),
+              prefix,
+            ),
             createdAt: new Date().toISOString(),
             ...inv,
           },
@@ -573,8 +677,7 @@ export const createOrdersSlice = (set, get) => ({
       { section: 'Накладные', type: 'create' },
     )
   },
-  removeInvoice: (id) =>
-    set((s) => ({ invoices: s.invoices.filter((i) => i.id !== id) })),
+  removeInvoice: (id) => set((s) => ({ invoices: s.invoices.filter((i) => i.id !== id) })),
 
   // ── Заказы поставщикам (PO) ───────────────────────────────
   // Pre-документ до приёмки товара. Флоу: draft → sent → received
@@ -603,10 +706,10 @@ export const createOrdersSlice = (set, get) => ({
       }
       return { purchaseOrders: [header, ...(s.purchaseOrders || [])] }
     })
-    get().logAction(
-      `Заказ поставщику создан · ${po.supplierName || 'без поставщика'}`,
-      { section: 'Заказы поставщикам', type: 'create' },
-    )
+    get().logAction(`Заказ поставщику создан · ${po.supplierName || 'без поставщика'}`, {
+      section: 'Заказы поставщикам',
+      type: 'create',
+    })
     return id
   },
   updatePurchaseOrder: (id, patch) =>
@@ -614,10 +717,7 @@ export const createOrdersSlice = (set, get) => ({
       purchaseOrders: (s.purchaseOrders || []).map((p) => {
         if (p.id !== id) return p
         const items = patch.items || p.items
-        const total = items.reduce(
-          (a, x) => a + (Number(x.qty) || 0) * (Number(x.cost) || 0),
-          0,
-        )
+        const total = items.reduce((a, x) => a + (Number(x.qty) || 0) * (Number(x.cost) || 0), 0)
         return { ...p, ...patch, items, total }
       }),
     })),
@@ -627,9 +727,7 @@ export const createOrdersSlice = (set, get) => ({
     if (!p || p.status !== 'draft') return
     set((s) => ({
       purchaseOrders: s.purchaseOrders.map((x) =>
-        x.id === id
-          ? { ...x, status: 'sent', sentAt: new Date().toISOString() }
-          : x,
+        x.id === id ? { ...x, status: 'sent', sentAt: new Date().toISOString() } : x,
       ),
     }))
     get().logAction(`ЗКП ${p.no} отправлен поставщику`, {
@@ -658,27 +756,11 @@ export const createOrdersSlice = (set, get) => ({
         note: `Заказ поставщику ${p.no} · ${p.supplierName || ''}`,
         items,
         supplierId: p.supplierId,
+        sourcePurchaseOrderId: id,
       },
       { post: true },
     )
-    if (typeof docId !== 'string') return docId // ok:false / error
-    set((s) => ({
-      purchaseOrders: s.purchaseOrders.map((x) =>
-        x.id === id
-          ? {
-              ...x,
-              status: 'received',
-              receivedAt: new Date().toISOString(),
-              receiveDocId: docId,
-              items,
-            }
-          : x,
-      ),
-    }))
-    get().logAction(`ЗКП ${p.no} принят по документу покупки`, {
-      section: 'Заказы поставщикам',
-      type: 'update',
-    })
+    // PO linkage is completed inside addDocument, together with local posting.
     return docId
   },
   cancelPurchaseOrder: (id) => {

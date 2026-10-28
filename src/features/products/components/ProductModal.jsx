@@ -240,13 +240,14 @@ export function ProductModal({ product, onClose }) {
     else updateProduct(product.id, data)
     onClose()
   }
-  const doReceive = () => {
+  const doReceive = async () => {
     const n = parseInt(receive)
     if (n > 0) {
-      addDocument({
+      const result = await addDocument({
         type: 'stockin',
         items: [{ productId: product.id, name: product.name, unit: product.unit, qty: n }],
       })
+      if (result?.ok === false) { alert(result.error); return }
       onClose()
     }
   }

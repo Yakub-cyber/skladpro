@@ -24,7 +24,7 @@ import {
 } from '@/shared/ui'
 import { useStore } from '@/shared/store/useStore'
 import { money, num, dateFull } from '@/shared/lib/format'
-import { parseInvoiceText, aiParseInvoice, aiEnabled, aiConfig } from '@/shared/lib/ai'
+import { parseInvoiceText, aiParseInvoice, aiEnabled, aiConfig, AI_UNAVAILABLE_MESSAGE } from '@/shared/lib/ai'
 import { priceFor } from '@/shared/lib/constants'
 import DocPreviewModal from '@/shared/components/DocPreviewModal'
 
@@ -122,7 +122,7 @@ export default function Invoices() {
       { name: '', qty: 1, unit: 'шт', price: 0, matched: false },
     ])
 
-  const save = () => {
+  const save = async () => {
     const partyObj = parties.find((p) => p.id === party)
     const inv = {
       kind,
@@ -139,9 +139,8 @@ export default function Invoices() {
       priceTypeId: kind === 'out' ? priceTypeId : null,
       source: text,
     }
-    addInvoice(inv)
     if (kind === 'in' && applyStock) {
-      addDocument({
+      const result = await addDocument({
         type: 'purchase',
         // Поставщик из накладной — без него сервер проведёт приход как
         // stock_income (без взаиморасчётов), и долг поставщику не вырастет.
@@ -159,7 +158,9 @@ export default function Invoices() {
               : {}),
           })),
       })
+      if (result?.ok === false) { alert(result.error); return }
     }
+    addInvoice(inv)
     setItems(null)
     setText('')
     setParty('')
@@ -232,7 +233,7 @@ export default function Invoices() {
             <span className={cx('w-2 h-2 rounded-full', usingAI ? 'bg-ok' : 'bg-warn')} />
             {usingAI
               ? 'Облачный ИИ DeepSeek подключён'
-              : 'Локальный разбор (ключ DeepSeek — в Настройках)'}
+              : AI_UNAVAILABLE_MESSAGE}
           </div>
 
           {items && (

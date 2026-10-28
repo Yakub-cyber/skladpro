@@ -3,7 +3,7 @@ import { cx } from '@/shared/ui'
 import { money, num } from '@/shared/lib/format'
 
 // Mobile: fixed bar снизу + кнопка «Оплатить». На десктопе скрыт.
-export default function MobileCartBar({ rows, count, total, onOpen }) {
+export default function MobileCartBar({ rows, count, total, onOpen, asOrder }) {
   return (
     <div className="lg:hidden fixed bottom-0 left-0 right-0 z-30 border-t border-line bg-surface/95 backdrop-blur px-3 py-2 flex items-center gap-3 shadow-[0_-4px_16px_rgba(0,0,0,0.08)]">
       <div className="flex items-center gap-2 min-w-0 flex-1">
@@ -36,7 +36,7 @@ export default function MobileCartBar({ rows, count, total, onOpen }) {
             : 'bg-surface-3 text-muted cursor-not-allowed',
         )}
       >
-        <Check size={18} /> Оплатить
+        <Check size={18} /> {asOrder ? 'Заказ' : 'Оплатить'}
       </button>
     </div>
   )

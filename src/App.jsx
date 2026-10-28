@@ -4,6 +4,7 @@ import Layout from '@/app/layout/Layout'
 import Login, { Onboarding, ResetPassword } from '@/features/auth/LoginPage'
 import PageLoader from '@/shared/components/PageLoader'
 import FeatureGate from '@/shared/components/FeatureGate'
+import RouteImportBoundary from '@/shared/components/RouteImportBoundary'
 import { useStore } from '@/shared/store/useStore'
 
 // Ленивая загрузка страниц (code-splitting): тяжёлые зависимости
@@ -84,7 +85,7 @@ export default function App() {
         element={
           <AuthGate>
             <Suspense fallback={<PageLoader />}>
-              <NewOrder fullscreen />
+              <RouteImportBoundary key="pos"><NewOrder fullscreen /></RouteImportBoundary>
             </Suspense>
           </AuthGate>
         }
@@ -98,13 +99,13 @@ export default function App() {
         }
       >
         <Route index element={<Dashboard />} />
-        <Route path="orders" element={<Orders />} />
-        <Route path="orders/new" element={<NewOrder />} />
-        <Route path="orders/:id/edit" element={<EditOrder />} />
-        <Route path="delivery" element={<Delivery />} />
+        <Route path="orders" element={<RouteImportBoundary key="orders"><Orders /></RouteImportBoundary>} />
+        <Route path="orders/new" element={<RouteImportBoundary key="cash"><NewOrder /></RouteImportBoundary>} />
+        <Route path="orders/:id/edit" element={<RouteImportBoundary key="edit-order"><EditOrder /></RouteImportBoundary>} />
+        <Route path="delivery" element={<RouteImportBoundary key="delivery"><Delivery /></RouteImportBoundary>} />
         <Route path="products" element={<Products />} />
         <Route path="warehouse" element={<Warehouse />} />
-        <Route path="operations" element={<Operations />} />
+        <Route path="operations" element={<RouteImportBoundary key="operations"><Operations /></RouteImportBoundary>} />
         <Route path="invoices" element={<FeatureGate feature="invoices"><Invoices /></FeatureGate>} />
         <Route path="customers" element={<Customers />} />
         <Route path="suppliers" element={<Suppliers />} />

@@ -1,3 +1,4 @@
+import { hasInvitationSecret } from '@/shared/lib/invitationSecret'
 import { useState } from 'react'
 import { ArrowLeft, Boxes, Cloud, KeyRound, Loader2, Mail } from 'lucide-react'
 import { cx, Button, Field, Input } from '@/shared/ui'
@@ -23,7 +24,7 @@ export default function CloudLogin({ onBack, initialMode = 'signin' }) {
   // изменение state (audit, sync-тик) — заметный лаг при вводе.
   const signIn = useStore((s) => s.signIn)
   const signUp = useStore((s) => s.signUp)
-  const inviteToken = readHashParam('invite')
+  const inviteToken = hasInvitationSecret()
   const inviteEmail = readHashParam('email')
   const [mode, setMode] = useState(inviteToken ? 'signup' : initialMode)
   const [email, setEmail] = useState(inviteEmail)
@@ -31,7 +32,7 @@ export default function CloudLogin({ onBack, initialMode = 'signin' }) {
   const [name, setName] = useState('')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
-  const [info, setInfo] = useState('')
+  const [info, setInfo] = useState(inviteEmail && !inviteToken ? 'Ссылка без секрета не позволяет принять приглашение. Запросите у администратора новую ссылку.' : '')
 
   const submit = async (e) => {
     e?.preventDefault?.()
@@ -54,7 +55,7 @@ export default function CloudLogin({ onBack, initialMode = 'signin' }) {
     const r =
       mode === 'signin'
         ? await signIn(email, pass)
-        : await signUp(email, pass, name, inviteToken || null)
+        : await signUp(email, pass, name)
     if (!r.ok) {
       setErr(r.error)
       setBusy(false)

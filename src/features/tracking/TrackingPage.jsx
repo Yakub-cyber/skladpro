@@ -10,11 +10,10 @@ import {
   MapPin,
   Phone,
   XCircle,
-  Clock,
 } from 'lucide-react'
-import { Badge, Card, cx } from '@/shared/ui'
+import { Card, cx } from '@/shared/ui'
 import { useStore } from '@/shared/store/useStore'
-import { money, num, dateTime, dateFull } from '@/shared/lib/format'
+import { money, num, dateTime } from '@/shared/lib/format'
 import { TRACK_FLOW, statusInfo } from '@/shared/lib/constants'
 
 const STEP_ICON = {
@@ -50,9 +49,7 @@ export default function Tracking() {
           <div className="font-semibold tracking-tight">
             Склад<span className="text-brand">Про</span>
           </div>
-          <span className="text-muted text-sm ml-2 hidden sm:block">
-            · отслеживание заказа
-          </span>
+          <span className="text-muted text-sm ml-2 hidden sm:block">· отслеживание заказа</span>
         </div>
       </header>
 
@@ -62,7 +59,7 @@ export default function Tracking() {
             <XCircle size={40} className="text-muted mx-auto mb-3" />
             <h2 className="text-lg font-semibold">Заказ не найден</h2>
             <p className="text-muted text-sm mt-1">
-              Проверьте ссылку — возможно, она устарела.
+              Данные заказа недоступны в этом браузере. Уточните статус у продавца.
             </p>
             <Link to="/" className="text-brand text-sm font-medium mt-4 inline-block">
               На главную
@@ -83,10 +80,6 @@ function OrderTrack({ order, company }) {
     m[t.status] = t.at
     return m
   }, {})
-
-  // ожидаемая доставка
-  const eta = new Date(order.createdAt)
-  eta.setDate(eta.getDate() + 3)
 
   return (
     <div className="animate-fadeUp space-y-5">
@@ -111,9 +104,7 @@ function OrderTrack({ order, company }) {
             <h1 className="text-xl font-semibold">{cur.label}</h1>
             <p className="text-muted text-sm mt-1">{STEP_TEXT[order.status]}</p>
             {order.status !== 'delivered' && (
-              <Badge tone="info" className="mt-3">
-                <Clock size={12} /> Ожидаемая доставка: {dateFull(eta.toISOString())}
-              </Badge>
+              <p className="text-muted text-sm mt-3">Дату доставки уточните у продавца.</p>
             )}
           </>
         )}

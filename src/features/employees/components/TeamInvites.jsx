@@ -9,7 +9,9 @@ import InviteModal from './InviteModal'
 export default function TeamInvites({ companyId }) {
   const [invites, setInvites] = useState([])
   const [open, setOpen] = useState(false)
-  const refresh = () => loadInvites().then(setInvites).catch(() => {})
+  const [error,setError] = useState('')
+  const [checkedAt,setCheckedAt] = useState(() => Date.now())
+  const refresh = () => loadInvites().then(data => { setInvites(data); setCheckedAt(Date.now()) }).catch(() => {})
   useEffect(() => {
     refresh()
   }, [])
@@ -21,7 +23,7 @@ export default function TeamInvites({ companyId }) {
           <UserPlus size={16} className="text-brand" /> Приглашения в команду
         </span>
       }
-      subtitle="Пригласите сотрудника по email — он зарегистрируется и автоматически войдёт в вашу компанию"
+      subtitle="Создайте одноразовую ссылку и передайте сотруднику по доверенному каналу"
       action={
         <Button size="sm" icon={Send} onClick={() => setOpen(true)}>
           Пригласить
@@ -38,6 +40,7 @@ export default function TeamInvites({ companyId }) {
         <div className="space-y-2">
           {invites.map((inv) => {
             const r = roleInfo(inv.role)
+            const status = inv.acceptedAt ? 'Принято' : inv.revokedAt ? 'Отозвано' : inv.requiresReissue ? 'Нужен перевыпуск' : !inv.expiresAt || Date.parse(inv.expiresAt) <= checkedAt ? 'Истекло' : 'Ожидает принятия'
             return (
               <div key={inv.id} className="flex items-center gap-3 p-3 rounded-xl bg-surface-2">
                 <div className="h-9 w-9 rounded-lg bg-brand-soft text-brand grid place-items-center shrink-0">
@@ -46,12 +49,13 @@ export default function TeamInvites({ companyId }) {
                 <div className="min-w-0 flex-1">
                   <div className="font-medium text-sm truncate">{inv.email}</div>
                   <div className="text-[12px] text-muted flex items-center gap-1.5">
-                    <Clock size={11} /> Ожидает регистрации · {dateFull(inv.created_at)}
+                    <Clock size={11} /> {status} · {dateFull(inv.created_at)}
                   </div>
                 </div>
                 <Badge tone="brand">{r.label}</Badge>
                 <button
-                  onClick={() => revokeInvite(inv.id).then(refresh)}
+                  disabled={!!(inv.acceptedAt || inv.revokedAt)}
+                  onClick={async () => { setError(''); const r=await revokeInvite(inv.id); if (!r.ok) setError(r.error || 'Не удалось отозвать приглашение'); else refresh() }}
                   className="text-muted hover:text-bad p-1"
                   title="Отозвать приглашение"
                 >
@@ -62,6 +66,7 @@ export default function TeamInvites({ companyId }) {
           })}
         </div>
       )}
+      {error && <p role="alert" className="text-bad text-sm">{error}</p>}
       <InviteModal
         open={open}
         onClose={() => {

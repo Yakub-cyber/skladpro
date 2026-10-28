@@ -60,12 +60,12 @@ export default function ReceiveTab() {
     [items],
   )
 
-  const submit = (post) => {
+  const submit = async (post) => {
     setErr('')
     // F2-3: раньше результат addDocument отбрасывался — при отказе
     // (например, недостача remainder) тост «Оприходовано» показывался,
     // а документ не создавался.
-    const r = addDocument(
+    const r = await addDocument(
       {
         type: 'purchase',
         reason: 'Закупка',
